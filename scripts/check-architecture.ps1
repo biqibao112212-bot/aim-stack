@@ -15,8 +15,11 @@ $release = Get-Content -LiteralPath $releaseContract -Raw -Encoding UTF8 | Conve
 if ($release.version -ne $lock.simulator.version -or
     $release.sdk_version -ne $lock.simulator.sdk_version -or
     $release.shm_version -ne $lock.simulator.shm_version -or
+    $release.sdk_abi_revision -ne $lock.simulator.sdk_abi_revision -or
     $release.image.width -ne $lock.simulator.image.width -or
-    $release.image.height -ne $lock.simulator.image.height) {
+    $release.image.height -ne $lock.simulator.image.height -or
+    $release.scene_control_protocol -ne $lock.simulator.scene_control_protocol -or
+    $release.scene_control_port -ne $lock.simulator.scene_control_port) {
     throw 'simulator.lock.json is incompatible with the installed release.'
 }
 

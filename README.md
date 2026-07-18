@@ -15,6 +15,7 @@ D:\仿真\repos\aim-stack\
 正式模拟器仓库：`D:\仿真\repos\daedalus-simulator`
 
 正式发布目录：`D:\仿真\releases\daedalus-simulator`
+
 受保护模型目录：`D:\仿真\models\engines`
 
 默认启动自瞄 B：

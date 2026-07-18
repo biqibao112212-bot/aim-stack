@@ -6,7 +6,7 @@
 - 工作目录：`D:\仿真\repos\aim-stack`
 - 当前主模块：`modules/autoaim`
 - 暂停模块：`modules/energy-buff`
-- 模拟器锁：`Daedalus Simulator 1.0.0 / DaedalusSimSdk 1.0.0 / SHM v7 / 1440×1080`
+- 模拟器锁：`Daedalus Simulator 1.0.0 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
 - 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.0`
 
 本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
