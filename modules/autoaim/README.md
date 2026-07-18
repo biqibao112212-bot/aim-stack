@@ -21,6 +21,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1
 
 构建缓存不存在时，`run_talos_bridge_wsl.sh` 会按 Release SDK 和 TensorRT 配置重新生成；需要强制重配时加 `-RebuildBridge`。模型及训练资产不在 Git 中，由仓库根目录 `models/manifest.json` 校验并保护。
 
+## 当前联合性能基线
+
+2026-07-18 使用模拟器 Release 1.0.0、1440×1080 RGB24/TCP、RTX 4060 Laptop GPU、`armor.engine` 和 `vivsionn_trt` 后端实测。桥接器处理 100 帧后预热 15 秒，再采样 30 秒：完整视觉结果均值 121.233 Hz（中位数 122 Hz），模拟器 TCP 发送均值 121.366 Hz，累计流水线均值 6.032 ms；最终处理 6133 帧并完成 6122 个视觉结果，曝光真值严格匹配，采集丢帧和 GPU map 错误均为 0。
+
+这组数字只适用于记录的机器和后台负载。硬件、驱动、提交、模型/二进制哈希、每秒范围、异常样本和复现口径以模拟器仓库 `SIMULATOR_PERFORMANCE.md` 及 `benchmarks/1.0.0/performance-2026-07-18.json` 为准，消费者不另建一份公共性能契约。
+
 Independent simulator adapter for the `vivsionn` C++ auto-aim code.
 
 This project does not modify `D:\仿真\upstream\daedalus` and does not modify the clean Gitee snapshot under `third_party/vivsionn_snapshot`.
