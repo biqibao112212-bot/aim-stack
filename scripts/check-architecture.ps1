@@ -4,6 +4,7 @@ param()
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $workspace = Split-Path -Parent (Split-Path -Parent $root)
+& (Join-Path $PSScriptRoot 'check-consumer-boundary.ps1')
 $lock = Get-Content -LiteralPath (Join-Path $root 'simulator.lock.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $releaseRoot = Join-Path $workspace $lock.simulator.release_relative_to_workspace
 $releaseContract = Join-Path $releaseRoot 'release.json'
@@ -32,16 +33,9 @@ foreach ($asset in $manifest.assets) {
     if ($hash -ne $asset.sha256) { throw "Protected model hash mismatch: $path" }
 }
 
-if (Test-Path -LiteralPath (Join-Path $root 'Cargo.toml')) {
-    throw 'Simulator Cargo.toml must not exist in the consumer repository root.'
-}
 $contextFiles = @(Get-ChildItem -LiteralPath (Join-Path $root 'agent-team') -Force -File)
 $contextDirs = @(Get-ChildItem -LiteralPath (Join-Path $root 'agent-team') -Force -Directory)
 if ($contextFiles.Count -ne 3 -or $contextDirs.Count -ne 0) {
     throw 'Active Agent Team context must contain exactly three files and no directories.'
 }
-if (-not (Select-String -LiteralPath (Join-Path $root 'modules\autoaim\CMakeLists.txt') -Pattern 'find_package\(DaedalusSimSdk 1 REQUIRED CONFIG\)' -Quiet)) {
-    throw 'Auto-aim module does not consume DaedalusSimSdk 1.x.'
-}
-
 "architecture_ok simulator=$($release.version) sdk=$($release.sdk_version) protected_models=$($manifest.assets.Count)"

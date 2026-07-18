@@ -14,6 +14,26 @@
     "physics_hz": 250,
     "image_transport": "tcp",
     "scene_control_protocol": 1,
-    "scene_control_port": 5603
+    "scene_control_port": 5603,
+    "consumer_guide": {
+      "path": "SIMULATOR_CONSUMER_GUIDE.md",
+      "version": 1
+    },
+    "release_documents": {
+      "sdk_usage": "docs/README.md",
+      "interface": "docs/SIMULATOR_INTERFACE.md",
+      "scenario_control": "docs/SCENARIO_CONTROL.md",
+      "performance": "docs/SIMULATOR_PERFORMANCE.md"
+    },
+    "native_operator_maps": [
+      {"id": "normal_map", "sdk_scene": "armor", "shortcut": "F7"},
+      {"id": "shooting_range", "sdk_scene": "shooting_range", "shortcut": "F8"},
+      {"id": "energy_mechanism", "sdk_scene": "energy", "shortcut": "F9"}
+    ],
+    "runtime_profiles": {
+      "default": "high_performance",
+      "high_performance": {"visible": false, "preview_max_hz": 0},
+      "visible_acceptance": {"visible": true, "preview_max_hz": 60}
+    }
   }
 }

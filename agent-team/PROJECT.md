@@ -1,6 +1,6 @@
 # Aim Stack：自瞄 B 与打符消费者
 
-- 上下文版本：`CTX-AIM-STACK-2026.07-v1`
+- 上下文版本：`CTX-AIM-STACK-2026.07-v2`
 - 仓库：`aim-stack`
 - 分支：`main`
 - 工作目录：`D:\仿真\repos\aim-stack`
@@ -8,8 +8,11 @@
 - 暂停模块：`modules/energy-buff`
 - 模拟器锁：`Daedalus Simulator 1.0.0 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
 - 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.0`
+- 模拟器消费者统一入口：`SIMULATOR_CONSUMER_GUIDE.md`（v1）与 `simulator.lock.json`
 
 本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
+
+所有自瞄、火控和打符分支必须继承消费者统一入口，明确 SDK 用法、三张原生地图、默认高性能模式和可视验收模式。消费者任务发现模拟器 bug 或新需求时，必须先向用户提交提案并等待明确批准；批准前不得编辑模拟器仓库、SDK、发布脚本或正式 Release。
 
 ## 自瞄 B 总目标
 

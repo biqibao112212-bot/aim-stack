@@ -1,0 +1,17 @@
+name: consumer-boundary
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify simulator consumer boundary
+        shell: pwsh
+        run: ./scripts/check-consumer-boundary.ps1
