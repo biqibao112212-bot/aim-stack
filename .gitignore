@@ -1,0 +1,13 @@
+/build/
+**/build/
+*.engine
+*.plan
+*.trt
+*.onnx
+*.pt
+*.pth
+__pycache__/
+*.pyc
+agent-team/context/
+agent-team/handoffs/
+agent-team/scratch/

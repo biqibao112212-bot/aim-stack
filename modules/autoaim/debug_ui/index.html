@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aim Simulator Debug</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111418;
+      --panel: #1b2129;
+      --panel-2: #222a34;
+      --line: #343d49;
+      --text: #ecf1f7;
+      --muted: #9da8b5;
+      --good: #52d273;
+      --warn: #f0c94a;
+      --bad: #ff6b6b;
+      --accent: #5db8ff;
+      font-family: "Segoe UI", Arial, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    header {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #151a20;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 600;
+    }
+
+    .status {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--bad);
+    }
+
+    .dot.live {
+      background: var(--good);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 12px;
+      padding: 12px;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    section h2 {
+      margin: 0;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-weight: 600;
+      border-bottom: 1px solid var(--line);
+      background: var(--panel-2);
+    }
+
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+
+    dl {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) minmax(0, 1.35fr);
+      gap: 0;
+      margin: 0;
+    }
+
+    dt, dd {
+      min-height: 30px;
+      padding: 7px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.055);
+      overflow-wrap: anywhere;
+    }
+
+    dt {
+      color: var(--muted);
+    }
+
+    dd {
+      margin: 0;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      text-align: right;
+    }
+
+    .ok { color: var(--good); }
+    .warn { color: var(--warn); }
+    .bad { color: var(--bad); }
+    .accent { color: var(--accent); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th, td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(255,255,255,0.055);
+      text-align: left;
+      vertical-align: top;
+      overflow-wrap: anywhere;
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 500;
+      background: rgba(255,255,255,0.025);
+    }
+
+    td {
+      font-family: Consolas, "Cascadia Mono", monospace;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      max-height: 280px;
+      overflow: auto;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      color: #d6dde6;
+    }
+
+    @media (max-width: 1050px) {
+      main {
+        grid-template-columns: repeat(6, 1fr);
+      }
+      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 {
+        grid-column: span 6;
+      }
+    }
+
+    @media (max-width: 680px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+      .span-3, .span-4, .span-5, .span-6, .span-7, .span-8, .span-12 {
+        grid-column: span 1;
+      }
+      header {
+        height: auto;
+        align-items: flex-start;
+        gap: 6px;
+        flex-direction: column;
+        padding: 10px 12px;
+      }
+      dl {
+        grid-template-columns: 1fr;
+      }
+      dd {
+        text-align: left;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Aim Simulator Debug</h1>
+    <div class="status">
+      <span id="liveDot" class="dot"></span>
+      <span id="statusText">waiting for telemetry</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="span-3">
+      <h2>Runtime</h2>
+      <dl id="runtime"></dl>
+    </section>
+    <section class="span-3">
+      <h2>Gimbal Feedback</h2>
+      <dl id="gimbal"></dl>
+    </section>
+    <section class="span-3">
+      <h2>Aim Command</h2>
+      <dl id="command"></dl>
+    </section>
+    <section class="span-3">
+      <h2>Calibration</h2>
+      <dl id="calibration"></dl>
+    </section>
+
+    <section class="span-6">
+      <h2>Detector</h2>
+      <dl id="detector"></dl>
+    </section>
+    <section class="span-6">
+      <h2>First Solved Target</h2>
+      <dl id="target"></dl>
+    </section>
+
+    <section class="span-7">
+      <h2>Tracker / Fire Control</h2>
+      <dl id="tracker"></dl>
+    </section>
+    <section class="span-5">
+      <h2>Command Transports</h2>
+      <dl id="transport"></dl>
+    </section>
+
+    <section class="span-12">
+      <h2>Solved Armors</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>num</th>
+            <th>type</th>
+            <th>color</th>
+            <th>center px</th>
+            <th>image yaw</th>
+            <th>image pitch</th>
+            <th>position yaw</th>
+            <th>position pitch</th>
+            <th>distance</th>
+            <th>armor yaw</th>
+          </tr>
+        </thead>
+        <tbody id="armors"></tbody>
+      </table>
+    </section>
+
+    <section class="span-12">
+      <h2>Raw Telemetry</h2>
+      <pre id="raw"></pre>
+    </section>
+  </main>
+
+  <script>
+    const els = {
+      liveDot: document.getElementById("liveDot"),
+      statusText: document.getElementById("statusText"),
+      runtime: document.getElementById("runtime"),
+      gimbal: document.getElementById("gimbal"),
+      command: document.getElementById("command"),
+      calibration: document.getElementById("calibration"),
+      detector: document.getElementById("detector"),
+      target: document.getElementById("target"),
+      tracker: document.getElementById("tracker"),
+      transport: document.getElementById("transport"),
+      armors: document.getElementById("armors"),
+      raw: document.getElementById("raw"),
+    };
+
+    function get(obj, path, fallback = null) {
+      return path.split(".").reduce((cur, key) => {
+        if (cur === null || cur === undefined) return undefined;
+        return cur[key];
+      }, obj) ?? fallback;
+    }
+
+    function fmt(value, digits = 3) {
+      if (value === null || value === undefined || Number.isNaN(value)) return "-";
+      if (typeof value === "number") return Number.isFinite(value) ? value.toFixed(digits) : "-";
+      if (typeof value === "boolean") return value ? "true" : "false";
+      return String(value);
+    }
+
+    function deg(value) {
+      return value === null || value === undefined ? "-" : `${fmt(value, 3)} deg`;
+    }
+
+    function meters(value) {
+      return value === null || value === undefined ? "-" : `${fmt(value, 3)} m`;
+    }
+
+    function degPerSec(value) {
+      return value === null || value === undefined ? "-" : `${fmt(value, 2)} deg/s`;
+    }
+
+    function pxPoint(point) {
+      if (!point) return "-";
+      return `(${fmt(point.x, 1)}, ${fmt(point.y, 1)})`;
+    }
+
+    function vec3(value, digits = 3) {
+      if (!value) return "-";
+      return `(${fmt(value.x, digits)}, ${fmt(value.y, digits)}, ${fmt(value.z, digits)})`;
+    }
+
+    function arrayText(value, digits = 3, max = 11) {
+      if (!Array.isArray(value)) return "-";
+      const shown = value.slice(0, max).map((item) => fmt(item, digits)).join(", ");
+      return value.length > max ? `[${shown}, ...]` : `[${shown}]`;
+    }
+
+    function matrixText(value, digits = 3) {
+      if (!Array.isArray(value)) return "-";
+      if (!Array.isArray(value[0])) return arrayText(value, digits, value.length);
+      return value.map((row) => `[${row.map((item) => fmt(item, digits)).join(", ")}]`).join(" ");
+    }
+
+    function clsBool(value) {
+      return value ? "ok" : "bad";
+    }
+
+    function setDl(node, rows) {
+      node.innerHTML = "";
+      for (const [key, value, klass = ""] of rows) {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = key;
+        dd.textContent = value;
+        if (klass) dd.className = klass;
+        node.appendChild(dt);
+        node.appendChild(dd);
+      }
+    }
+
+    function render(data) {
+      const bridge = data.bridge || {};
+      const pipeline = data.pipeline || {};
+      const hasPipeline = Boolean(pipeline.source);
+      const hasBridge = Boolean(bridge.source);
+      const live = hasPipeline || hasBridge;
+
+      els.liveDot.classList.toggle("live", live);
+      els.statusText.textContent = live
+        ? `updated ${new Date().toLocaleTimeString()}`
+        : "waiting for telemetry";
+
+      const hasTarget = get(bridge, "aim_command.has_target", get(pipeline, "aim_command.has_target", false));
+      const fire = get(bridge, "aim_command.fire_advice", get(pipeline, "aim_command.fire_advice", false));
+
+      setDl(els.runtime, [
+        ["bridge source", fmt(bridge.source)],
+        ["pipeline source", fmt(pipeline.source)],
+        ["mode", fmt(bridge.mode || pipeline.mode)],
+        ["following", fmt(bridge.simulator_following), bridge.simulator_following ? "ok" : "warn"],
+        ["frames", fmt(bridge.processed_frames, 0)],
+        ["image seq", fmt(get(bridge, "image.seq"), 0)],
+        ["image", `${fmt(get(bridge, "image.width"), 0)} x ${fmt(get(bridge, "image.height"), 0)}`],
+      ]);
+
+      setDl(els.gimbal, [
+        ["has feedback", fmt(get(bridge, "gimbal.has_feedback")), clsBool(get(bridge, "gimbal.has_feedback"))],
+        ["feedback source", fmt(get(bridge, "gimbal.feedback_source")), "accent"],
+        ["has runtime", fmt(get(bridge, "gimbal.has_runtime_gimbal")), clsBool(get(bridge, "gimbal.has_runtime_gimbal"))],
+        ["runtime local yaw", deg(get(bridge, "gimbal.runtime_local_yaw_deg")), "accent"],
+        ["runtime pitch", deg(get(bridge, "gimbal.runtime_pitch_deg")), "accent"],
+        ["global yaw", deg(get(bridge, "gimbal.global_yaw_deg"))],
+        ["chassis yaw", deg(get(bridge, "gimbal.chassis_yaw_deg"))],
+        ["sim local yaw", deg(get(bridge, "gimbal.simulator_local_yaw_deg"))],
+        ["vivsionn yaw input", deg(get(bridge, "gimbal.vivsionn_yaw_deg")), "accent"],
+        ["yaw adapter", fmt(get(bridge, "gimbal.yaw_adapter"))],
+        ["quat pitch", deg(get(bridge, "gimbal.pitch_deg"))],
+        ["pipeline yaw input", deg(get(pipeline, "input_gimbal_yaw_deg"))],
+        ["pipeline pitch input", deg(get(pipeline, "input_gimbal_pitch_deg"))],
+      ]);
+
+      setDl(els.command, [
+        ["has target", fmt(hasTarget), hasTarget ? "ok" : "warn"],
+        ["target yaw cmd", deg(get(bridge, "aim_command.yaw_deg", get(pipeline, "aim_command.yaw_deg"))), "accent"],
+        ["target pitch cmd", deg(get(bridge, "aim_command.pitch_deg", get(pipeline, "aim_command.pitch_deg"))), "accent"],
+        ["distance", meters(get(bridge, "aim_command.distance_m", get(pipeline, "aim_command.distance_m")))],
+        ["fire advice", fmt(fire), fire ? "ok" : "warn"],
+        ["raw shot mode", fmt(get(bridge, "aim_command.raw_shot_mode", get(pipeline, "aim_command.raw_shot_mode")), 0)],
+        ["selected camera", fmt(get(bridge, "aim_command.selected_camera", get(pipeline, "aim_command.selected_camera"))), "accent"],
+        ["selected focal", `${fmt(get(bridge, "aim_command.selected_focal_mm", get(pipeline, "aim_command.selected_focal_mm")), 1)} mm`],
+        ["backend", fmt(get(bridge, "aim_command.backend", pipeline.backend))],
+      ]);
+
+      setDl(els.calibration, [
+        ["extrinsic", fmt(get(pipeline, "calibration.extrinsic_enabled")), clsBool(get(pipeline, "calibration.extrinsic_enabled"))],
+        ["from config", fmt(get(pipeline, "calibration.extrinsic_from_config")), get(pipeline, "calibration.extrinsic_from_config") ? "ok" : "warn"],
+        ["R camera->gimbal", matrixText(get(pipeline, "calibration.R_camera2gimbal"), 3)],
+        ["t camera->gimbal", vec3(get(pipeline, "calibration.t_camera2gimbal_m"), 4)],
+        ["legacy H", meters(get(pipeline, "calibration.legacy_h_m"))],
+        ["aim offset cx/cy", `${fmt(get(pipeline, "calibration.aiming_cx_px"), 1)} / ${fmt(get(pipeline, "calibration.aiming_cy_px"), 1)} px`],
+        ["offset mutates K", fmt(get(pipeline, "calibration.apply_aiming_offset_to_intrinsics")), get(pipeline, "calibration.apply_aiming_offset_to_intrinsics") ? "warn" : "ok"],
+        ["K effective", matrixText(get(pipeline, "calibration.camera_matrix_effective"), 1)],
+        ["distortion", matrixText(get(pipeline, "calibration.distortion_coeffs"), 4)],
+      ]);
+
+      setDl(els.detector, [
+        ["det count", fmt(get(pipeline, "detector.count"), 0)],
+        ["solved count", fmt(pipeline.solved_count, 0)],
+        ["first num", fmt(get(pipeline, "detector.first.number"), 0)],
+        ["first color", fmt(get(pipeline, "detector.first.color"), 0)],
+        ["confidence", fmt(get(pipeline, "detector.first.confidence"), 4)],
+        ["center px", pxPoint(get(pipeline, "detector.first.center_px"))],
+        ["vertex order note", fmt(get(pipeline, "detector.first.detector_vertex_order_note"))],
+        ["subpixel delta", `${fmt(get(pipeline, "subpixel_refinement.mean_delta_px"), 2)} / ${fmt(get(pipeline, "subpixel_refinement.max_delta_px"), 2)} px`],
+        ["camera profile", fmt(get(pipeline, "camera.profile_id")), "accent"],
+        ["camera focal", `${fmt(get(pipeline, "camera.focal_mm"), 1)} mm`],
+        ["dual focal", `${fmt(get(pipeline, "dual_focal.reason"))} -> ${fmt(get(pipeline, "dual_focal.next_selected"))}`],
+        ["precision crop margin", `${fmt(get(pipeline, "dual_focal.precision_min_margin_px"), 1)} px`],
+        ["camera fx/fy", `${fmt(get(pipeline, "camera.fx"), 2)} / ${fmt(get(pipeline, "camera.fy"), 2)}`],
+        ["camera cx/cy", `${fmt(get(pipeline, "camera.cx"), 2)} / ${fmt(get(pipeline, "camera.cy"), 2)}`],
+      ]);
+
+      const target = pipeline.first_solved || {};
+      setDl(els.target, [
+        ["number", fmt(target.number, 0)],
+        ["type", fmt(target.type)],
+        ["color", fmt(target.color, 0)],
+        ["center px", pxPoint(target.center_px)],
+        ["image yaw", deg(target.image_yaw_deg), "accent"],
+        ["image pitch down+", deg(target.image_pitch_down_positive_deg), "accent"],
+        ["position yaw", deg(target.position_yaw_deg)],
+        ["position pitch", deg(target.position_pitch_deg)],
+        ["ypd yaw", deg(target.ypd_yaw_deg)],
+        ["ypd pitch", deg(target.ypd_pitch_deg)],
+        ["armor yaw", deg(target.armor_yaw_deg)],
+        ["distance", `${fmt(target.distance_mm, 1)} mm`],
+      ]);
+
+      setDl(els.tracker, [
+        ["detected", fmt(get(pipeline, "tracker.detected")), clsBool(get(pipeline, "tracker.detected"))],
+        ["tracker state", fmt(get(pipeline, "tracker.tracker_state"))],
+        ["update state", fmt(get(pipeline, "tracker.update_state"))],
+        ["movement", `${fmt(get(pipeline, "tracker.movement"))} (${fmt(get(pipeline, "tracker.movement_code"), 0)})`, "accent"],
+        ["v_t / v_r / v_xy", `${fmt(get(pipeline, "tracker.v_t"), 3)} / ${fmt(get(pipeline, "tracker.v_r"), 3)} / ${fmt(get(pipeline, "tracker.v_xy"), 3)}`],
+        ["last velocity", vec3(get(pipeline, "tracker.last_velocity"))],
+        ["target accel", vec3(get(pipeline, "tracker.target_accel"))],
+        ["obs count", fmt(get(pipeline, "tracker.observation_count"), 0)],
+        ["tracker inputs", fmt(get(pipeline, "tracker.tracker_input_count"), 0)],
+        ["primary obs", fmt(get(pipeline, "tracker.primary_observation_index"), 0)],
+        ["raw distance", meters(get(pipeline, "tracker.raw_distance_m"))],
+        ["target state", arrayText(get(pipeline, "tracker.target_state"), 3)],
+        ["state 11d", arrayText(get(pipeline, "tracker.target_state11d"), 3)],
+        ["motion uniform", fmt(get(pipeline, "tracker.fire_motion_uniform")), clsBool(get(pipeline, "tracker.fire_motion_uniform"))],
+        ["obs stable", fmt(get(pipeline, "tracker.fire_observation_stable")), clsBool(get(pipeline, "tracker.fire_observation_stable"))],
+        ["translation blocked", fmt(get(pipeline, "tracker.fire_motion_translation_blocked")), get(pipeline, "tracker.fire_motion_translation_blocked") ? "bad" : "ok"],
+        ["ctrl state", fmt(get(pipeline, "fire_control.aiming_state"), 0)],
+        ["shot mode", fmt(get(pipeline, "fire_control.shot_mode"), 0)],
+        ["control yaw", deg(get(pipeline, "fire_control.yaw_deg"))],
+        ["control pitch", deg(get(pipeline, "fire_control.pitch_deg"))],
+        ["raw yaw -> filtered", `${deg(get(pipeline, "fire_control.raw_command_yaw_deg"))} -> ${deg(get(pipeline, "fire_control.filtered_command_yaw_deg"))}`, "accent"],
+        ["raw pitch -> filtered", `${deg(get(pipeline, "fire_control.raw_command_pitch_deg"))} -> ${deg(get(pipeline, "fire_control.filtered_command_pitch_deg"))}`, "accent"],
+        ["yaw speed", degPerSec(get(pipeline, "fire_control.yaw_speed_deg_s"))],
+        ["planner / preview", `${fmt(get(pipeline, "fire_control.planner_active"))} / ${fmt(get(pipeline, "fire_control.preview_mpc_active"))}`],
+        ["static bypass", fmt(get(pipeline, "fire_control.yaw_static_mpc_bypass_active")), get(pipeline, "fire_control.yaw_static_mpc_bypass_active") ? "warn" : ""],
+        ["fire phase", fmt(get(pipeline, "fire_control.fire_phase_mode"))],
+        ["gate valid", fmt(get(pipeline, "fire_control.fire_gate_valid")), clsBool(get(pipeline, "fire_control.fire_gate_valid"))],
+        ["gate mcu", fmt(get(pipeline, "fire_control.fire_gate_mcu_permit")), clsBool(get(pipeline, "fire_control.fire_gate_mcu_permit"))],
+        ["gate stable", fmt(get(pipeline, "fire_control.fire_gate_command_stable")), clsBool(get(pipeline, "fire_control.fire_gate_command_stable"))],
+        ["gate follow", fmt(get(pipeline, "fire_control.fire_gate_follow")), clsBool(get(pipeline, "fire_control.fire_gate_follow"))],
+        ["gate preview", fmt(get(pipeline, "fire_control.fire_gate_preview")), clsBool(get(pipeline, "fire_control.fire_gate_preview"))],
+        ["gate impact", fmt(get(pipeline, "fire_control.fire_gate_impact_angle")), clsBool(get(pipeline, "fire_control.fire_gate_impact_angle"))],
+        ["gate motion", fmt(get(pipeline, "fire_control.fire_gate_motion_uniform")), clsBool(get(pipeline, "fire_control.fire_gate_motion_uniform"))],
+        ["gate obs", fmt(get(pipeline, "fire_control.fire_gate_observation_stable")), clsBool(get(pipeline, "fire_control.fire_gate_observation_stable"))],
+        ["slot count", fmt(get(pipeline, "fire_control.fire_viable_slot_count"), 0)],
+        ["next slot", `${fmt(get(pipeline, "fire_control.fire_next_slot_delay_ms"), 1)} ms`],
+        ["yaw fire err", deg(get(pipeline, "fire_control.yaw_fire_check_error_deg"))],
+        ["runtime total", `${fmt(get(pipeline, "fire_control.runtime.total_us"), 1)} us`],
+      ]);
+
+      setDl(els.transport, [
+        ["UDP yaw", deg(get(bridge, "simulator_udp_command.yaw_deg"))],
+        ["UDP pitch", deg(get(bridge, "simulator_udp_command.pitch_deg"))],
+        ["UDP distance", meters(get(bridge, "simulator_udp_command.distance_m"))],
+        ["UDP fire", fmt(get(bridge, "simulator_udp_command.fire_advice"))],
+        ["Talos yaw", deg(get(bridge, "talos_command.yaw_deg"))],
+        ["Talos pitch", deg(get(bridge, "talos_command.pitch_deg"))],
+        ["Talos distance", meters(get(bridge, "talos_command.distance_m"))],
+        ["Talos fire", fmt(get(bridge, "talos_command.fire_advice"))],
+      ]);
+
+      const armors = Array.isArray(pipeline.solved_armors) ? pipeline.solved_armors : [];
+      els.armors.innerHTML = armors.map((armor, index) => `
+        <tr>
+          <td>${index}</td>
+          <td>${fmt(armor.number, 0)}</td>
+          <td>${fmt(armor.type)}</td>
+          <td>${fmt(armor.color, 0)}</td>
+          <td>${pxPoint(armor.center_px)}</td>
+          <td>${deg(armor.image_yaw_deg)}</td>
+          <td>${deg(armor.image_pitch_down_positive_deg)}</td>
+          <td>${deg(armor.position_yaw_deg)}</td>
+          <td>${deg(armor.position_pitch_deg)}</td>
+          <td>${fmt(armor.distance_mm, 1)} mm</td>
+          <td>${deg(armor.armor_yaw_deg)}</td>
+        </tr>
+      `).join("");
+
+      els.raw.textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function poll() {
+      try {
+        const response = await fetch("/telemetry", { cache: "no-store" });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        render(await response.json());
+      } catch (error) {
+        els.liveDot.classList.remove("live");
+        els.statusText.textContent = `debug server error: ${error.message}`;
+      }
+    }
+
+    poll();
+    setInterval(poll, 250);
+  </script>
+</body>
+</html>

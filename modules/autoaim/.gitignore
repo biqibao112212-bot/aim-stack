@@ -1,0 +1,16 @@
+build/
+install/
+log/
+*.user
+*.suo
+*.swp
+*.pyc
+__pycache__/
+models/
+*.engine
+*.onnx
+*.trt
+*.avi
+*.mp4
+*.csv
+

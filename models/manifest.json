@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "asset_root_relative_to_workspace": "models/engines",
+  "policy": {
+    "protected": true,
+    "automatic_delete": false,
+    "missing_file_action": "fail_and_report",
+    "note": "模型、训练权重和不可再生训练数据不得被 Agent Team 自动清理。"
+  },
+  "assets": [
+    {
+      "name": "armor.engine",
+      "role": "自瞄装甲板 TensorRT engine",
+      "bytes": 6962108,
+      "sha256": "BF3DB6F2F9A6D71371E1D82CC9F03467EC9B3BD71E0549689E410469E2B839D4",
+      "source": "D:\\仿真\\aim_sim_bridge\\models\\armor.engine",
+      "protected": true
+    },
+    {
+      "name": "buff.engine",
+      "role": "历史打符 TensorRT engine",
+      "bytes": 9442540,
+      "sha256": "AD1A8E8B1FBA568A72FEF78C86812B06AFF49E04D3DB4926C33B0E720C7C77B8",
+      "source": "D:\\仿真\\aim_sim_bridge\\models\\buff.engine",
+      "protected": true
+    },
+    {
+      "name": "buff_yolov8n_pose_v4.engine",
+      "role": "历史打符 YOLOv8n pose v4 TensorRT engine",
+      "bytes": 10028844,
+      "sha256": "E24C3F90C4549D2F3BDBF9A2C6D9504E6EABDD39F49C2A1F05659B76C3A6D4DD",
+      "source": "D:\\仿真\\aim_sim_bridge\\models\\buff_yolov8n_pose_v4.engine",
+      "protected": true
+    },
+    {
+      "name": "buff-branch-b6.engine",
+      "role": "打符 B6 分支 TensorRT engine；与历史 buff.engine 不同，必须独立保留",
+      "bytes": 10478820,
+      "sha256": "59C08CB40FA71460B1D204CCCE9C28D34755309BE5548C68956A9A4E781D834E",
+      "source": "D:\\仿真\\worktrees\\energy-buff\\extensions\\aim_sim_bridge\\models\\buff.engine",
+      "protected": true
+    }
+  ]
+}

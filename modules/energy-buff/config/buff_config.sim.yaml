@@ -1,0 +1,71 @@
+yolo11_model_path: ../models/buff.engine
+
+buff_camera:
+  exposure_time_ms: 5
+  gain: 10
+
+buff_correction:
+  enabled: false
+  cx: 0
+  cy: 0
+
+buff_aimer:
+  yaw_offset: 0
+  pitch_offset: 0
+  fire_gap_time: 0.2
+  predict_time: 0
+  pitch_velocity_lead_time: 0.0
+
+buff_detector:
+  confidence_threshold: 0.8
+  nms_iou_threshold: 0.4
+  r_binary_threshold: 150
+  r_search_radius_scale: 1.15
+  r_search_radius_min: 18.0
+  r_search_radius_max: 140.0
+  r_min_area: 12.0
+  r_max_area: 1200.0
+  r_max_aspect_ratio: 1.8
+  r_min_circularity: 0.45
+  r_max_accept_ratio: 0.85
+  r_geometry_gate_scale: 4.0
+  r_geometry_gate_min: 40.0
+  r_geometry_gate_max: 260.0
+  r_yolo_gate_scale: 2.2
+  r_yolo_gate_min: 25.0
+  r_yolo_gate_max: 180.0
+  target_switch_missing_timeout_s: 0.2
+
+buff_tracker:
+  lost_timeout_s: 0.35
+  big_lost_timeout_s: 0.08
+  big_model_reset_timeout_s: 0.35
+  big_curve_ekf_fit_enabled: true
+  big_phase_process_noise: 0.02
+  big_a_process_noise: 1e-6
+  big_w_process_noise: 3e-6
+  big_measurement_noise_scale: 4.0
+  big_speed_measurement_enabled: true
+  big_speed_measurement_noise: 1.50
+  big_speed_measurement_gate: 1.2
+  big_speed_measurement_adaptive_scale: 0.0
+  big_speed_measurement_correction_limit: 0.0
+  big_curve_speed_slew_limit: 3.0
+  big_speed_measurement_window_samples: 16
+  big_speed_measurement_window_s: 0.30
+  big_speed_measurement_min_history: 20
+  big_curve_phi_correction_limit: 0.0
+
+buff_pipeline:
+  draw_yolo_results: false
+  draw_r_binary_mask: false
+  shot_gate_enabled: true
+  shot_gate_min_stable_frames: 3
+  shot_gate_max_pnp_reproj_error_px: 28.0
+  shot_gate_max_model_center_error_px: 8.0
+  shot_gate_max_yaw_error_deg: 2.5
+  shot_gate_max_pitch_error_deg: 2.5
+
+R_gimbal2imubody: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+R_camera2gimbal: [0, 0.0, 1, -1, 0, 0.0, 0.0, -1, 0]
+t_camera2gimbal: [0.0, 0.0, 0.07]

@@ -1,0 +1,16 @@
+{
+  "simulator": {
+    "repository_relative_to_workspace": "repos/daedalus-simulator",
+    "release_relative_to_workspace": "releases/daedalus-simulator/1.0.0",
+    "version": "1.0.0",
+    "sdk_version": "1.0.0",
+    "shm_version": 7,
+    "image": {
+      "format": "rgb24",
+      "width": 1440,
+      "height": 1080
+    },
+    "physics_hz": 250,
+    "image_transport": "tcp"
+  }
+}
