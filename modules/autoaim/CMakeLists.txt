@@ -12,6 +12,7 @@ option(AIM_SIM_BUILD_CONTROL_LOOP_TESTS "Build deterministic fixed-rate control 
 option(AIM_SIM_BUILD_PNP_CANDIDATE_TESTS "Build deterministic planar PnP candidate tests" ON)
 option(AIM_SIM_BUILD_TCP_IMAGE_TESTS "Build deterministic raw TCP image receiver tests" ON)
 option(AIM_SIM_BUILD_ARMOR_ASYNC_SCHEDULER_TESTS "Build deterministic armor async scheduler tests" ON)
+option(AIM_SIM_BUILD_SCENE_CONTROL_CLI "Build the SDK-only dynamic shooting-range control CLI" ON)
 option(AIM_SIM_TCP_IMAGE_TEST_SANITIZERS "Enable ASan/UBSan for raw TCP receiver tests" OFF)
 
 find_package(Eigen3 REQUIRED)
@@ -192,6 +193,15 @@ if(UNIX)
     aim_sim_tcp_image_receiver
     DaedalusSimSdk::DaedalusSimSdk
   )
+
+  if(AIM_SIM_BUILD_SCENE_CONTROL_CLI)
+    add_executable(aim_sim_scene_control_cli
+      src/sim_adapter/scene_control_cli.cpp
+    )
+    target_link_libraries(aim_sim_scene_control_cli PRIVATE
+      DaedalusSimSdk::DaedalusSimSdk
+    )
+  endif()
 endif()
 
 if(AIM_SIM_WITH_ROS2)

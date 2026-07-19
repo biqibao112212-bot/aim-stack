@@ -13,6 +13,8 @@ PRECISION_FOCAL_MM="${AIM_SIM_PRECISION_FOCAL_MM:-16.0}"
 ARMOR_ENGINE="${AIM_SIM_ARMOR_ENGINE:-${ROOT_DIR}/models/armor.engine}"
 IPC_DIR="${TALOS_IPC_DIR:-${ROOT_DIR}/../talos-ipc}"
 BULLET_SPEED_MPS="${AIM_SIM_BULLET_SPEED_MPS:-22.0}"
+SCENE_CONTROL_MODE="${AIM_SIM_SCENE_CONTROL_MODE:-off}"
+SCENE_CONTROL_HOST="${AIM_SIM_SCENE_CONTROL_HOST:-}"
 
 if [[ -f "${ROOT_DIR}/build/debug/force_fire_off" ]]; then
   ENABLE_FIRE=false
@@ -37,10 +39,31 @@ case "${FORCE_REBUILD^^}" in
     ;;
 esac
 
+if [[ "${SCENE_CONTROL_MODE}" == "shooting_range_g2" &&
+      ! -x "${BUILD_DIR}/aim_sim_scene_control_cli" ]]; then
+  SHOULD_BUILD=1
+fi
+
 if [[ "${SHOULD_BUILD}" == "1" || ! -x "${BRIDGE_BIN}" ]]; then
   AIM_SIM_WITH_VIVSIONN_TRT="${WITH_TRT}" "${ROOT_DIR}/scripts/build_wsl.sh"
 else
   echo "Using existing bridge binary: ${BRIDGE_BIN}"
+fi
+
+if [[ "${SCENE_CONTROL_MODE}" == "shooting_range_g2" ]]; then
+  SCENE_CONTROL_BIN="${BUILD_DIR}/aim_sim_scene_control_cli"
+  if [[ ! -x "${SCENE_CONTROL_BIN}" ]]; then
+    echo "Missing SDK scene-control CLI: ${SCENE_CONTROL_BIN}" >&2
+    exit 2
+  fi
+  if [[ -z "${SCENE_CONTROL_HOST}" ]]; then
+    echo "AIM_SIM_SCENE_CONTROL_HOST is required for WSL scene control" >&2
+    exit 2
+  fi
+  if ! "${SCENE_CONTROL_BIN}" --host "${SCENE_CONTROL_HOST}"; then
+    echo "shooting_range Scene Control ACK did not arrive" >&2
+    exit 2
+  fi
 fi
 
 mkdir -p "${IPC_DIR}"

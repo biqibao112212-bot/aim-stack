@@ -946,7 +946,151 @@ std::shared_ptr<rm::Armor> selectedReferenceArmor(
     return pitchReferenceArmor(solved);
 }
 
-std::string armorJson(const std::shared_ptr<rm::Armor>& armor, const cv::Mat& camera_matrix)
+std::string doubleVectorJson(const std::vector<double>& values)
+{
+    std::ostringstream out;
+    out << std::setprecision(10) << '[';
+    for (std::size_t index = 0; index < values.size(); ++index) {
+        if (index > 0) out << ',';
+        out << jsonNumber(values[index]);
+    }
+    out << ']';
+    return out.str();
+}
+
+std::string parallelJointCandidatesJson(
+    const std::vector<rm::ParallelJointPnPCandidate>& candidates)
+{
+    std::ostringstream out;
+    out << std::setprecision(10) << '[';
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        if (index > 0) out << ',';
+        const auto& candidate = candidates[index];
+        out << '{';
+        bool first = true;
+        debug::appendUInt(out, "id", candidate.id, first);
+        debug::appendBool(out, "selected", candidate.selected, first);
+        debug::appendNumber(out, "yaw_rad", candidate.yaw_rad, first);
+        debug::appendNumber(out, "yaw_deg", candidate.yaw_rad * rm::R2D, first);
+        debug::appendNumber(
+            out, "coarse_seed_yaw_deg", candidate.coarse_seed_yaw_rad * rm::R2D,
+            first);
+        debug::appendRaw(out, "rvec", mat3x1Json(candidate.rVec), first);
+        debug::appendRaw(out, "tvec_mm", mat3x1Json(candidate.tVec), first);
+        debug::appendNumber(
+            out, "reprojection_rms_px", candidate.reprojection_error_px, first);
+        debug::appendNumber(
+            out, "reprojection_max_px", candidate.max_reprojection_error_px, first);
+        debug::appendRaw(
+            out, "corner_residual_px", doubleVectorJson(candidate.corner_residual_px),
+            first);
+        debug::appendNumber(
+            out, "translation_linear_condition",
+            candidate.translation_linear_condition, first);
+        debug::appendNumber(
+            out, "translation_information_condition",
+            candidate.translation_information_condition, first);
+        debug::appendNumber(
+            out, "yaw_sensitivity_deg_per_px",
+            candidate.yaw_sensitivity_deg_per_px, first);
+        debug::appendBool(
+            out, "yaw_sensitivity_valid", candidate.yaw_sensitivity_valid, first);
+        debug::appendInt(out, "iterations", candidate.iterations, first);
+        debug::appendBool(out, "converged", candidate.converged, first);
+        debug::appendBool(out, "improved", candidate.improved, first);
+        debug::appendBool(out, "positive_depth", candidate.positive_depth, first);
+        debug::appendBool(out, "search_bound_hit", candidate.search_bound_hit, first);
+        out << '}';
+    }
+    out << ']';
+    return out.str();
+}
+
+std::string pnpParallelAbJson(const rm::Armor& armor)
+{
+    std::ostringstream out;
+    out << std::setprecision(10) << '{';
+    bool first = true;
+    debug::appendString(out, "schema", "pnp_joint_ab.v2", first);
+    debug::appendString(out, "orientation_frame", "tracker_chassis", first);
+    debug::appendString(out, "pose_projection", "exposure_camera", first);
+    debug::appendString(
+        out, "camera_parameters", "per_frame_effective_intrinsics_and_calibration_distortion",
+        first);
+    debug::appendString(out, "tracker_consumes", "exposure_constrained_chassis_yaw", first);
+    debug::appendNumber(
+        out, "fixed_tilt_deg",
+        armor.number == rm::Armor::LABEL::OUTPOST ? -15.0 : 15.0, first);
+
+    std::ostringstream legacy;
+    legacy << '{';
+    bool legacy_first = true;
+    debug::appendString(legacy, "method", "fixed_tvec_yaw_grid", legacy_first);
+    debug::appendNumber(
+        legacy, "yaw_absolute_deg",
+        (std::isfinite(armor.legacy_camera_fixed_yaw)
+             ? armor.legacy_camera_fixed_yaw
+             : armor.yaw_absolute) * rm::R2D,
+        legacy_first);
+    debug::appendNumber(
+        legacy, "reprojection_rms_px",
+        armor.legacy_constrained_reprojection_error_px, legacy_first);
+    debug::appendNumber(
+        legacy, "reprojection_max_px",
+        armor.legacy_constrained_max_reprojection_error_px, legacy_first);
+    debug::appendRaw(
+        legacy, "corner_residual_px",
+        doubleVectorJson(armor.legacy_constrained_corner_residual_px), legacy_first);
+    debug::appendRaw(legacy, "tvec_mm", mat3x1Json(armor.tVec), legacy_first);
+    legacy << '}';
+    debug::appendRaw(out, "legacy", legacy.str(), first);
+    debug::appendNumber(out, "corrected_chassis_yaw_deg", armor.yaw_absolute * rm::R2D, first);
+
+    std::ostringstream joint_refined;
+    joint_refined << '{';
+    bool refined_first = true;
+    debug::appendString(
+        joint_refined, "method", "fixed_tilt_joint_yaw_translation_lm", refined_first);
+    debug::appendString(
+        joint_refined, "corners", "subpixel_refined_bl_tl_tr_br", refined_first);
+    debug::appendNumber(
+        joint_refined, "solve_us", armor.parallel_joint_solve_us, refined_first);
+    debug::appendNumber(
+        joint_refined, "constrained_reprojection_rms_px",
+        armor.exposure_constrained_reprojection_error_px, refined_first);
+    debug::appendNumber(
+        joint_refined, "constrained_reprojection_max_px",
+        armor.exposure_constrained_max_reprojection_error_px, refined_first);
+    debug::appendRaw(
+        joint_refined, "constrained_corner_residual_px",
+        doubleVectorJson(armor.exposure_constrained_corner_residual_px), refined_first);
+    debug::appendRaw(
+        joint_refined, "candidates",
+        parallelJointCandidatesJson(armor.parallel_joint_candidates), refined_first);
+    joint_refined << '}';
+    debug::appendRaw(out, "joint_refined", joint_refined.str(), first);
+
+    std::ostringstream joint_raw;
+    joint_raw << '{';
+    bool raw_first = true;
+    debug::appendString(
+        joint_raw, "method", "fixed_tilt_joint_yaw_translation_lm", raw_first);
+    debug::appendString(joint_raw, "corners", "detector_raw_bl_tl_tr_br", raw_first);
+    debug::appendNumber(
+        joint_raw, "solve_us", armor.parallel_joint_raw_solve_us, raw_first);
+    debug::appendRaw(
+        joint_raw, "candidates",
+        parallelJointCandidatesJson(armor.parallel_joint_raw_candidates), raw_first);
+    joint_raw << '}';
+    debug::appendRaw(out, "joint_raw", joint_raw.str(), first);
+    out << '}';
+    return out.str();
+}
+
+std::string armorJson(
+    const std::shared_ptr<rm::Armor>& armor,
+    const cv::Mat& camera_matrix,
+    bool include_parallel_pnp = false)
 {
     if (!armor) return "null";
 
@@ -1012,6 +1156,11 @@ std::string armorJson(const std::shared_ptr<rm::Armor>& armor, const cv::Mat& ca
     debug::appendNumber(out, "armor_yaw_raw_deg", armor->yaw_raw * rm::R2D, first);
     debug::appendNumber(out, "distance_mm", armor->dis, first);
     debug::appendNumber(out, "distance_to_image_center_px", armor->distanceToImageCenter, first);
+    if (include_parallel_pnp &&
+        (!armor->parallel_joint_candidates.empty() ||
+         !armor->parallel_joint_raw_candidates.empty())) {
+        debug::appendRaw(out, "pnp_ab", pnpParallelAbJson(*armor), first);
+    }
     out << '}';
     return out.str();
 }
@@ -1071,13 +1220,15 @@ Eigen::Matrix3d exposureGimbalPoseRotation(
 }
 
 std::string armorsJson(
-    const std::vector<std::shared_ptr<rm::Armor>>& armors, const cv::Mat& camera_matrix)
+    const std::vector<std::shared_ptr<rm::Armor>>& armors,
+    const cv::Mat& camera_matrix,
+    bool include_parallel_pnp = false)
 {
     std::ostringstream out;
     out << '[';
     for (std::size_t i = 0; i < armors.size(); ++i) {
         if (i > 0) out << ',';
-        out << armorJson(armors[i], camera_matrix);
+        out << armorJson(armors[i], camera_matrix, include_parallel_pnp);
     }
     out << ']';
     return out.str();
@@ -2713,10 +2864,14 @@ private:
         debug::appendString(
             out, "pnp_reject_reason_when_unmatched",
             "no_finite_pnp_solution_or_nonpositive_distance", first);
-        debug::appendRaw(out, "solved_armors", armorsJson(solved, angle_solver_._cam_instant_matrix), first);
+        debug::appendRaw(
+            out, "solved_armors",
+            armorsJson(solved, angle_solver_._cam_instant_matrix, true), first);
         debug::appendRaw(
             out, "first_solved",
-            solved.empty() ? "null" : armorJson(solved.front(), angle_solver_._cam_instant_matrix),
+            solved.empty()
+                ? "null"
+                : armorJson(solved.front(), angle_solver_._cam_instant_matrix, true),
             first);
         debug::appendRaw(out, "tracker", tracker_json.str(), first);
         debug::appendRaw(out, "fire_control", control_json.str(), first);

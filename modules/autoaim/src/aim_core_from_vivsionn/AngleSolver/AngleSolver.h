@@ -79,6 +79,42 @@ public:
         const std::vector<cv::Point2f>& image_points,
         const cv::Mat& camera_matrix,
         const cv::Mat& distortion_coeffs = cv::Mat());
+    static std::vector<ParallelJointPnPCandidate> solveParallelJointPnPCandidates(
+        const std::vector<cv::Point3f>& armor_points,
+        const std::vector<cv::Point2f>& image_points,
+        const cv::Mat& camera_matrix,
+        const cv::Mat& distortion_coeffs,
+        double armor_tilt_rad);
+    static std::vector<ParallelJointPnPCandidate> solveParallelJointPnPCandidatesAtExposure(
+        const std::vector<cv::Point3f>& armor_points,
+        const std::vector<cv::Point2f>& image_points,
+        const cv::Mat& camera_matrix,
+        const cv::Mat& distortion_coeffs,
+        double armor_tilt_rad,
+        double gimbal_pitch_rad,
+        double gimbal_yaw_rad);
+    static double constrainedPoseReprojectionError(
+        const std::vector<cv::Point3f>& armor_points,
+        const std::vector<cv::Point2f>& image_points,
+        const cv::Mat& camera_matrix,
+        const cv::Mat& distortion_coeffs,
+        double armor_yaw_rad,
+        double armor_tilt_rad,
+        const cv::Mat& tvec,
+        double* max_error_px = nullptr,
+        std::vector<double>* corner_residual_px = nullptr);
+    static double constrainedPoseReprojectionErrorAtExposure(
+        const std::vector<cv::Point3f>& armor_points,
+        const std::vector<cv::Point2f>& image_points,
+        const cv::Mat& camera_matrix,
+        const cv::Mat& distortion_coeffs,
+        double armor_yaw_rad,
+        double armor_tilt_rad,
+        double gimbal_pitch_rad,
+        double gimbal_yaw_rad,
+        const cv::Mat& tvec,
+        double* max_error_px = nullptr,
+        std::vector<double>* corner_residual_px = nullptr);
 
     float calculateDistanceToCenter(const cv::Point2f& image_point);
     cv::Point2f calculateImagePoint(Eigen::Vector3d gimbal_point);

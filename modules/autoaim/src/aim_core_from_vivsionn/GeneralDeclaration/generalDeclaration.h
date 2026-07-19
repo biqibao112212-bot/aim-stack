@@ -187,6 +187,83 @@ struct PnPCandidate
     PnPCandidate& operator=(PnPCandidate&&) noexcept = default;
 };
 
+// Diagnostic-only constrained armor pose candidate. It is deliberately
+// separate from PnPCandidate: IPPE ranks a free 6-DoF planar pose, while this
+// candidate fixes the armor tilt and jointly optimizes camera-frame yaw+tvec.
+// The tracker and legacy selected pose never consume this sidecar.
+struct ParallelJointPnPCandidate
+{
+    std::uint32_t id = 0;
+    double yaw_rad = std::numeric_limits<double>::quiet_NaN();
+    cv::Mat rVec = cv::Mat::zeros(3, 1, CV_64FC1);
+    cv::Mat tVec = cv::Mat::zeros(3, 1, CV_64FC1);
+    double reprojection_error_px = std::numeric_limits<double>::infinity();
+    double max_reprojection_error_px = std::numeric_limits<double>::infinity();
+    std::vector<double> corner_residual_px;
+    double translation_linear_condition = std::numeric_limits<double>::infinity();
+    double translation_information_condition = std::numeric_limits<double>::infinity();
+    double yaw_sensitivity_deg_per_px = std::numeric_limits<double>::infinity();
+    bool yaw_sensitivity_valid = false;
+    double coarse_seed_yaw_rad = std::numeric_limits<double>::quiet_NaN();
+    int iterations = 0;
+    bool converged = false;
+    bool improved = false;
+    bool positive_depth = false;
+    bool search_bound_hit = false;
+    bool selected = false;
+
+    ParallelJointPnPCandidate() = default;
+
+    ParallelJointPnPCandidate(const ParallelJointPnPCandidate& other)
+        : id(other.id),
+          yaw_rad(other.yaw_rad),
+          rVec(other.rVec.clone()),
+          tVec(other.tVec.clone()),
+          reprojection_error_px(other.reprojection_error_px),
+          max_reprojection_error_px(other.max_reprojection_error_px),
+          corner_residual_px(other.corner_residual_px),
+          translation_linear_condition(other.translation_linear_condition),
+          translation_information_condition(other.translation_information_condition),
+          yaw_sensitivity_deg_per_px(other.yaw_sensitivity_deg_per_px),
+          yaw_sensitivity_valid(other.yaw_sensitivity_valid),
+          coarse_seed_yaw_rad(other.coarse_seed_yaw_rad),
+          iterations(other.iterations),
+          converged(other.converged),
+          improved(other.improved),
+          positive_depth(other.positive_depth),
+          search_bound_hit(other.search_bound_hit),
+          selected(other.selected)
+    {
+    }
+
+    ParallelJointPnPCandidate& operator=(const ParallelJointPnPCandidate& other)
+    {
+        if (this == &other) return *this;
+        id = other.id;
+        yaw_rad = other.yaw_rad;
+        rVec = other.rVec.clone();
+        tVec = other.tVec.clone();
+        reprojection_error_px = other.reprojection_error_px;
+        max_reprojection_error_px = other.max_reprojection_error_px;
+        corner_residual_px = other.corner_residual_px;
+        translation_linear_condition = other.translation_linear_condition;
+        translation_information_condition = other.translation_information_condition;
+        yaw_sensitivity_deg_per_px = other.yaw_sensitivity_deg_per_px;
+        yaw_sensitivity_valid = other.yaw_sensitivity_valid;
+        coarse_seed_yaw_rad = other.coarse_seed_yaw_rad;
+        iterations = other.iterations;
+        converged = other.converged;
+        improved = other.improved;
+        positive_depth = other.positive_depth;
+        search_bound_hit = other.search_bound_hit;
+        selected = other.selected;
+        return *this;
+    }
+
+    ParallelJointPnPCandidate(ParallelJointPnPCandidate&&) noexcept = default;
+    ParallelJointPnPCandidate& operator=(ParallelJointPnPCandidate&&) noexcept = default;
+};
+
 struct Armor
 {
     // [修复] 加上这个宏，防止 Eigen 内存未对齐导致的崩溃
@@ -209,11 +286,29 @@ struct Armor
 
     Eigen::Vector3d armorPosition; ///< 装甲板在惯性系下的3D坐标(m)
     std::vector<PnPCandidate> pnp_candidates;
+    std::vector<ParallelJointPnPCandidate> parallel_joint_candidates;
+    std::vector<ParallelJointPnPCandidate> parallel_joint_raw_candidates;
+    double legacy_constrained_reprojection_error_px =
+        std::numeric_limits<double>::infinity();
+    double legacy_constrained_max_reprojection_error_px =
+        std::numeric_limits<double>::infinity();
+    std::vector<double> legacy_constrained_corner_residual_px;
+    double exposure_constrained_reprojection_error_px =
+        std::numeric_limits<double>::infinity();
+    double exposure_constrained_max_reprojection_error_px =
+        std::numeric_limits<double>::infinity();
+    std::vector<double> exposure_constrained_corner_residual_px;
+    double parallel_joint_solve_us = 0.0;
+    double parallel_joint_raw_solve_us = 0.0;
     Eigen::Vector3d ypd = Eigen::Vector3d::Zero(); ///< yaw / pitch / distance
     Eigen::Vector3d hitPosRight, hitPosLeft, hitPosUp, hitPosDown;
     double yaw; ///< 相对于机器人中心的角度（弧度），云台转，这个角度不变
-    double yaw_absolute; ///< 相对于摄像头的角度（弧度）-pi/2~pi/2
+    // Corrected constrained-PnP yaw in the tracker/chassis frame.  The
+    // +15-degree armor tilt is also defined in this frame and is projected
+    // through the exposure gimbal pose before solving.
+    double yaw_absolute;
     double yaw_raw = 0.0; ///< PnP姿态直接给出的装甲板yaw
+    double legacy_camera_fixed_yaw = std::numeric_limits<double>::quiet_NaN();
     double R;
     bool has_explicit_ypd = false;
 

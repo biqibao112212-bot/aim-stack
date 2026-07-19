@@ -49,6 +49,11 @@ camera/gimbal extrinsics, armor PnP, tracker inputs, or `calculateImagePoint()`.
    that observation before PnP/tracker update. Never substitute the current local
    joint pose for an older image; hold the previous valid command/state until a
    contract-complete exposure arrives.
+10. The ordinary-armor `+15 degree` pitch tilt is fixed in tracker/chassis
+    coordinates. Build the armor yaw/tilt rotation there, then project it through
+    the exposure-matched gimbal pose into the OpenCV camera frame. Production
+    `Armor::yaw` and `Armor::yaw_absolute` are tracker/chassis yaw; a camera-fixed
+    value may exist only as explicitly labelled diagnostic telemetry.
 
 ## Required validation
 

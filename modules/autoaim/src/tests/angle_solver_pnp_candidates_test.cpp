@@ -40,6 +40,173 @@ std::vector<cv::Point2f> makePlanarObservation(
     return image_points;
 }
 
+cv::Mat cameraFromTrackerAtExposure(double gimbal_pitch_rad, double gimbal_yaw_rad)
+{
+    const double cy = std::cos(gimbal_yaw_rad);
+    const double sy = std::sin(gimbal_yaw_rad);
+    const double cp = std::cos(gimbal_pitch_rad);
+    const double sp = std::sin(gimbal_pitch_rad);
+    const cv::Mat yaw_inverse =
+        (cv::Mat_<double>(3, 3) << cy, 0, -sy, 0, 1, 0, sy, 0, cy);
+    const cv::Mat pitch_inverse =
+        (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, cp, sp, 0, -sp, cp);
+    const cv::Mat base =
+        (cv::Mat_<double>(3, 3) << 0, -1, 0, 0, 0, -1, 1, 0, 0);
+    return pitch_inverse * yaw_inverse * base;
+}
+
+cv::Mat constrainedArmorRotation(
+    double yaw_rad, double tilt_rad, const cv::Mat& camera_from_tracker)
+{
+    const double cy = std::cos(yaw_rad);
+    const double sy = std::sin(yaw_rad);
+    const double ct = std::cos(tilt_rad);
+    const double st = std::sin(tilt_rad);
+    const cv::Mat yaw =
+        (cv::Mat_<double>(3, 3) << cy, -sy, 0, sy, cy, 0, 0, 0, 1);
+    const cv::Mat pitch =
+        (cv::Mat_<double>(3, 3) << ct, 0, st, 0, 1, 0, -st, 0, ct);
+    return camera_from_tracker * yaw * pitch;
+}
+
+std::vector<cv::Point2f> makeConstrainedObservation(
+    const std::vector<cv::Point3f>& armor_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion,
+    double yaw_rad,
+    double tilt_rad,
+    double depth_mm,
+    double gimbal_pitch_rad = 0.0,
+    double gimbal_yaw_rad = 0.0)
+{
+    cv::Mat rvec;
+    cv::Rodrigues(
+        constrainedArmorRotation(
+            yaw_rad, tilt_rad,
+            cameraFromTrackerAtExposure(gimbal_pitch_rad, gimbal_yaw_rad)),
+        rvec);
+    const cv::Mat tvec =
+        (cv::Mat_<double>(3, 1) << 120.0, -35.0, depth_mm);
+    std::vector<cv::Point2f> image_points;
+    cv::projectPoints(
+        armor_points, rvec, tvec, camera_matrix, distortion, image_points);
+    return image_points;
+}
+
+void verifyNonzeroExposurePose(
+    const std::vector<cv::Point3f>& armor_points,
+    const cv::Mat& camera_matrix)
+{
+    const cv::Mat distortion =
+        (cv::Mat_<double>(1, 5) << -0.08, 0.02, 0.0004, -0.0003, 0.0);
+    const double yaw_rad = 37.0 * rm::D2R;
+    const double tilt_rad = 15.0 * rm::D2R;
+    const double gimbal_pitch_rad = 7.0 * rm::D2R;
+    const double gimbal_yaw_rad = -11.0 * rm::D2R;
+    const double depth_mm = 5000.0;
+    const std::vector<cv::Point2f> image_points = makeConstrainedObservation(
+        armor_points, camera_matrix, distortion, yaw_rad, tilt_rad, depth_mm,
+        gimbal_pitch_rad, gimbal_yaw_rad);
+
+    const auto candidates = rm::AngleSolver::solveParallelJointPnPCandidatesAtExposure(
+        armor_points, image_points, camera_matrix, distortion, tilt_rad,
+        gimbal_pitch_rad, gimbal_yaw_rad);
+    require(!candidates.empty(), "exposure-pose solver returned no synthetic candidate");
+    require(std::abs(candidates.front().yaw_rad - yaw_rad) < 0.1 * rm::D2R,
+            "exposure-pose solver did not recover chassis yaw");
+    require(candidates.front().reprojection_error_px < 1e-3,
+            "exposure-pose solver synthetic reprojection error is too large");
+
+    const cv::Mat exact_tvec =
+        (cv::Mat_<double>(3, 1) << 120.0, -35.0, depth_mm);
+    double max_error_px = 0.0;
+    const double exact_error_px =
+        rm::AngleSolver::constrainedPoseReprojectionErrorAtExposure(
+            armor_points, image_points, camera_matrix, distortion, yaw_rad,
+            tilt_rad, gimbal_pitch_rad, gimbal_yaw_rad, exact_tvec, &max_error_px);
+    require(exact_error_px < 1e-4 && max_error_px < 1e-4,
+            "exposure-pose reprojection diagnostic rejects exact pose");
+
+    const auto zero_pose = rm::AngleSolver::solveParallelJointPnPCandidates(
+        armor_points, makeConstrainedObservation(
+                          armor_points, camera_matrix, distortion, yaw_rad, tilt_rad,
+                          depth_mm),
+        camera_matrix, distortion, tilt_rad);
+    const auto zero_pose_explicit = rm::AngleSolver::solveParallelJointPnPCandidatesAtExposure(
+        armor_points, makeConstrainedObservation(
+                          armor_points, camera_matrix, distortion, yaw_rad, tilt_rad,
+                          depth_mm),
+        camera_matrix, distortion, tilt_rad, 0.0, 0.0);
+    require(!zero_pose.empty() && !zero_pose_explicit.empty(),
+            "zero-pose solver regression returned no candidate");
+    require(std::abs(zero_pose.front().yaw_rad - zero_pose_explicit.front().yaw_rad) <
+                1e-9,
+            "legacy and explicit zero-pose models diverged");
+}
+
+void verifyParallelJointSolver(
+    const std::vector<cv::Point3f>& armor_points,
+    const cv::Mat& camera_matrix)
+{
+    const cv::Mat distortion =
+        (cv::Mat_<double>(1, 5) << -0.08, 0.02, 0.0004, -0.0003, 0.0);
+    const std::vector<double> yaw_deg_cases = {-70.0, -30.0, 0.0, 30.0, 70.0};
+    const std::vector<double> depths_mm = {3000.0, 5000.0, 7000.0};
+    const double tilt_rad = 15.0 * rm::D2R;
+    for (const double depth_mm : depths_mm) {
+        for (const double yaw_deg : yaw_deg_cases) {
+            const double yaw_rad = yaw_deg * rm::D2R;
+            const std::vector<cv::Point2f> image_points = makeConstrainedObservation(
+                armor_points, camera_matrix, distortion, yaw_rad, tilt_rad,
+                depth_mm);
+            const std::vector<rm::ParallelJointPnPCandidate> candidates =
+                rm::AngleSolver::solveParallelJointPnPCandidates(
+                    armor_points, image_points, camera_matrix, distortion, tilt_rad);
+            require(!candidates.empty(), "joint solver returned no synthetic candidate");
+            const auto& selected = candidates.front();
+            require(selected.selected, "joint solver did not select rank zero");
+            require(selected.positive_depth, "joint solver selected nonpositive depth");
+            require(
+                std::abs(selected.yaw_rad - yaw_rad) < 0.1 * rm::D2R,
+                "joint solver did not recover synthetic yaw");
+            require(
+                selected.reprojection_error_px < 1e-3,
+                "joint solver synthetic reprojection error is too large");
+            require(
+                yaw_deg == 0.0 ||
+                    (selected.yaw_sensitivity_valid &&
+                     std::isfinite(selected.yaw_sensitivity_deg_per_px) &&
+                     selected.yaw_sensitivity_deg_per_px > 0.0),
+                "joint solver yaw sensitivity is invalid");
+
+            double max_error_px = 0.0;
+            std::vector<double> corner_error_px;
+            const cv::Mat exact_tvec =
+                (cv::Mat_<double>(3, 1) << 120.0, -35.0, depth_mm);
+            const double exact_error_px =
+                rm::AngleSolver::constrainedPoseReprojectionError(
+                    armor_points, image_points, camera_matrix, distortion,
+                    yaw_rad, tilt_rad, exact_tvec, &max_error_px,
+                    &corner_error_px);
+            require(
+                exact_error_px < 1e-4 && max_error_px < 1e-4 &&
+                    corner_error_px.size() == armor_points.size(),
+                "constrained reprojection diagnostic rejects exact pose");
+        }
+    }
+
+    std::vector<cv::Point2f> invalid_points = makeConstrainedObservation(
+        armor_points, camera_matrix, distortion, 20.0 * rm::D2R,
+        15.0 * rm::D2R, 3000.0);
+    invalid_points[2].x = std::numeric_limits<float>::quiet_NaN();
+    require(
+        rm::AngleSolver::solveParallelJointPnPCandidates(
+            armor_points, invalid_points, camera_matrix, distortion,
+            15.0 * rm::D2R)
+            .empty(),
+        "joint solver accepted invalid observations");
+}
+
 } // namespace
 
 int main()
@@ -48,6 +215,8 @@ int main()
         const cv::Mat camera_matrix =
             (cv::Mat_<double>(3, 3) << 1280.0, 0.0, 640.0, 0.0, 1275.0, 512.0, 0.0, 0.0, 1.0);
         const std::vector<cv::Point3f> armor_points = smallArmorPoints();
+        verifyParallelJointSolver(armor_points, camera_matrix);
+        verifyNonzeroExposurePose(armor_points, camera_matrix);
         const std::vector<cv::Point2f> image_points =
             makePlanarObservation(armor_points, camera_matrix);
 

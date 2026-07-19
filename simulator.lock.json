@@ -1,11 +1,13 @@
 {
   "simulator": {
     "repository_relative_to_workspace": "repos/daedalus-simulator",
-    "release_relative_to_workspace": "releases/daedalus-simulator/1.0.0",
-    "version": "1.0.0",
+    "release_relative_to_workspace": "releases/daedalus-simulator/1.0.1",
+    "version": "1.0.1",
+    "source_commit": "b0de9c0b025ad49d06a2b53d7e5f3acadf8ea040",
     "sdk_version": "1.0.0",
     "shm_version": 7,
     "sdk_abi_revision": 1,
+    "metadata_size": 76992,
     "image": {
       "format": "rgb24",
       "width": 1440,
@@ -13,6 +15,9 @@
     },
     "physics_hz": 250,
     "image_transport": "tcp",
+    "tcp_image_protocol": 1,
+    "tcp_image_port": 5602,
+    "udp_command_port": 5601,
     "scene_control_protocol": 1,
     "scene_control_port": 5603,
     "consumer_guide": {

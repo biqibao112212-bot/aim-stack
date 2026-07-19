@@ -1,9 +1,15 @@
 #include "AngleSolver.h"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
+#include <chrono>
+#include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
+#include <string>
+#include <utility>
 
 namespace rm
 {
@@ -16,6 +22,458 @@ constexpr double kArmorTiltRad = 15.0 * D2R;
 double armorTiltForNumber(int armor_number)
 {
     return armor_number == Armor::LABEL::OUTPOST ? -kArmorTiltRad : kArmorTiltRad;
+}
+
+constexpr double kParallelYawLimitRad = 89.0 * D2R;
+
+bool parallelJointDiagnosticsEnabled()
+{
+    const char* raw = std::getenv("AIM_SIM_PNP_PARALLEL_JOINT_DIAGNOSTICS");
+    if (raw == nullptr) return false;
+    std::string value(raw);
+    std::transform(
+        value.begin(), value.end(), value.begin(),
+        [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value == "1" || value == "true" || value == "on" || value == "yes";
+}
+
+cv::Mat legacyCameraFromTracker()
+{
+    return (cv::Mat_<double>(3, 3) << 0, -1, 0, 0, 0, -1, 1, 0, 0);
+}
+
+cv::Mat cameraFromTrackerAtExposure(double gimbal_pitch_rad, double gimbal_yaw_rad)
+{
+    // This is the exact inverse of cameraPointToTrackerConvention():
+    // tracker = P * R_yaw(gimbal) * R_pitch(-gimbal_pitch) * camera.
+    // The armor tilt/yaw below are therefore expressed in the tracker/chassis
+    // frame, then transformed back into the exposure camera frame.
+    const double cy = std::cos(gimbal_yaw_rad);
+    const double sy = std::sin(gimbal_yaw_rad);
+    const double cp = std::cos(gimbal_pitch_rad);
+    const double sp = std::sin(gimbal_pitch_rad);
+    const cv::Mat R_yaw_inverse =
+        (cv::Mat_<double>(3, 3) << cy, 0, -sy, 0, 1, 0, sy, 0, cy);
+    const cv::Mat R_pitch_inverse_of_stabilization =
+        (cv::Mat_<double>(3, 3) << 1, 0, 0, 0, cp, sp, 0, -sp, cp);
+    return R_pitch_inverse_of_stabilization * R_yaw_inverse * legacyCameraFromTracker();
+}
+
+cv::Mat constrainedArmorRotation(
+    double yaw_rad, double armor_tilt_rad, const cv::Mat& camera_from_tracker)
+{
+    const double cy = std::cos(yaw_rad);
+    const double sy = std::sin(yaw_rad);
+    const double ct = std::cos(armor_tilt_rad);
+    const double st = std::sin(armor_tilt_rad);
+    const cv::Mat R_yaw =
+        (cv::Mat_<double>(3, 3) << cy, -sy, 0, sy, cy, 0, 0, 0, 1);
+    const cv::Mat R_pitch =
+        (cv::Mat_<double>(3, 3) << ct, 0, st, 0, 1, 0, -st, 0, ct);
+    return camera_from_tracker * R_yaw * R_pitch;
+}
+
+double optimizeYawWithModel(
+    const std::vector<cv::Point3f>& points_3d,
+    const std::vector<cv::Point2f>& points_2d,
+    const cv::Mat& tvec,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs)
+{
+    if (points_3d.size() != points_2d.size() || points_3d.size() < 4 ||
+        tvec.total() != 3 || !cv::checkRange(tvec)) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    auto error_at = [&](double yaw_deg) {
+        cv::Mat rvec;
+        cv::Rodrigues(
+            constrainedArmorRotation(yaw_deg * D2R, armor_tilt_rad, camera_from_tracker),
+            rvec);
+        std::vector<cv::Point2f> projected;
+        try {
+            cv::projectPoints(
+                points_3d, rvec, tvec, camera_matrix, distortion_coeffs, projected);
+        } catch (const cv::Exception&) {
+            return std::numeric_limits<double>::infinity();
+        }
+        if (projected.size() != points_2d.size()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        double error = 0.0;
+        for (std::size_t index = 0; index < points_2d.size(); ++index) {
+            error += cv::norm(projected[index] - points_2d[index]);
+        }
+        return std::isfinite(error) ? error : std::numeric_limits<double>::infinity();
+    };
+
+    double best_yaw_deg = 0.0;
+    double min_error = std::numeric_limits<double>::infinity();
+    for (double yaw_deg = -80.0; yaw_deg <= 80.0; yaw_deg += 2.0) {
+        const double error = error_at(yaw_deg);
+        if (error < min_error) {
+            min_error = error;
+            best_yaw_deg = yaw_deg;
+        }
+    }
+    if (!std::isfinite(min_error)) return std::numeric_limits<double>::quiet_NaN();
+
+    const double coarse_best = best_yaw_deg;
+    min_error = std::numeric_limits<double>::infinity();
+    for (double yaw_deg = coarse_best - 2.0; yaw_deg <= coarse_best + 2.0;
+         yaw_deg += 0.1) {
+        const double error = error_at(yaw_deg);
+        if (error < min_error) {
+            min_error = error;
+            best_yaw_deg = yaw_deg;
+        }
+    }
+    return best_yaw_deg * D2R;
+}
+
+struct ConstrainedPoseEvaluation
+{
+    cv::Mat rvec;
+    cv::Mat residual;
+    std::vector<double> corner_residual_px;
+    double rms_px = std::numeric_limits<double>::infinity();
+    double max_px = std::numeric_limits<double>::infinity();
+};
+
+bool evaluateConstrainedPose(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double yaw_rad,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    const cv::Mat& tvec,
+    ConstrainedPoseEvaluation& evaluation)
+{
+    if (armor_points.size() != image_points.size() || armor_points.size() < 4 ||
+        tvec.total() != 3 || !cv::checkRange(tvec)) {
+        return false;
+    }
+
+    cv::Mat tvec64;
+    try {
+        tvec.reshape(1, 3).convertTo(tvec64, CV_64F);
+    } catch (const cv::Exception&) {
+        return false;
+    }
+
+    const cv::Mat rotation = constrainedArmorRotation(
+        yaw_rad, armor_tilt_rad, camera_from_tracker);
+    for (const auto& point : armor_points) {
+        const cv::Mat object_point =
+            (cv::Mat_<double>(3, 1) << point.x, point.y, point.z);
+        const cv::Mat camera_point = rotation * object_point + tvec64;
+        if (!cv::checkRange(camera_point) || camera_point.at<double>(2, 0) <= 1e-6) {
+            return false;
+        }
+    }
+
+    try {
+        cv::Rodrigues(rotation, evaluation.rvec);
+    } catch (const cv::Exception&) {
+        return false;
+    }
+
+    std::vector<cv::Point2f> projected;
+    try {
+        cv::projectPoints(
+            armor_points, evaluation.rvec, tvec64, camera_matrix, distortion_coeffs,
+            projected);
+    } catch (const cv::Exception&) {
+        return false;
+    }
+    if (projected.size() != image_points.size()) return false;
+
+    evaluation.residual = cv::Mat::zeros(
+        static_cast<int>(2 * image_points.size()), 1, CV_64F);
+    evaluation.corner_residual_px.clear();
+    evaluation.corner_residual_px.reserve(image_points.size());
+    double squared_error_sum = 0.0;
+    double max_error = 0.0;
+    for (std::size_t index = 0; index < image_points.size(); ++index) {
+        const double dx = static_cast<double>(projected[index].x - image_points[index].x);
+        const double dy = static_cast<double>(projected[index].y - image_points[index].y);
+        if (!std::isfinite(dx) || !std::isfinite(dy)) return false;
+        evaluation.residual.at<double>(static_cast<int>(2 * index), 0) = dx;
+        evaluation.residual.at<double>(static_cast<int>(2 * index + 1), 0) = dy;
+        const double norm = std::hypot(dx, dy);
+        evaluation.corner_residual_px.push_back(norm);
+        squared_error_sum += dx * dx + dy * dy;
+        max_error = std::max(max_error, norm);
+    }
+    evaluation.rms_px =
+        std::sqrt(squared_error_sum / static_cast<double>(image_points.size()));
+    evaluation.max_px = max_error;
+    return std::isfinite(evaluation.rms_px) && std::isfinite(evaluation.max_px);
+}
+
+bool solveTranslationForConstrainedRotation(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double yaw_rad,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    cv::Mat& tvec,
+    double& linear_condition)
+{
+    if (armor_points.size() != image_points.size() || armor_points.size() < 4) {
+        return false;
+    }
+
+    std::vector<cv::Point2f> normalized_points;
+    try {
+        cv::undistortPoints(
+            image_points, normalized_points, camera_matrix, distortion_coeffs);
+    } catch (const cv::Exception&) {
+        return false;
+    }
+    if (normalized_points.size() != image_points.size()) return false;
+
+    const cv::Mat rotation = constrainedArmorRotation(
+        yaw_rad, armor_tilt_rad, camera_from_tracker);
+    cv::Mat A = cv::Mat::zeros(static_cast<int>(2 * armor_points.size()), 3, CV_64F);
+    cv::Mat b = cv::Mat::zeros(static_cast<int>(2 * armor_points.size()), 1, CV_64F);
+    for (std::size_t index = 0; index < armor_points.size(); ++index) {
+        const auto& point = armor_points[index];
+        const cv::Mat object_point =
+            (cv::Mat_<double>(3, 1) << point.x, point.y, point.z);
+        const cv::Mat rotated = rotation * object_point;
+        const double x = normalized_points[index].x;
+        const double y = normalized_points[index].y;
+        if (!std::isfinite(x) || !std::isfinite(y) || !cv::checkRange(rotated)) {
+            return false;
+        }
+
+        const int row = static_cast<int>(2 * index);
+        A.at<double>(row, 0) = 1.0;
+        A.at<double>(row, 2) = -x;
+        b.at<double>(row, 0) = x * rotated.at<double>(2, 0) - rotated.at<double>(0, 0);
+        A.at<double>(row + 1, 1) = 1.0;
+        A.at<double>(row + 1, 2) = -y;
+        b.at<double>(row + 1, 0) =
+            y * rotated.at<double>(2, 0) - rotated.at<double>(1, 0);
+    }
+
+    cv::Mat singular_values;
+    try {
+        cv::SVD::compute(A, singular_values);
+    } catch (const cv::Exception&) {
+        return false;
+    }
+    if (singular_values.total() < 3 || !cv::checkRange(singular_values)) return false;
+    const double largest = singular_values.at<double>(0, 0);
+    const double smallest = singular_values.at<double>(2, 0);
+    if (!std::isfinite(largest) || !std::isfinite(smallest) || smallest <= 1e-12) {
+        return false;
+    }
+    linear_condition = largest / smallest;
+
+    try {
+        if (!cv::solve(A, b, tvec, cv::DECOMP_SVD)) return false;
+    } catch (const cv::Exception&) {
+        return false;
+    }
+    return tvec.total() == 3 && cv::checkRange(tvec);
+}
+
+bool jointNumericalJacobian(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    const std::array<double, 4>& parameters,
+    const ConstrainedPoseEvaluation& base,
+    cv::Mat& jacobian)
+{
+    const std::array<double, 4> epsilon = {{1e-5, 0.1, 0.1, 0.1}};
+    jacobian = cv::Mat::zeros(base.residual.rows, 4, CV_64F);
+    for (int column = 0; column < 4; ++column) {
+        std::array<double, 4> perturbed = parameters;
+        perturbed[static_cast<std::size_t>(column)] += epsilon[static_cast<std::size_t>(column)];
+        const cv::Mat perturbed_tvec =
+            (cv::Mat_<double>(3, 1) << perturbed[1], perturbed[2], perturbed[3]);
+        ConstrainedPoseEvaluation next;
+        if (!evaluateConstrainedPose(
+                armor_points, image_points, camera_matrix, distortion_coeffs,
+                perturbed[0], armor_tilt_rad, camera_from_tracker,
+                perturbed_tvec, next) ||
+            next.residual.rows != base.residual.rows) {
+            return false;
+        }
+        for (int row = 0; row < base.residual.rows; ++row) {
+            jacobian.at<double>(row, column) =
+                (next.residual.at<double>(row, 0) - base.residual.at<double>(row, 0)) /
+                epsilon[static_cast<std::size_t>(column)];
+        }
+    }
+    return cv::checkRange(jacobian);
+}
+
+ParallelJointPnPCandidate refineParallelJointCandidate(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    double coarse_seed_yaw_rad,
+    const cv::Mat& initial_tvec,
+    double linear_condition)
+{
+    ParallelJointPnPCandidate candidate;
+    candidate.coarse_seed_yaw_rad = coarse_seed_yaw_rad;
+    candidate.translation_linear_condition = linear_condition;
+    candidate.positive_depth = true;
+
+    cv::Mat initial_tvec64;
+    initial_tvec.reshape(1, 3).convertTo(initial_tvec64, CV_64F);
+    std::array<double, 4> parameters = {{
+        coarse_seed_yaw_rad,
+        initial_tvec64.at<double>(0, 0),
+        initial_tvec64.at<double>(1, 0),
+        initial_tvec64.at<double>(2, 0)}};
+    cv::Mat current_tvec =
+        (cv::Mat_<double>(3, 1) << parameters[1], parameters[2], parameters[3]);
+    ConstrainedPoseEvaluation current;
+    if (!evaluateConstrainedPose(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+            parameters[0], armor_tilt_rad, camera_from_tracker,
+            current_tvec, current)) {
+        candidate.positive_depth = false;
+        return candidate;
+    }
+
+    double lambda = 1e-3;
+    for (int iteration = 0; iteration < 15; ++iteration) {
+        candidate.iterations = iteration + 1;
+        cv::Mat jacobian;
+        if (!jointNumericalJacobian(
+                armor_points, image_points, camera_matrix, distortion_coeffs,
+                armor_tilt_rad, camera_from_tracker, parameters, current, jacobian)) {
+            break;
+        }
+        cv::Mat hessian = jacobian.t() * jacobian;
+        cv::Mat gradient = jacobian.t() * current.residual;
+        if (cv::norm(gradient, cv::NORM_INF) < 1e-7) {
+            candidate.converged = true;
+            break;
+        }
+        for (int diagonal = 0; diagonal < 4; ++diagonal) {
+            hessian.at<double>(diagonal, diagonal) +=
+                lambda * std::max(1e-9, hessian.at<double>(diagonal, diagonal));
+        }
+
+        cv::Mat delta;
+        try {
+            if (!cv::solve(hessian, -gradient, delta, cv::DECOMP_SVD) ||
+                delta.total() != 4 || !cv::checkRange(delta)) {
+                break;
+            }
+        } catch (const cv::Exception&) {
+            break;
+        }
+
+        delta.at<double>(0, 0) = std::max(-5.0 * D2R, std::min(5.0 * D2R, delta.at<double>(0, 0)));
+        delta.at<double>(1, 0) = std::max(-100.0, std::min(100.0, delta.at<double>(1, 0)));
+        delta.at<double>(2, 0) = std::max(-100.0, std::min(100.0, delta.at<double>(2, 0)));
+        delta.at<double>(3, 0) = std::max(-500.0, std::min(500.0, delta.at<double>(3, 0)));
+
+        std::array<double, 4> trial = parameters;
+        for (int index = 0; index < 4; ++index) {
+            trial[static_cast<std::size_t>(index)] += delta.at<double>(index, 0);
+        }
+        trial[0] = std::max(-kParallelYawLimitRad, std::min(kParallelYawLimitRad, trial[0]));
+        const cv::Mat trial_tvec =
+            (cv::Mat_<double>(3, 1) << trial[1], trial[2], trial[3]);
+        const double translation_step = std::sqrt(
+            delta.at<double>(1, 0) * delta.at<double>(1, 0) +
+            delta.at<double>(2, 0) * delta.at<double>(2, 0) +
+            delta.at<double>(3, 0) * delta.at<double>(3, 0));
+        const bool small_step =
+            std::abs(delta.at<double>(0, 0)) < 1e-7 && translation_step < 1e-4;
+        ConstrainedPoseEvaluation trial_evaluation;
+        const bool trial_valid = evaluateConstrainedPose(
+            armor_points, image_points, camera_matrix, distortion_coeffs,
+            trial[0], armor_tilt_rad, camera_from_tracker,
+            trial_tvec, trial_evaluation);
+        if (trial_valid && trial_evaluation.rms_px < current.rms_px) {
+            const double improvement = current.rms_px - trial_evaluation.rms_px;
+            parameters = trial;
+            current = std::move(trial_evaluation);
+            candidate.improved = true;
+            lambda = std::max(1e-9, lambda * 0.3);
+            if (improvement < 1e-8 ||
+                small_step) {
+                candidate.converged = true;
+                break;
+            }
+        } else {
+            if (small_step) {
+                candidate.converged = true;
+                break;
+            }
+            lambda *= 10.0;
+            if (lambda > 1e12) break;
+        }
+    }
+
+    const cv::Mat final_tvec =
+        (cv::Mat_<double>(3, 1) << parameters[1], parameters[2], parameters[3]);
+    candidate.yaw_rad = parameters[0];
+    candidate.rVec = current.rvec.clone();
+    candidate.tVec = final_tvec.clone();
+    candidate.reprojection_error_px = current.rms_px;
+    candidate.max_reprojection_error_px = current.max_px;
+    candidate.corner_residual_px = current.corner_residual_px;
+    candidate.search_bound_hit =
+        std::abs(std::abs(parameters[0]) - kParallelYawLimitRad) < 0.05 * D2R;
+
+    cv::Mat final_jacobian;
+    jointNumericalJacobian(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+        armor_tilt_rad, camera_from_tracker, parameters, current, final_jacobian);
+    if (!final_jacobian.empty()) {
+        const cv::Mat information = final_jacobian.t() * final_jacobian;
+        const cv::Mat translation_information = information(cv::Rect(1, 1, 3, 3)).clone();
+        const cv::Mat translation_to_yaw = information(cv::Rect(0, 1, 1, 3)).clone();
+        cv::Mat nuisance_solution;
+        try {
+            cv::Mat singular_values;
+            cv::SVD::compute(translation_information, singular_values);
+            const double largest = singular_values.at<double>(0, 0);
+            const double smallest = singular_values.at<double>(2, 0);
+            if (std::isfinite(largest) && std::isfinite(smallest) &&
+                largest > 0.0 && smallest > largest * 1e-12) {
+                candidate.translation_information_condition = largest / smallest;
+            }
+            if (std::isfinite(candidate.translation_information_condition) &&
+                cv::solve(
+                    translation_information, translation_to_yaw, nuisance_solution,
+                    cv::DECOMP_SVD)) {
+                const double schur = information.at<double>(0, 0) -
+                    information(cv::Rect(1, 0, 3, 1)).dot(nuisance_solution.t());
+                if (std::isfinite(schur) && schur > 1e-12) {
+                    candidate.yaw_sensitivity_deg_per_px = R2D / std::sqrt(schur);
+                    candidate.yaw_sensitivity_valid =
+                        std::isfinite(candidate.yaw_sensitivity_deg_per_px);
+                }
+            }
+        } catch (const cv::Exception&) {
+        }
+    }
+    return candidate;
 }
 
 double outpostYawInGimbalFrame(double camera_yaw, double gimbal_pitch, double gimbal_yaw)
@@ -277,6 +735,7 @@ std::vector<std::shared_ptr<Armor>> AngleSolver::solveArmors(std::vector<ArmorFo
     }
 
     for (auto& armor_jun : armors_jun) {
+        const std::vector<cv::Point2f> raw_detector_vertices = armor_jun.vertex;
         if (!_grayImg.empty()) {
             refineKeypoints(armor_jun.vertex, _grayImg);
         }
@@ -295,9 +754,9 @@ std::vector<std::shared_ptr<Armor>> AngleSolver::solveArmors(std::vector<ArmorFo
         std::vector<cv::Point3f> point_3d_of_armor =
             armor.type == ArmorType::LARGE ? _ASparams.POINT_3D_OF_ARMOR_BIG
                                            : _ASparams.POINT_3D_OF_ARMOR_SMALL;
-        // `optimizeYaw` already returns the camera-relative yaw convention that the
-        // downstream tracker expects. Flipping it here makes the relative yaw drift
-        // with gimbal rotation for a static armor.
+        // `optimizeYaw` now returns chassis/tracker yaw: the armor's fixed +15
+        // degree tilt is projected through the gimbal pose attached to this
+        // exposure before the camera reprojection is evaluated.
         armor.yaw_absolute =
             optimizeYaw(point_3d_of_armor, armor.vertex, armor.tVec, armorTiltForNumber(armor.number));
         if (armor.number == Armor::LABEL::OUTPOST) {
@@ -308,7 +767,53 @@ std::vector<std::shared_ptr<Armor>> AngleSolver::solveArmors(std::vector<ArmorFo
                     armor.yaw_absolute, _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
             }
         } else {
-            armor.yaw = armor.yaw_absolute - _gimbal_pose.yaw * D2R;
+            armor.yaw = armor.yaw_absolute;
+        }
+        if (parallelJointDiagnosticsEnabled()) {
+            const double armor_tilt_rad = armorTiltForNumber(armor.number);
+            armor.legacy_camera_fixed_yaw = optimizeYawWithModel(
+                point_3d_of_armor, armor.vertex, armor.tVec, armor_tilt_rad,
+                legacyCameraFromTracker(), _cam_instant_matrix,
+                _ASparams.DISTORTION_COEFF);
+            armor.legacy_constrained_reprojection_error_px =
+                constrainedPoseReprojectionError(
+                    point_3d_of_armor, armor.vertex, _cam_instant_matrix,
+                    _ASparams.DISTORTION_COEFF, armor.legacy_camera_fixed_yaw,
+                    armor_tilt_rad, armor.tVec,
+                    &armor.legacy_constrained_max_reprojection_error_px,
+                    &armor.legacy_constrained_corner_residual_px);
+
+            const auto exposure_start = std::chrono::steady_clock::now();
+            armor.parallel_joint_candidates =
+                solveParallelJointPnPCandidatesAtExposure(
+                    point_3d_of_armor, armor.vertex, _cam_instant_matrix,
+                    _ASparams.DISTORTION_COEFF, armor_tilt_rad,
+                    _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+            const auto exposure_end = std::chrono::steady_clock::now();
+            armor.parallel_joint_solve_us =
+                std::chrono::duration<double, std::micro>(exposure_end - exposure_start).count();
+
+            const auto exposure_raw_start = std::chrono::steady_clock::now();
+            armor.parallel_joint_raw_candidates =
+                solveParallelJointPnPCandidatesAtExposure(
+                    point_3d_of_armor, raw_detector_vertices, _cam_instant_matrix,
+                    _ASparams.DISTORTION_COEFF, armor_tilt_rad,
+                    _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+            const auto exposure_raw_end = std::chrono::steady_clock::now();
+            armor.parallel_joint_raw_solve_us =
+                std::chrono::duration<double, std::micro>(
+                    exposure_raw_end - exposure_raw_start)
+                    .count();
+
+            if (!armor.parallel_joint_candidates.empty()) {
+                const auto& selected = armor.parallel_joint_candidates.front();
+                armor.exposure_constrained_reprojection_error_px =
+                    selected.reprojection_error_px;
+                armor.exposure_constrained_max_reprojection_error_px =
+                    selected.max_reprojection_error_px;
+                armor.exposure_constrained_corner_residual_px =
+                    selected.corner_residual_px;
+            }
         }
         armor.distanceToImageCenter = calculateDistanceToCenter(armor.center);
         if (armor.number == Armor::LABEL::OUTPOST) {
@@ -563,6 +1068,211 @@ std::vector<PnPCandidate> AngleSolver::solvePlanarPnPCandidates(
     return candidates;
 }
 
+std::vector<ParallelJointPnPCandidate> solveParallelJointPnPCandidatesWithModel(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker)
+{
+    std::vector<ParallelJointPnPCandidate> candidates;
+    if (armor_points.size() < 4 || armor_points.size() != image_points.size() ||
+        camera_matrix.rows != 3 || camera_matrix.cols != 3 ||
+        camera_from_tracker.rows != 3 || camera_from_tracker.cols != 3 ||
+        !cv::checkRange(camera_matrix) ||
+        !cv::checkRange(camera_from_tracker) ||
+        (!distortion_coeffs.empty() && !cv::checkRange(distortion_coeffs)) ||
+        !std::isfinite(armor_tilt_rad)) {
+        return candidates;
+    }
+    for (const auto& point : armor_points) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) {
+            return candidates;
+        }
+    }
+    for (const auto& point : image_points) {
+        if (!std::isfinite(point.x) || !std::isfinite(point.y)) return candidates;
+    }
+
+    struct CoarseCandidate
+    {
+        double yaw_rad = 0.0;
+        cv::Mat tvec;
+        double error_px = std::numeric_limits<double>::infinity();
+        double linear_condition = std::numeric_limits<double>::infinity();
+    };
+    std::vector<CoarseCandidate> coarse_candidates;
+    for (double yaw_deg = -88.0; yaw_deg <= 88.0; yaw_deg += 4.0) {
+        const double yaw_rad = yaw_deg * D2R;
+        cv::Mat tvec;
+        double condition = std::numeric_limits<double>::infinity();
+        if (!solveTranslationForConstrainedRotation(
+                armor_points, image_points, camera_matrix, distortion_coeffs,
+                yaw_rad, armor_tilt_rad, camera_from_tracker, tvec, condition)) {
+            continue;
+        }
+        ConstrainedPoseEvaluation evaluation;
+        if (!evaluateConstrainedPose(
+                armor_points, image_points, camera_matrix, distortion_coeffs,
+                yaw_rad, armor_tilt_rad, camera_from_tracker, tvec, evaluation)) {
+            continue;
+        }
+        coarse_candidates.push_back(CoarseCandidate{
+            yaw_rad, tvec.clone(), evaluation.rms_px, condition});
+    }
+    std::sort(
+        coarse_candidates.begin(), coarse_candidates.end(),
+        [](const CoarseCandidate& lhs, const CoarseCandidate& rhs) {
+            if (lhs.error_px != rhs.error_px) return lhs.error_px < rhs.error_px;
+            return lhs.yaw_rad < rhs.yaw_rad;
+        });
+
+    std::vector<CoarseCandidate> seeds;
+    for (const auto& candidate : coarse_candidates) {
+        const bool separated = std::all_of(
+            seeds.begin(), seeds.end(), [&](const CoarseCandidate& existing) {
+                return std::abs(candidate.yaw_rad - existing.yaw_rad) >= 12.0 * D2R;
+            });
+        if (!separated) continue;
+        seeds.push_back(candidate);
+        if (seeds.size() >= 2) break;
+    }
+
+    for (const auto& seed : seeds) {
+        ParallelJointPnPCandidate refined = refineParallelJointCandidate(
+            armor_points, image_points, camera_matrix, distortion_coeffs,
+            armor_tilt_rad, camera_from_tracker, seed.yaw_rad, seed.tvec,
+            seed.linear_condition);
+        if (!std::isfinite(refined.yaw_rad) ||
+            !std::isfinite(refined.reprojection_error_px) ||
+            !refined.positive_depth || !cv::checkRange(refined.rVec) ||
+            !cv::checkRange(refined.tVec)) {
+            continue;
+        }
+        auto duplicate = std::find_if(
+            candidates.begin(), candidates.end(), [&](const ParallelJointPnPCandidate& existing) {
+                return std::abs(existing.yaw_rad - refined.yaw_rad) < 1.0 * D2R;
+            });
+        if (duplicate == candidates.end()) {
+            candidates.push_back(std::move(refined));
+        } else if (refined.reprojection_error_px < duplicate->reprojection_error_px) {
+            *duplicate = std::move(refined);
+        }
+    }
+
+    std::sort(
+        candidates.begin(), candidates.end(),
+        [](const ParallelJointPnPCandidate& lhs, const ParallelJointPnPCandidate& rhs) {
+            if (lhs.reprojection_error_px != rhs.reprojection_error_px) {
+                return lhs.reprojection_error_px < rhs.reprojection_error_px;
+            }
+            return lhs.yaw_rad < rhs.yaw_rad;
+        });
+    if (candidates.size() > 2) candidates.resize(2);
+    for (std::size_t index = 0; index < candidates.size(); ++index) {
+        candidates[index].id = static_cast<std::uint32_t>(index);
+        candidates[index].selected = index == 0;
+    }
+    return candidates;
+}
+
+std::vector<ParallelJointPnPCandidate> AngleSolver::solveParallelJointPnPCandidates(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_tilt_rad)
+{
+    return solveParallelJointPnPCandidatesWithModel(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+        armor_tilt_rad, legacyCameraFromTracker());
+}
+
+std::vector<ParallelJointPnPCandidate>
+AngleSolver::solveParallelJointPnPCandidatesAtExposure(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_tilt_rad,
+    double gimbal_pitch_rad,
+    double gimbal_yaw_rad)
+{
+    return solveParallelJointPnPCandidatesWithModel(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+        armor_tilt_rad,
+        cameraFromTrackerAtExposure(gimbal_pitch_rad, gimbal_yaw_rad));
+}
+
+double constrainedPoseReprojectionErrorWithModel(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_yaw_rad,
+    double armor_tilt_rad,
+    const cv::Mat& camera_from_tracker,
+    const cv::Mat& tvec,
+    double* max_error_px,
+    std::vector<double>* corner_residual_px)
+{
+    ConstrainedPoseEvaluation evaluation;
+    if (!std::isfinite(armor_yaw_rad) || !std::isfinite(armor_tilt_rad) ||
+        !evaluateConstrainedPose(
+            armor_points, image_points, camera_matrix, distortion_coeffs,
+            armor_yaw_rad, armor_tilt_rad, camera_from_tracker,
+            tvec, evaluation)) {
+        if (max_error_px != nullptr) {
+            *max_error_px = std::numeric_limits<double>::infinity();
+        }
+        if (corner_residual_px != nullptr) corner_residual_px->clear();
+        return std::numeric_limits<double>::infinity();
+    }
+    if (max_error_px != nullptr) *max_error_px = evaluation.max_px;
+    if (corner_residual_px != nullptr) {
+        *corner_residual_px = evaluation.corner_residual_px;
+    }
+    return evaluation.rms_px;
+}
+
+double AngleSolver::constrainedPoseReprojectionError(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_yaw_rad,
+    double armor_tilt_rad,
+    const cv::Mat& tvec,
+    double* max_error_px,
+    std::vector<double>* corner_residual_px)
+{
+    return constrainedPoseReprojectionErrorWithModel(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+        armor_yaw_rad, armor_tilt_rad, legacyCameraFromTracker(), tvec,
+        max_error_px, corner_residual_px);
+}
+
+double AngleSolver::constrainedPoseReprojectionErrorAtExposure(
+    const std::vector<cv::Point3f>& armor_points,
+    const std::vector<cv::Point2f>& image_points,
+    const cv::Mat& camera_matrix,
+    const cv::Mat& distortion_coeffs,
+    double armor_yaw_rad,
+    double armor_tilt_rad,
+    double gimbal_pitch_rad,
+    double gimbal_yaw_rad,
+    const cv::Mat& tvec,
+    double* max_error_px,
+    std::vector<double>* corner_residual_px)
+{
+    return constrainedPoseReprojectionErrorWithModel(
+        armor_points, image_points, camera_matrix, distortion_coeffs,
+        armor_yaw_rad, armor_tilt_rad,
+        cameraFromTrackerAtExposure(gimbal_pitch_rad, gimbal_yaw_rad), tvec,
+        max_error_px, corner_residual_px);
+}
+
 Eigen::Vector3d AngleSolver::calculateGimblePointFromTvec(const cv::Mat& tvec)
 {
     Eigen::Vector3d camPoint3D;
@@ -598,64 +1308,11 @@ double AngleSolver::optimizeYaw(
     const std::vector<cv::Point3f>& points_3d, const std::vector<cv::Point2f>& points_2d,
     const cv::Mat& tvec, double armor_tilt_rad)
 {
-    double min_error = DBL_MAX;
-    double best_yaw_deg = 0.0;
-
-    double p_rad = armor_tilt_rad;
-    cv::Mat R_pitch =
-        (cv::Mat_<double>(3, 3) << cos(p_rad), 0, sin(p_rad), 0, 1, 0, -sin(p_rad), 0, cos(p_rad));
-
-    cv::Mat R_base = (cv::Mat_<double>(3, 3) << 0, -1, 0, 0, 0, -1, 1, 0, 0);
-
-    for (double yaw_deg = -80.0; yaw_deg <= 80.0; yaw_deg += 2.0) {
-        double y_rad = yaw_deg * CV_PI / 180.0;
-        cv::Mat R_yaw = (cv::Mat_<double>(3, 3)
-                             << cos(y_rad), -sin(y_rad), 0, sin(y_rad), cos(y_rad), 0, 0, 0, 1);
-
-        cv::Mat R_total = R_base * R_yaw * R_pitch;
-        cv::Mat rvec_search;
-        cv::Rodrigues(R_total, rvec_search);
-
-        std::vector<cv::Point2f> projected;
-        cv::projectPoints(
-            points_3d, rvec_search, tvec, _cam_instant_matrix, _ASparams.DISTORTION_COEFF,
-            projected);
-
-        double err = 0;
-        for (int i = 0; i < 4; i++) err += cv::norm(projected[i] - points_2d[i]);
-
-        if (err < min_error) {
-            min_error = err;
-            best_yaw_deg = yaw_deg;
-        }
-    }
-
-    double coarse_best = best_yaw_deg;
-    min_error = DBL_MAX;
-    for (double yaw_deg = coarse_best - 2.0; yaw_deg <= coarse_best + 2.0; yaw_deg += 0.1) {
-        double y_rad = yaw_deg * CV_PI / 180.0;
-        cv::Mat R_yaw = (cv::Mat_<double>(3, 3)
-                             << cos(y_rad), -sin(y_rad), 0, sin(y_rad), cos(y_rad), 0, 0, 0, 1);
-
-        cv::Mat R_total = R_base * R_yaw * R_pitch;
-        cv::Mat rvec_search;
-        cv::Rodrigues(R_total, rvec_search);
-
-        std::vector<cv::Point2f> projected;
-        cv::projectPoints(
-            points_3d, rvec_search, tvec, _cam_instant_matrix, _ASparams.DISTORTION_COEFF,
-            projected);
-
-        double err = 0;
-        for (int i = 0; i < 4; i++) err += cv::norm(projected[i] - points_2d[i]);
-
-        if (err < min_error) {
-            min_error = err;
-            best_yaw_deg = yaw_deg;
-        }
-    }
-
-    return best_yaw_deg * D2R;
+    const cv::Mat camera_from_tracker = cameraFromTrackerAtExposure(
+        _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+    return optimizeYawWithModel(
+        points_3d, points_2d, tvec, armor_tilt_rad, camera_from_tracker,
+        _cam_instant_matrix, _ASparams.DISTORTION_COEFF);
 }
 
 void AngleSolver::drawArmor(

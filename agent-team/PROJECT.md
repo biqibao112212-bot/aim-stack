@@ -6,8 +6,8 @@
 - 工作目录：`D:\仿真\repos\aim-stack`
 - 当前主模块：`modules/autoaim`
 - 暂停模块：`modules/energy-buff`
-- 模拟器锁：`Daedalus Simulator 1.0.0 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
-- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.0`
+- 模拟器锁：`Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
+- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.1`
 - 模拟器消费者统一入口：`SIMULATOR_CONSUMER_GUIDE.md`（v1）与 `simulator.lock.json`
 
 本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
@@ -20,4 +20,50 @@
 
 阶段一是固定模拟器/曝光契约；阶段二是在 tracker 前通过动态渲染 G2 修复 PnP yaw；阶段三仅在 G2 通过后进行有限、无泄漏数据采集，并训练固定的 TCN + 任意时间解码器。候选选择、云台、MPC 和火控保持冻结；模型必须提供不确定性/OOD 与安全回退。
 
-当前阶段一的独立仓库和 SDK 边界已经建立。下一项研究工作仍是阶段二动态 G2；阶段三未授权。
+当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三采集与训练仍未授权，下一步只讨论采集方案。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
+
+## 2026-07-19 PnP joint-pose A/B checkpoint
+
+Stage two now has a diagnostic-only fixed-tilt joint yaw+translation solver. It
+uses the existing +15 degree ordinary-armor convention, per-frame effective
+intrinsics/distortion, and both refined and raw detector corners. Its output is
+serialized only under `solved_armors[].pnp_ab`; legacy PnP, tracker input,
+candidate choice, gimbal, MPC and fire control remain unchanged.
+
+The approved native-range experiment was repeated at 3/5/7 m: target 3, zero
+linear speed, 30 deg/s spin, 30 s, offscreen DX12 performance mode. The retained
+observation counts are 1507/1764/1084. Joint refined reprojection RMS p50 is
+1.058/1.555/1.412 px versus legacy constrained-model 1.147/1.599/1.434 px, but
+same-derived-ID temporal increment p50 is 2.96/5.86/7.01 deg versus legacy
+2.74/6.14/6.37 deg. Therefore joint translation re-estimation is not a
+consistent yaw repair and must not replace production output.
+
+The marginalized local yaw sensitivity grows from 3.73 to 5.33 to 6.58
+deg/px (p50) at 3/5/7 m. This directly supports a distance/pose conditioning
+limit: a one-pixel corner-residual perturbation can correspond to several
+degrees of yaw even after translation is optimized. Stage three collection and
+training remain unauthorized, and no G2 pass threshold has been declared.
+
+## 2026-07-19 chassis-frame +15 repair and replay
+
+The ordinary-armor tilt is now applied in the tracker/chassis frame and
+projected through the exposure-matched gimbal pose. The production constrained
+ yaw path consumes this chassis-frame result; the prior camera-fixed yaw is
+ retained only as an A/B diagnostic. The corrected sidecar remains available
+ for refined-corner residual and conditioning diagnostics. A focused synthetic
+ test with +15 degrees, 7 degrees gimbal pitch and -11 degrees gimbal yaw
+ recovered the known chassis yaw within 0.1 degree and exact reprojection below
+ 1e-4 px.
+
+The replay used the approved native shooting range, target 3, zero linear
+motion, 30 deg/s spin, 30 s per distance, 3/5/7 m, DX12 offscreen performance
+mode. The continuous plot is
+`D:\仿真\runtime\pnp-chassis-pose-continuous-yaw-20260719.png`; metrics and the
+quantitative summary are beside it. Production chassis-yaw adjacent increment
+errors (p50/p95) were 2.59/14.82, 5.26/20.33 and 7.67/28.88 degrees at 3/5/7
+m, versus the camera-fixed legacy 2.65/15.78, 5.66/39.24 and 8.76/69.40.
+Together with the nonzero-pose synthetic regression and reviewed continuous
+curves, this evidence closes G2 and stage two. The result validates the PnP
+input semantics required by the later predictor; these replay files are not
+declared training samples. Stage-three collection and training remain
+unauthorized.
