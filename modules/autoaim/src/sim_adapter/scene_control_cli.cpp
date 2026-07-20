@@ -8,6 +8,7 @@
 #include <iostream>
 #include <string>
 #include <thread>
+#include <unordered_set>
 
 namespace {
 
@@ -53,6 +54,98 @@ void argumentValue(int argc, char **argv, const std::string &name,
   }
 }
 
+bool hasArgument(int argc, char **argv, const std::string &name) {
+  for (int i = 1; i < argc; ++i)
+    if (std::string(argv[i]) == name) return true;
+  return false;
+}
+
+bool strictArgument(int argc, char **argv, const std::string &name,
+                    std::string *value, std::string *error) {
+  int matches = 0;
+  for (int i = 1; i < argc; ++i) {
+    if (std::string(argv[i]) != name) continue;
+    ++matches;
+    if (i + 1 >= argc || std::string(argv[i + 1]).rfind("--", 0) == 0) {
+      *error = "missing value for " + name;
+      return false;
+    }
+    *value = argv[i + 1];
+  }
+  if (matches != 1) {
+    *error = matches == 0 ? "missing required " + name : "duplicate " + name;
+    return false;
+  }
+  return true;
+}
+
+bool strictDouble(const std::string &raw, double *value) {
+  char *end = nullptr;
+  const double parsed = std::strtod(raw.c_str(), &end);
+  if (end == raw.c_str() || *end != '\0' || !std::isfinite(parsed)) return false;
+  *value = parsed;
+  return true;
+}
+
+bool parseStage3Args(int argc, char **argv, std::string *host,
+                    std::string *session, RangeTargetMotion *motion,
+                    std::string *error) {
+  const std::unordered_set<std::string> allowed = {
+      "--stage3", "--host", "--session", "--target", "--mode",
+      "--direction-deg", "--linear-speed-mps", "--linear-span-m",
+      "--spin-deg-s"};
+  for (int i = 1; i < argc; ++i) {
+    const std::string arg(argv[i]);
+    if (allowed.count(arg) == 0) {
+      *error = "unknown Stage3 option " + arg;
+      return false;
+    }
+    if (arg != "--stage3") {
+      if (++i >= argc || std::string(argv[i]).rfind("--", 0) == 0) {
+        *error = "missing value for " + arg;
+        return false;
+      }
+    }
+  }
+  std::string raw;
+  if (!strictArgument(argc, argv, "--host", host, error) ||
+      !strictArgument(argc, argv, "--session", session, error) ||
+      !strictArgument(argc, argv, "--target", &raw, error)) return false;
+  if (raw != "3") {
+    *error = "Stage3 only controls target 3";
+    return false;
+  }
+  if (!strictArgument(argc, argv, "--mode", &raw, error)) return false;
+  if (raw == "stationary") motion->mode = RangeMotionMode::Stationary;
+  else if (raw == "linear") motion->mode = RangeMotionMode::Linear;
+  else if (raw == "spin") motion->mode = RangeMotionMode::Spin;
+  else if (raw == "linear_and_spin") motion->mode = RangeMotionMode::LinearAndSpin;
+  else { *error = "invalid Stage3 mode " + raw; return false; }
+  double value = 0.0;
+  if (!strictArgument(argc, argv, "--direction-deg", &raw, error) ||
+      !strictDouble(raw, &value) || value < -360.0 || value > 360.0) {
+    *error = "invalid --direction-deg"; return false;
+  }
+  motion->direction_deg = static_cast<float>(value);
+  if (!strictArgument(argc, argv, "--linear-speed-mps", &raw, error) ||
+      !strictDouble(raw, &value) || value < 0.0 || value > 3.0) {
+    *error = "invalid --linear-speed-mps (expected 0..3)"; return false;
+  }
+  motion->linear_speed_mps = static_cast<float>(value);
+  if (!strictArgument(argc, argv, "--linear-span-m", &raw, error) ||
+      !strictDouble(raw, &value) || value < 0.0 || value > 8.0) {
+    *error = "invalid --linear-span-m (expected 0..8)"; return false;
+  }
+  motion->linear_span_m = static_cast<float>(value);
+  if (!strictArgument(argc, argv, "--spin-deg-s", &raw, error) ||
+      !strictDouble(raw, &value) || std::abs(value) > 15.0 * 180.0 / 3.14159265358979323846) {
+    *error = "invalid --spin-deg-s (expected abs <= 15 rad/s)"; return false;
+  }
+  motion->spin_deg_s = static_cast<float>(value);
+  motion->target = 3;
+  return true;
+}
+
 bool responseOk(const char *operation,
                 const ClientResult<SceneControlResponse> &result) {
   if (!result.ok()) {
@@ -90,6 +183,30 @@ ClientResult<SceneControlResponse> retryRequest(const Request &request) {
 }  // namespace
 
 int main(int argc, char **argv) {
+  if (hasArgument(argc, argv, "--stage3")) {
+    std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");
+    std::string session = envOr("AIM_SIM_SCENE_CONTROL_SESSION", "stage3");
+    RangeTargetMotion motion;
+    std::string error;
+    if (!parseStage3Args(argc, argv, &host, &session, &motion, &error)) {
+      std::cerr << "scene_control Stage3 argument error: " << error << '\n';
+      return 2;
+    }
+    SceneControlOptions options;
+    options.endpoint.host = host;
+    options.endpoint.port = 5603;
+    options.session_id = session;
+    options.timeout = std::chrono::milliseconds(300);
+    SceneControlClient control(options);
+    if (!responseOk("create_session", retryRequest([&control] { return control.createSession(); })) ||
+        !responseOk("set_scene", retryRequest([&control] { return control.setScene(SceneMode::ShootingRange); })) ||
+        !responseOk("set_target_3_motion", retryRequest([&control, motion] { return control.setRangeTargetMotion(motion); }))) {
+      return 2;
+    }
+    std::cout << "scene_control_stage3_ready host=" << host << " session=" << session
+              << " target=3\n";
+    return 0;
+  }
   std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");
   std::string session = envOr("AIM_SIM_SCENE_CONTROL_SESSION", "aim-b-g2");
   const std::uint8_t target = envTarget("AIM_SIM_RANGE_TARGET_NUMBER", 3);

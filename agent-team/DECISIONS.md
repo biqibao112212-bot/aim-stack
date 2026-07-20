@@ -1,6 +1,6 @@
 # Aim Stack 关键决策
 
-上下文版本：`CTX-AIM-STACK-2026.07-v2`
+上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
 1. 模拟器与算法分为两个独立 Git 仓库；算法只能消费版本化 Release/SDK。
 2. 自瞄 B 是当前主研究模块；装甲板主线、火控和打符保持暂停，按需独立迁移。
@@ -62,3 +62,186 @@
     distance-dependent corner noise. Stage three remains separately gated and
     unauthorized until the user and project agree on its collection/training
     design.
+
+28. On 2026-07-20 the user authorized execution of stage three using the
+    approved collection/training plan. The first delivery is offline-only:
+    dataset, reproducible TCN checkpoint, evaluation report and ONNX. The
+    online tracker, candidate selection, gimbal, MPC and fire control remain
+    frozen.
+
+29. Stage-three raw observations are captured immediately after
+    `solveArmors()` and before `trackerUpdate()` as a deep-copied unordered set.
+    The raw source is keyed by `session_id/epoch/frame_seq/timestamp_ns` and
+    never uses `tracked_id`, detector number, `tracked_armor` or `jump_flag` as
+    identity. Ground truth is a separate exact-exposure stream joined offline.
+
+30. Stage-three collection is target-3-only, single-vehicle, fixed-geometry and
+    uses the existing Daedalus Simulator 1.0.1 / SDK 1.0.0. Formal data is 360
+    successful 30-second sessions (3 hours): stationary 10%, linear 25%, spin
+    25%, linear+spin 40%, with 1-8 m stratified distance, continuous speeds up
+    to 3 m/s and 15 rad/s, and eight planar translation direction sectors.
+
+31. Windows training and conversion run through the existing
+    `D:\Anaconda\envs\yolov8\python.exe` environment. Torch/CUDA are preserved;
+    only the missing data/ONNX/test packages may be added and then frozen in an
+    environment manifest.
+
+32. The raw recorder's first inspectable implementation is dedicated JSONL,
+    not Stage 2 telemetry JSONL. It is append-only, asynchronously written via
+    bounded queues, preserves zero-candidate and >4-candidate frames, and is
+    converted offline to compressed tensor shards after CRC/SHA checks.
+
+33. PnP `armorPosition` is in the corrected tracker/chassis convention. Truth
+    labels are therefore transformed with the anchor exact-exposure chassis
+    pose; gimbal and camera transforms remain in the truth record for audit and
+    are never silently substituted as the training frame.
+
+34. Target selection is run-local: the truth writer chooses the target-3
+    vehicle from the first exact frame using expected distance and armor label,
+    retains its simulator-run target id, and rejects missing target or geometry
+    hash drift. `relative_slot` is an offline truth alignment field only.
+
+35. ONNX export uses opset 17 with dynamic batch/time/query axes and verifies
+    PyTorch/ONNX Runtime parity at batch/time/query shapes (2/200/8, 1/64/3,
+    and 3/200/5) below 1e-4. The online estimator remains frozen in stage 3.
+
+36. The first clean real-SDK stage-three smoke (2026-07-20, stationary target
+    3, 30 seconds) produced 475 pre-tracker frames and 476 exact truth records
+    at approximately 15.8 Hz, with one visible armor per frame. The fixed
+    geometry fingerprint was stable. Because the approved tensorizer requires
+    at least eight valid observations in the latest 0.2 seconds, this run
+    produced zero valid samples. Formal 24-session qualification and the 360
+    session collection are therefore blocked pending consumer-side throughput
+    diagnosis or an explicitly reviewed sampling-gate change; no simulator
+    repository change is authorized.
+
+37. A follow-up clean smoke used a unique control-session id and disabled
+    per-frame debug JSONL. It completed all Scene Control ACKs and produced 833
+    observations, 834 exact truth records plus one unavailable startup record,
+    and 106 valid tensor samples in 30 seconds. The earlier zero-sample result
+    was therefore an operational/retry configuration artifact, not evidence
+    that the approved tensorizer is impossible on the SDK path. The 24-session
+    qualification gate is still required before formal 360-session capture.
+
+38. The attempted formal batch on 2026-07-20 was invalid because two
+    manifest runners were started concurrently. They contended for fixed TCP
+    5602/UDP 5603 endpoints, and one WSL Stage-3 bridge plus a simulator
+    process survived an interrupted run. The stale bridge consumed later TCP
+    image connections, so all 32 attempted sessions failed before writing
+    `session_result.json`. Batch and session runners now have independent
+    exclusive locks, per-invocation raw and IPC paths, scoped Windows/WSL
+    cleanup, and fail-closed data-readiness gates. The invalid runtime
+    directories are not training data; `stage3_operations.md` is the canonical
+    Stage-3 operating procedure.
+
+39. Stage-three training consumes only the 360-record master manifest and the
+    direct `runtime/stage3-formal-20260720-v2/<session>/session_result.json`
+    mapping. Recursive evidence/raw discovery is forbidden. Captured hidden
+    manifests must equal their master record, and every accepted observation
+    and truth file is bound by path, size, record count and SHA-256.
+
+40. Formal tensors use `stage3-dataset-v2`: session-disjoint stratified
+    216/72/72 train/validation/test splits, split-specific compressed shards,
+    and train-only xyz normalization. Test shards stay unopened during data
+    selection, overfit and pilot work; test evaluation requires an explicit
+    later authorization flag.
+
+41. `Armor::armorPosition` is a camera-origin vector after AngleSolver gimbal
+    stabilization and its 0.07 m vertical-offset transform. Stage-three labels
+    reproduce that convention at the anchor exposure using anchor camera
+    origin and chassis axes, without a y flip. The previous chassis-origin
+    statement is superseded: formal A/B evidence measured approximately
+    0.2--0.3 m nearest-plate bias from that origin choice.
+
+42. Query time is the effective matched truth delta, while requested tau and
+    matched future timestamp remain audit fields. Anchor truth requires an
+    exact full-key match; any history frame with more than four candidates
+    rejects its window; freshness is determined by the latest finite valid
+    armor observation rather than by zero/invalid frames.
+
+43. Fixed-ego qualification may exclude an explicitly reported startup
+    settling prefix, but every emitted 0.995 s history must begin within the
+    stable suffix. A raw session with no eligible tensors is retained and
+    reported, never deleted or silently substituted; dataset qualification
+    limits the total zero-sample-session fraction to 10%.
+
+44. The accepted formal derived dataset is
+    `D:\仿真\dataset\autoaim-stage3-v1\derived\stage3-dataset-v2-20260720-r5`
+    (manifest SHA-256
+    `026cbab209884f51150f2650ab25765b095738df3196d4d398bdbc5e54e72a3c`).
+    It contains 181,426 samples, split 109,159/35,609/36,658 across
+    216/72/72 sessions. Six zero-sample raw sessions remain reported; the
+    1.67% fraction passes the fixed 10% qualification limit.
+
+45. On 2026-07-20 the user narrowed the immediate objective to completing one
+    full offline round and proving feasibility, without pursuing metric
+    acceptance. Capacity tuning was stopped and retained. Round one therefore
+    uses the frozen 16-train/8-validation pilot selection for five epochs and
+    treats metrics as diagnostic only.
+
+46. Round-one feasibility is accepted at the pipeline level: qualified shards
+    were hash-verified, GPU training produced provenance-bound best and last
+    checkpoints, and 4,520 samples from all eight requested validation sessions
+    completed neural, static and rigid-CV/yaw-rate evaluation with 100%
+    baseline validity. Both training and evaluation record
+    `test_accessed=false`. This does not claim that the learned model beats the
+    physical baseline or that the architecture/hyperparameters are accepted.
+
+47. The canonical round-one evidence is under
+    `D:\仿真\models\engines\stage3-training\20260720-pilot24-seed0-round1`.
+    It is a protected exploratory asset from a dirty worktree, not a release
+    candidate. Test evaluation, three-seed training, ONNX publication and any
+    online tracker/MPC/fire-control integration remain frozen.
+
+48. Decision 41's legacy `H=0.07 m` coordinate contract is superseded. The
+    simulator path uses the calibrated camera-to-gimbal transform
+    `R=[[0,0,1],[-1,0,0],[0,-1,0]]`,
+    `T=[0.25631080,0.00183094,0.09543117] m`, composed once with the exact
+    exposure optical pose. Tracker position origin is the exposure gimbal
+    pivot. Missing or invalid enabled calibration fails closed; the real-device
+    template keeps the transform disabled until a device-specific R/T exists.
+
+49. The calibration is accepted for simulator use on independent exact-truth
+    evidence: 72 formal sessions and 5,760 exposure poses have maximum
+    rotation/translation errors of `2.77e-5 deg / 3.51e-7 m`. The former
+    25-degree calibration-board script was a synthetic self-consistency loop,
+    not an external calibration; it is archived and cannot update production
+    YAML. Camera/gimbal entity quaternions are not OpenCV optical-axis
+    quaternions.
+
+50. Decision 40's fixed 5 ms `stage3-dataset-v2` tensor contract is
+    superseded. `stage3-dataset-v3` selects the latest at most 200 valid raw
+    observation events, preserves their real timestamp relative to anchor,
+    and pads only on the left. Model, augmentation, baselines, evaluation and
+    ONNX consume `event_mask` and `event_time_s`; index-derived time is
+    forbidden. v2 shards and checkpoints are incompatible archival assets.
+
+51. Existing formal raw data may be reused without recollection because the
+    v1 position transform is exactly invertible: undo the frozen legacy
+    camera/tracker convention and H, then apply the verified R/T. New
+    `stage3-observation-v2` capture records raw camera tvec and an R/T audit;
+    the dataset builder rejects any audit that differs from its bound
+    calibration hash.
+
+52. The accepted v3 derived dataset is
+    `D:\仿真\dataset\autoaim-stage3-v1\derived\stage3-dataset-v3-20260721-r1`
+    (manifest SHA-256
+    `8448ebe788b4a4bb5bd3803e4e64841bf39f3867f711d3198de31f1fb283ada0`).
+    It has 185,292 samples split 111,527/36,297/37,468 over 216/72/72
+    sessions. Six zero-sample sessions remain explicit (1.67%); the dataset
+    qualification passes and test stays unopened.
+
+53. The first formal v3 single-seed full run is retained under
+    `D:\仿真\models\engines\stage3-training\20260721-v3-full-seed0`.
+    Thirty epochs completed normally; epoch 28 is best. All 36,297 validation
+    samples completed paired evaluation with 100% baseline validity: learned
+    median/P95 set error is `0.175675/0.569595 m`, versus
+    `0.417854/1.336396 m` for rigid CV/yaw-rate. Both training and evaluation
+    record `test_accessed=false`.
+
+54. The epoch-28 checkpoint exports to dynamic opset-17 ONNX with maximum
+    PyTorch/ONNX Runtime parity error `9.54e-7` below `1e-4`. These artifacts
+    prove a complete offline single-seed pipeline and an overall validation
+    advantage over the rigid baseline. They do not authorize test evaluation,
+    three-seed metric acceptance, TensorRT publication, online tracker/MPC/
+    fire-control integration or live firing.

@@ -61,6 +61,7 @@ if(AIM_SIM_WITH_VIVSIONN_TRT)
 
   target_sources(aim_sim_auto_aim_armor_core PRIVATE
     src/aim_core_bridge/vivsionn_pipeline.cpp
+    src/aim_core_bridge/stage3_capture.cpp
     ${AIM_SIM_VIVSIONN_DIR}/AngleSolver/AngleSolver.cpp
     ${AIM_SIM_VIVSIONN_DIR}/AngleSolver/opencv_extended.cpp
     ${AIM_SIM_VIVSIONN_DIR}/ArmorDetector/mt_detector_tensorrt.cpp
@@ -246,6 +247,9 @@ if(AIM_SIM_WITH_VIVSIONN_TRT)
     add_test(
       NAME aim_angle_solver_pnp_candidates_test
       COMMAND aim_angle_solver_pnp_candidates_test
+    )
+    set_tests_properties(aim_angle_solver_pnp_candidates_test PROPERTIES
+      ENVIRONMENT "AIM_SIM_PARAM_YAML=${CMAKE_CURRENT_SOURCE_DIR}/config/param.sim.yaml"
     )
   endif()
 

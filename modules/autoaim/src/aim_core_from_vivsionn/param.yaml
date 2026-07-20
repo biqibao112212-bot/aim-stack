@@ -26,9 +26,6 @@ AUTOSHOT_GAIN: 20
 # 弹速
 V: 22
 
-# 第二步 贴脸关掉重力补偿 调H 这一步可以开着debug画面看看贴脸时装甲板是否完整
-# 着弹点偏下调大 单位m 参考值0.08 每次调整0.01
-H: 0.07
 # 重力补偿开关 1=开 0=关
 GRAVITY_OFFSET_SWITCH: 1
 
@@ -38,6 +35,7 @@ GRAVITY_OFFSET_SWITCH: 1
 AIMING_CY: -300
 # 偏右调大 每次调整10
 AIMING_CX: -160
+CAMERA_GIMBAL_EXTRINSIC_ENABLED: 0
 
 # 第三步 调陀螺 关掉debug画面，用慢动作录像
 # 旋转延时 

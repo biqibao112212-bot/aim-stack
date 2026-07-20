@@ -1,8 +1,32 @@
 # Aim Stack 任务板
 
-上下文版本：`CTX-AIM-STACK-2026.07-v2`
+上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
 ## 当前状态
+
+### 2026-07-21 阶段三 v3 全量离线轮次已完成
+
+- `H=0.07 m` 已从生产坐标链废除；模拟器配置使用 exact-exposure 真值独立验证通过的 camera→gimbal R/T。72/360 会话、5,760 姿态的最大旋转/平移误差为 `2.77e-5 deg / 3.51e-7 m`。
+- `stage3-dataset-v3-20260721-r1` 使用最近最多 200 个有效真实观测事件和真实时间戳，共 185,292 样本；split 为 111,527/36,297/37,468，6/360 零样本会话（1.67%）显式保留，资格通过。
+- 全量 seed-0 训练完成 30 epochs，epoch 28 为 best；全部 validation 上 learned median/P95 为 `0.175675/0.569595 m`，刚体 CV/yaw-rate baseline 为 `0.417854/1.336396 m`，baseline coverage 100%。
+- best checkpoint、last checkpoint、validation report、feasibility report 和动态 opset-17 ONNX 均保存在 `D:\仿真\models\engines\stage3-training\20260721-v3-full-seed0`；ONNX 最大 parity 误差 `9.54e-7`。训练和评估均记录 `test_accessed=false`。
+- 当前唯一进行中工作：最终仓库回归、上下文/公开文档同步和本地提交。模拟器仓库、SDK、Release、原始数据、旧 v2 数据集与旧 checkpoint 均保持只读且不覆盖。
+- 后续若进入正式 metric release gate，先让 validation report 绑定 `evaluate_v2.py` 与 `baselines.py` 源码哈希；该 P2 取证增强不阻塞当前离线可行性结论。
+
+### 2026-07-20 阶段三采集实现（历史，已完成）
+
+- 用户已批准执行第三阶段计划；正式仓库仍为 `main`，模拟器 Release/SDK 锁不变。
+- 当前唯一进行中的工作：实现无泄漏 pre-tracker observation sink、独立 exact-exposure truth stream 和阶段三数据契约。
+- 训练环境固定为 `D:\Anaconda\envs\yolov8\python.exe`；该状态已由后续正式采集和 round-1 训练记录取代。
+- 模拟器仓库、SDK、Release 和受保护模型目录保持只读；任何接口缺口先停在消费者侧提案。
+
+### 阶段三执行顺序
+
+1. 观测/真值公共 schema 与 writer 接口
+2. Scene Control 采集器与资格采集入口
+3. Windows 数据转换、TCN、评测和 ONNX
+4. 单元/集成测试与资格采集
+5. 受保护数据、模型和 manifest 清单
 
 - 自瞄与打符已从模拟器仓库物理分离。
 - 自瞄 B 已导入 `modules/autoaim` 并使用 SDK v1。
@@ -24,7 +48,7 @@
 ## 门禁
 
 - G2 已通过，阶段二关闭；通过结论只说明 PnP 输入坐标语义满足后续预测器前置要求，本轮回放不作为训练样本。
-- 阶段三仍未授权。在与用户共同确定采集和训练方案前，禁止启动阶段三数据采集或训练。
+- 阶段三 v3 全量单 seed 离线训练和 ONNX parity 已完成；test、三 seed 指标验收、TensorRT 发布和任何在线 tracker/MPC/火控接入仍需后续明确门禁。
 - 打符 SDK v1 适配完成前禁止闭环实测。
 - 未获得用户针对具体提案的明确批准前，任何自瞄任务禁止修改模拟器仓库、SDK、发布脚本和正式 Release。
 
@@ -110,3 +134,56 @@
   `modules/autoaim/docs/pnp_yaw_stage2_target3_3_5_7m.png`.
 - Stage two is complete. The only next item is joint discussion of the stage-three
   collection/training design; collection and training remain locked until then.
+
+### 2026-07-20 Stage 3 implementation status
+
+- User authorized execution. The consumer now contains the pre-tracker
+  `stage3-observation-v1` recorder, independent exact-exposure
+  `stage3-truth-v1` recorder, geometry-drift guard, and the public data contract.
+- The Scene Control CLI has a strict `--stage3` path for stationary, linear,
+  spin, and linear-and-spin motions with the agreed 3 m/s and 15 rad/s limits.
+  `scripts/run-stage3-session.ps1` is fail-closed and uses one target-3 session
+  token; the simulator repository remains read-only.
+- `training/stage3` now provides deterministic manifest generation, raw join and
+  tensorization, permutation-invariant causal TCN training, static/constant-
+  twist baselines, evaluation, and dynamic ONNX export/parity checks.
+- Validation completed: yolov8 pytest (2 tests), Python compileall, C++ bridge
+  and Scene Control build, ground-truth self-test, five-session synthetic
+  conversion/train/evaluate smoke, and ONNX Runtime dynamic-shape parity.
+- This implementation-status paragraph is historical. Formal 360-session
+  capture and the first 16/8 offline round are now complete; three-seed training
+  and online integration remain unstarted.
+
+### 2026-07-20 formal collection completed
+
+- The corrected single-instance runner completed all 360 manifest sessions in
+  `runtime/stage3-formal-20260720-v2`; every session has non-empty observation
+  and truth JSONL plus `session_result.json`.
+- Aggregate raw observation detection is 69.12% (1,389,655 frames; 960,533
+  with at least one solved armor). Zero-detection frames remain raw for
+  missingness accounting and are gated by the offline tensorizer.
+- The canonical operating procedure is
+  `modules/autoaim/docs/stage3_operations.md`; the first offline training round
+  has since completed, while formal metric optimization remains deferred.
+
+### 2026-07-20 qualification result
+
+- A clean 30-second real-SDK stationary target-3 smoke completed with all
+  three Scene Control acknowledgements and isolated `run-*` raw files.
+- It produced 475 observation frames and 476 exact truth records at roughly
+  15.8 Hz. The fixed geometry fingerprint was stable, but the approved
+  8-observations/0.2-second tensorization gate produced zero samples.
+- Formal qualification, 360-session capture, and training remain paused until
+  the consumer-side capture/bridge throughput issue is resolved or the gate is
+  explicitly reviewed. The simulator repository remains read-only.
+
+### 2026-07-20 clean-smoke follow-up
+
+- The runner now gives every invocation a unique Scene Control control-session
+  id and disables expensive per-frame debug JSONL unless `-DebugTelemetry` is
+  requested. Raw observation/truth paths remain isolated by `run-*` directory.
+- A clean 30-second target-3 smoke completed all ACKs and produced 833
+  observations, 834 exact truth records plus one startup-unavailable record,
+  and 106 valid tensor samples. The previous zero-sample result was a retry/
+  debug-telemetry artifact. The formal 24-session qualification gate remains
+  the next required step.

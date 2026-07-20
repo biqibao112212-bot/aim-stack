@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Calibrate the simulator camera-to-gimbal extrinsic from Daedalus CALIB.glb.
+"""Archived synthetic asset self-consistency experiment.
 
-The script uses the calibration-board asset that the normal Daedalus scene
-spawns, detects its checkerboard inner corners from the embedded texture, and
-runs a deterministic OpenCV PnP/reprojection validation against simulated board
-observations. It is meant to produce a simulator-ground-truth extrinsic for the
-copied vivsionn armor pipeline.
+This script synthesizes pixels from the same vehicle.glb pose that it later
+estimates, so it cannot independently validate the current production R/T.
+The former YAML update path is intentionally disabled. Production simulator
+extrinsics must be checked against exact exposure gimbal/camera truth.
 """
 
 from __future__ import annotations
@@ -401,7 +400,7 @@ def main() -> None:
     parser.add_argument(
         "--update-param",
         action="store_true",
-        help="write calibrated extrinsics into aim_sim_bridge/config/param.sim.yaml",
+        help="disabled: archived synthetic output cannot update production config",
     )
     args = parser.parse_args()
 
@@ -409,7 +408,9 @@ def main() -> None:
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(result, indent=2), encoding="utf-8")
     if args.update_param:
-        update_param_yaml(args.workspace / "aim_sim_bridge" / "config" / "param.sim.yaml", result)
+        raise RuntimeError(
+            "--update-param is disabled: this synthetic self-check is not a production calibration"
+        )
 
     print(f"status={result['status']}")
     print(f"samples={result['sample_count']}")

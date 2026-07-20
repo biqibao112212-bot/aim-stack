@@ -1,84 +1,65 @@
 # Armor coordinate contract
 
-This file is mandatory reading before changing `AngleSolver.cpp`, `AngleSolver.h`,
-camera/gimbal extrinsics, armor PnP, tracker inputs, or `calculateImagePoint()`.
+Read this before changing `AngleSolver`, PnP, camera/gimbal calibration,
+tracker inputs, or inverse projection.
 
-## Frames
+## Frames and rigid transform
 
-- OpenCV camera: `+x right`, `+y down`, `+z forward`; PnP `tvec` is millimetres.
-- YPD tracker/planner: `+x forward`, `+y left`, `+z up`; armor positions are metres after division by 1000.
-- At zero gimbal pose the required axis mapping is exactly:
+- OpenCV camera `C`: `+x right`, `+y down`, `+z forward`; PnP `tvec` is mm.
+- calibrated gimbal `G`: `+x forward`, `+y left`, `+z up`.
+- tracker/chassis `T`: `+x forward`, `+y left`, `+z up`.
+- YAML stores `R_CAMERA2GIMBAL = ^G R_C` and
+  `T_CAMERA2GIMBAL = ^G t_C` in metres. Both fields are mandatory when the
+  extrinsic is enabled.
+- `FrameMeta.poseEuler` is the exposure-matched optical pose. Its rotation
+  `^T R_C` retains the explicit OpenCV-to-tracker mapping and optical pitch/yaw.
+  It is not a local joint pose.
 
-  ```text
-  tracker = [camera.z, -camera.x, -camera.y]
-  ```
-
-- Yaw and the inverse optical-pitch stabilization are applied before that explicit
-  axis permutation by `cameraPointToTrackerConvention()`.
-  `trackerPointToCameraConvention()` is its inverse. Do not change the pitch sign:
-  applying optical pitch in the same direction creates a positive feedback loop
-  where estimated height and commanded pitch grow together.
-- The legacy `H` value is a camera/aiming vertical offset used when converting an
-  armor point. It is not a claim that the vehicle centre is one fixed 3-D point.
-
-## Non-negotiable invariants
-
-1. A target approximately 3 m in front of the camera must have tracker `x≈3 m`;
-   its depth must never appear as tracker `z≈-3 m`.
-2. `calculateGimblePoint*()` and `calculateImagePoint()` must remain inverse-frame
-   operations with the same pose and height-offset semantics.
-3. Do not replace the explicit permutation with `R_camera2gimbal` merely because
-   a matrix is available. Calibration matrices and tracker-axis conventions are
-   different contracts. A replacement requires exact exposure truth plus live
-   static-target A/B evidence.
-4. Do not tune tracker, planner, pitch signs, offsets, or ballistic parameters to
-   compensate for a failed coordinate test.
-5. PnP candidate enumeration may change pose-candidate metadata, but candidate 0
-   must preserve the legacy selected `tvec`, and no candidate change may alter the
-   camera-to-tracker axis contract.
-6. The solver needs the exposure-time optical camera/gimbal pose. It is not the
-   same as `RuntimeState.gimbal_pitch_rad`: the simulated camera has a fixed
-   25-degree mount rotation. For example, optical `+3.78 deg` corresponds to local
-   joint about `-28.78 deg`. Do not substitute the joint angle for the optical pose.
-7. Command conversion is the inverse contract. With the current 25-degree mount,
-   zero optical pitch is encoded as UDP/Talos neutral `65 deg`; positive optical
-   pitch subtracts from that encoded value. Do not restore `90 + optical_pitch`.
-8. Armor outward normal polarity is unique in this project. Do not add a synthetic
-   reversed-normal hypothesis to production telemetry or tracking.
-9. If an image cannot be paired with its exposure-time optical gimbal pose, drop
-   that observation before PnP/tracker update. Never substitute the current local
-   joint pose for an older image; hold the previous valid command/state until a
-   contract-complete exposure arrives.
-10. The ordinary-armor `+15 degree` pitch tilt is fixed in tracker/chassis
-    coordinates. Build the armor yaw/tilt rotation there, then project it through
-    the exposure-matched gimbal pose into the OpenCV camera frame. Production
-    `Armor::yaw` and `Armor::yaw_absolute` are tracker/chassis yaw; a camera-fixed
-    value may exist only as explicitly labelled diagnostic telemetry.
-
-## Required validation
-
-Run the focused test after every relevant change:
-
-```powershell
-wsl ./aim_sim_bridge/build/ros2_trt/aim_angle_solver_pnp_candidates_test
-```
-
-The test includes a captured failure sample:
+At one exposure, derive `^T R_G = ^T R_C (^G R_C)^T`, then use:
 
 ```text
-camera tvec after H = [111.802147, 175.895243, 3640.185614] mm
-gimbal yaw/pitch    = [-21.48591232, -0.9220832586] deg
-expected tracker    = [3430.365912, 1230.131067, -117.292072] mm
+p_T = ^T R_G (^G R_C p_C + ^G t_C)
+p_C = (^G R_C)^T ((^T R_G)^T p_T - ^G t_C)
 ```
 
-The broken 2026-07-10 path produced approximately
-`[584, -301, -3511] mm`, causing a FireControl pitch near `-79.21 deg`.
-That output is forbidden even if reprojection error is small.
+There is no empirical `H` or additional height bias. Point forward conversion,
+single/batch inverse projection and hit-point rays call this same SE(3) pair.
+Changing coordinate contract requires clearing tracker history; old/new points
+must never coexist in one estimator state.
 
-After the unit test, run a fresh static 3 m simulator row. Acceptance requires:
+For the current simulator exact-exposure contract:
 
-- solved armor position dominated by positive tracker `x`;
-- `abs(z)` small compared with `x`;
-- commanded pitch near the image/ballistic expectation, never tens of degrees
-  solely because camera depth entered tracker `z`;
-- target remains in view long enough to prove closed-loop centring.
+```text
+R_CAMERA2GIMBAL = [[ 0,  0,  1],
+                   [-1,  0,  0],
+                   [ 0, -1,  0]]
+T_CAMERA2GIMBAL = [0.25631080, 0.00183094, 0.09543117] m
+```
+
+The previous 25-degree asset-derived R/T is archived and invalid for the
+current simulator. `calibrate_daedalus_calib_board.py` is a synthetic
+self-consistency experiment and is forbidden from updating production YAML.
+
+## Invariants and validation
+
+1. Camera depth must remain tracker forward distance, never tracker height.
+2. Candidate-0 camera-frame rvec/tvec and reprojection error are unchanged by
+   downstream camera-to-tracker conversion.
+3. R must be finite, orthonormal and `det(R)=+1`; T is finite and in metres.
+   Missing/partial/invalid enabled calibration fails closed.
+4. Armor yaw/tilt still uses the exposure optical rotation; translation never
+   acts on normals or directions.
+5. An image without its exact exposure optical pose is rejected before PnP.
+
+Required checks:
+
+```powershell
+D:\Anaconda\envs\yolov8\python.exe -B -m training.stage3.validate_extrinsic `
+  --manifest <formal-manifest> --evidence-root <formal-evidence> `
+  --raw-root <raw-root> --extrinsic-yaml modules/autoaim/config/param.sim.yaml
+
+wsl.exe -d Ubuntu-OSTEP -- bash -lc `
+  "cd /mnt/d/仿真/repos/aim-stack/modules/autoaim && `
+   cmake --build build/ros2_trt --target aim_angle_solver_pnp_candidates_test -j2 && `
+   ctest --test-dir build/ros2_trt --output-on-failure -R aim_angle_solver_pnp_candidates_test"
+```

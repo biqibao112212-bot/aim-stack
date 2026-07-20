@@ -2,12 +2,14 @@
 #include "aim_sim_bridge/fixed_rate_command_loop.hpp"
 #include "aim_sim_bridge/pipeline.hpp"
 #include "aim_sim_bridge/sim_command.hpp"
+#include "aim_sim_bridge/stage3_capture.hpp"
 #include "aim_sim_bridge/tcp_image_receiver.hpp"
 #include <daedalus_sim_sdk/talos_v1.hpp>
 
 #include <opencv2/imgproc.hpp>
 
 #include <algorithm>
+#include <array>
 #include <arpa/inet.h>
 #include <atomic>
 #include <cctype>
@@ -2136,6 +2138,314 @@ std::string groundTruthJson(const GroundTruthBatch &ground_truth) {
   return out.str();
 }
 
+// Stage-three truth is deliberately a separate stream from legacy telemetry.
+// It is keyed by the exact exposure tuple and retains the complete simulator
+// batch plus the exposure transform needed to express that truth in the PnP
+// camera/tracker frame offline.  The selected target id is run-local and is
+// discovered once from the first exact frame rather than assuming target_id=3.
+class Stage3TruthJsonlWriter {
+public:
+  Stage3TruthJsonlWriter() {
+    const char *path = std::getenv("AIM_SIM_STAGE3_TRUTH");
+    const char *session = std::getenv("AIM_SIM_STAGE3_SESSION_ID");
+    if (path == nullptr || *path == '\0') return;
+    session_id_ = session == nullptr ? std::string() : std::string(session);
+    try {
+      const std::filesystem::path output(path);
+      if (!output.parent_path().empty())
+        std::filesystem::create_directories(output.parent_path());
+      stream_.open(output, std::ios::out | std::ios::app);
+      healthy_ = stream_.is_open();
+      if (healthy_) worker_ = std::thread(&Stage3TruthJsonlWriter::workerLoop, this);
+    } catch (...) {
+      healthy_ = false;
+    }
+    const char *distance = std::getenv("AIM_SIM_STAGE3_DISTANCE_M");
+    if (distance != nullptr && *distance != '\0') {
+      char *end = nullptr;
+      const double parsed = std::strtod(distance, &end);
+      if (end != distance && *end == '\0' && std::isfinite(parsed) && parsed > 0.0)
+        expected_distance_m_ = parsed;
+    }
+  }
+
+  ~Stage3TruthJsonlWriter() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_one();
+    if (worker_.joinable()) worker_.join();
+    stream_.flush();
+    std::cerr << "aim_sim_talos_bridge stage3 truth summary submitted="
+              << submitted_ << " failed=" << failed_
+              << " healthy=" << (healthy_ ? "true" : "false") << "\n";
+    stream_.close();
+  }
+
+  bool enabled() const { return stream_.is_open(); }
+  bool healthy() const { return healthy_; }
+  std::uint64_t submitted() const { return submitted_; }
+  std::uint64_t failed() const { return failed_; }
+
+  // Collection-only gimbal keeper. It uses exact simulator truth solely to
+  // steer the camera; the truth never enters the estimator input or labels.
+  bool truthGimbalAim(const ExactExposureTruth &exact, double *yaw_deg,
+                      double *pitch_deg, double *distance_m) {
+    if (yaw_deg == nullptr || pitch_deg == nullptr || distance_m == nullptr)
+      return false;
+    const GroundTruthTarget *selected =
+        selectTarget(exact.ground_truth, &exact.exposure_state);
+    if (selected == nullptr)
+      return false;
+    // The simulator command is an absolute chassis-relative gimbal angle, not
+    // a delta from the current gimbal pose. Predict one command-loop horizon
+    // ahead using the target velocity, then express it in the chassis frame.
+    constexpr double kLeadSeconds = 0.10;
+    const auto &origin = exact.exposure_state.chassis_position_world;
+    const auto &q = exact.exposure_state.chassis_quaternion_world_wxyz;
+    const std::array<double, 3> world_vector{
+        static_cast<double>(selected->position[0]) +
+            kLeadSeconds * selected->velocity[0] - origin[0],
+        static_cast<double>(selected->position[1]) +
+            kLeadSeconds * selected->velocity[1] - origin[1],
+        static_cast<double>(selected->position[2]) +
+            kLeadSeconds * selected->velocity[2] - origin[2]};
+    const double qw = q[0], qx = q[1], qy = q[2], qz = q[3];
+    const double qnorm = std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+    if (!std::isfinite(qnorm) || qnorm < 1e-9)
+      return false;
+    const double w = qw / qnorm, x = qx / qnorm, y = qy / qnorm,
+                 z = qz / qnorm;
+    // Inverse world quaternion: q_conjugate * vector * q. The simulator
+    // chassis/gimbal convention is +x forward, +y right, +z up.
+    const double ax = -x, ay = -y, az = -z;
+    const double t0 = -ax * world_vector[0] - ay * world_vector[1] -
+                     az * world_vector[2];
+    const double t1 = w * world_vector[0] + ay * world_vector[2] -
+                     az * world_vector[1];
+    const double t2 = w * world_vector[1] + az * world_vector[0] -
+                     ax * world_vector[2];
+    const double t3 = w * world_vector[2] + ax * world_vector[1] -
+                     ay * world_vector[0];
+    const double local_x = t1 * w - t0 * ax - t2 * az + t3 * ay;
+    const double local_y = t2 * w - t0 * ay - t3 * ax + t1 * az;
+    const double local_z = t3 * w - t0 * az - t1 * ay + t2 * ax;
+    const double forward = local_x;
+    const double lateral = local_y;
+    const double vertical = local_z;
+    const double distance = std::sqrt(forward * forward + lateral * lateral +
+                                       vertical * vertical);
+    if (!std::isfinite(distance) || distance < 0.2 || forward <= 0.05)
+      return false;
+    // SDK local-joint yaw is opposite the tracker +y yaw convention.
+    *yaw_deg = -std::atan2(lateral, forward) * kRadToDeg;
+    // Tracker/chassis convention uses +z up and +optical pitch up.
+    *pitch_deg = std::atan2(vertical, std::hypot(forward, lateral)) * kRadToDeg;
+    *distance_m = distance;
+    return std::isfinite(*yaw_deg) && std::isfinite(*pitch_deg) &&
+           std::abs(*yaw_deg) <= 85.0 && std::abs(*pitch_deg) <= 35.0;
+  }
+
+  bool write(std::uint64_t producer_epoch, std::uint64_t frame_seq,
+             std::uint64_t timestamp_ns, bool has_exact,
+             const ExactExposureTruth &exact) {
+    if (!enabled()) return false;
+    const GroundTruthTarget *selected = has_exact ? selectTarget(exact.ground_truth, &exact.exposure_state) : nullptr;
+    // The exact ring may be valid before Scene Control has applied target 3.
+    // Keep those startup frames as unavailable truth and wait for selection;
+    // disappearance after selection is a real fail-closed capture error.
+    if (has_exact && selected == nullptr && selected_target_id_.has_value()) {
+      healthy_ = false;
+      ++failed_;
+      return false;
+    }
+    const bool record_has_exact = has_exact && selected != nullptr;
+    const std::string geometry_hash = selected ? geometryFingerprint(*selected) : std::string();
+    if (selected && geometry_fingerprint_.has_value() &&
+        *geometry_fingerprint_ != geometry_hash) {
+      healthy_ = false;
+      ++failed_;
+      std::cerr << "aim_sim_talos_bridge stage3 geometry drift detected\n";
+      return false;
+    }
+    if (selected && !geometry_fingerprint_.has_value()) geometry_fingerprint_ = geometry_hash;
+    std::ostringstream out;
+    out << std::setprecision(17) << '{';
+    out << "\"schema_version\":\"stage3-truth-v1\",\"session_id\":";
+    out << '"';
+    for (const char ch : session_id_) {
+      if (ch == '\\' || ch == '"') out << '\\';
+      out << ch;
+    }
+    out << '"';
+    out << ",\"producer_epoch\":" << producer_epoch
+        << ",\"frame_seq\":" << frame_seq
+        << ",\"timestamp_ns\":" << timestamp_ns
+        << ",\"has_exact_exposure_truth\":" << (record_has_exact ? "true" : "false")
+        << ",\"truth_commit_seq\":" << (record_has_exact ? exact.commit_seq : 0)
+        << ",\"truth_slot_index\":" << (record_has_exact ? exact.slot_index : 0)
+        << ",\"exposure_state_flags\":"
+        << (record_has_exact ? exact.exposure_state.state_flags : 0) << ",\"exposure_state\":{";
+    bool first = true;
+    aim_sim_bridge::debug::appendRaw(out, "chassis_position_world_m",
+              record_has_exact ? float3Json(exact.exposure_state.chassis_position_world)
+                        : "[0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "chassis_quaternion_world_wxyz",
+              record_has_exact ? float4Json(exact.exposure_state.chassis_quaternion_world_wxyz)
+                        : "[1,0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "chassis_rpy_world_rad",
+              record_has_exact ? float3Json(exact.exposure_state.chassis_rpy_world)
+                        : "[0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "gimbal_position_world_m",
+              record_has_exact ? float3Json(exact.exposure_state.gimbal_position_world)
+                        : "[0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "gimbal_quaternion_world_wxyz",
+              record_has_exact ? float4Json(exact.exposure_state.gimbal_quaternion_world_wxyz)
+                        : "[1,0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "camera_position_world_m",
+              record_has_exact ? float3Json(exact.exposure_state.camera_position_world)
+                        : "[0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendRaw(out, "camera_quaternion_world_wxyz",
+              record_has_exact ? float4Json(exact.exposure_state.camera_quaternion_world_wxyz)
+                        : "[1,0,0,0]",
+              first);
+    aim_sim_bridge::debug::appendUInt(out, "world_frame",
+               record_has_exact ? exact.exposure_state.world_frame : 0, first);
+    out << "},\"geometry_hash\":";
+    if (record_has_exact) out << '"' << geometry_hash << '"';
+    else out << "null";
+    out << ",\"selected_target_id\":" << (record_has_exact ? selected->target_id : 0)
+        << ",\"selected_target_index\":" << (record_has_exact ? selected_index_ : -1)
+        << ",\"ground_truth\":" << (record_has_exact ? groundTruthJson(exact.ground_truth) : "null")
+        << '}';
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      if (!healthy_ || stopping_ || pending_.size() >= kMaxPendingTruthLines) {
+        healthy_ = false;
+        ++failed_;
+        return false;
+      }
+      pending_.push_back(out.str());
+    }
+    ready_.notify_one();
+    return true;
+  }
+
+private:
+  void workerLoop() {
+    while (true) {
+      std::string line;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        ready_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
+        if (pending_.empty() && stopping_) return;
+        line = std::move(pending_.front());
+        pending_.pop_front();
+        stream_ << line << '\n';
+        stream_.flush();
+        if (!stream_) {
+          healthy_ = false;
+          ++failed_;
+          pending_.clear();
+          return;
+        }
+        ++submitted_;
+      }
+    }
+  }
+
+  std::string geometryFingerprint(const GroundTruthTarget &target) const {
+    // The SDK exposes geometry as float32 values and moving targets can carry
+    // sub-micron-to-sub-millimeter numerical jitter even when the rigid vehicle
+    // geometry is unchanged. Quantize to 1e-3 m so the guard detects real
+    // geometry changes without rejecting harmless physics recomputation.
+    const auto quantized = [](float value) -> long long {
+      return std::llround(static_cast<double>(value) * 1000.0);
+    };
+    std::ostringstream out;
+    out << quantized(target.radius_even) << ',' << quantized(target.radius_odd)
+        << ',' << quantized(target.armor_height) << ';';
+    const std::uint32_t count = std::min<std::uint32_t>(
+        target.armor_count, static_cast<std::uint32_t>(kGroundTruthMaxArmorsPerTarget));
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const GroundTruthArmor &armor = target.armors[i];
+      out << static_cast<unsigned>(armor.relative_slot) << ':'
+          << quantized(armor.relative_position[0]) << ','
+          << quantized(armor.relative_position[1]) << ','
+          << quantized(armor.relative_position[2]) << ':'
+          << quantized(armor.outward_normal[0]) << ','
+          << quantized(armor.outward_normal[1]) << ','
+          << quantized(armor.outward_normal[2]) << ';';
+    }
+    return out.str();
+  }
+
+  const GroundTruthTarget *selectTarget(const GroundTruthBatch &batch,
+                                        const ExposureState *exposure) {
+    const std::uint32_t count = std::min<std::uint32_t>(
+        batch.target_count, static_cast<std::uint32_t>(kGroundTruthMaxTargets));
+    if (selected_target_id_.has_value()) {
+      for (std::uint32_t i = 0; i < count; ++i) {
+        if (batch.targets[i].target_id == *selected_target_id_) {
+          selected_index_ = static_cast<int>(i);
+          return &batch.targets[i];
+        }
+      }
+      return nullptr;
+    }
+    int best = -1;
+    double best_score = std::numeric_limits<double>::infinity();
+    for (std::uint32_t i = 0; i < count; ++i) {
+      const GroundTruthTarget &target = batch.targets[i];
+      if (target.armor_count == 0 || target.is_outpost != 0) continue;
+      const bool preferred_label = target.armor_label == 3;
+      const double origin_x = exposure ? exposure->chassis_position_world[0] : 0.0;
+      const double origin_y = exposure ? exposure->chassis_position_world[1] : 0.0;
+      const double origin_z = exposure ? exposure->chassis_position_world[2] : 0.0;
+      const double dx = static_cast<double>(target.position[0]) - origin_x;
+      const double dy = static_cast<double>(target.position[1]) - origin_y;
+      const double dz = static_cast<double>(target.position[2]) - origin_z;
+      const double distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+      const double distance_score = std::isfinite(expected_distance_m_)
+                                        ? std::abs(distance - expected_distance_m_)
+                                        : 0.0;
+      const double score = distance_score + (preferred_label ? 0.0 : 1e-6) +
+                           static_cast<double>(i) * 1e-9;
+      if (score < best_score) {
+        best_score = score;
+        best = static_cast<int>(i);
+      }
+    }
+    if (best < 0) return nullptr;
+    selected_index_ = best;
+    selected_target_id_ = batch.targets[best].target_id;
+    return &batch.targets[best];
+  }
+
+  std::ofstream stream_;
+  std::string session_id_;
+  std::optional<std::uint64_t> selected_target_id_;
+  std::optional<std::string> geometry_fingerprint_;
+  int selected_index_ = -1;
+  double expected_distance_m_ = std::numeric_limits<double>::quiet_NaN();
+  bool healthy_ = false;
+  std::uint64_t submitted_ = 0;
+  std::uint64_t failed_ = 0;
+  static constexpr std::size_t kMaxPendingTruthLines = 8192;
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::string> pending_;
+  bool stopping_ = false;
+  std::thread worker_;
+};
+
 int runGroundTruthLayoutSelfTest() {
   GroundTruthBatch ground_truth{};
   ground_truth.frame_seq = 42;
@@ -3417,6 +3727,20 @@ int main(int argc, char **argv) {
       argDouble(argc, argv, "--precision-fov-margin-px", 28.0);
   config.armor_detector_config =
       argValue(argc, argv, "--armor-engine", "models/armor.engine");
+  config.pre_tracker_observation_sink =
+      aim_sim_bridge::createStage3ObservationSinkFromEnv();
+  if (config.pre_tracker_observation_sink) {
+    std::cerr << "aim_sim_talos_bridge stage3 pre-tracker observation recording enabled\n";
+  }
+  Stage3TruthJsonlWriter stage3_truth_writer;
+  if (stage3_truth_writer.enabled()) {
+    std::cerr << "aim_sim_talos_bridge stage3 exact truth recording enabled\n";
+  }
+  const bool stage3_truth_gimbal_enabled =
+      envBoolValue("AIM_SIM_STAGE3_TRUTH_GIMBAL", false);
+  if (stage3_truth_gimbal_enabled) {
+    std::cerr << "aim_sim_talos_bridge stage3 truth-guided gimbal keeper enabled\n";
+  }
   const std::string param_yaml =
       argValue(argc, argv, "--param-yaml", "config/param.sim.yaml");
   setenv("AIM_SIM_PARAM_YAML", param_yaml.c_str(), 1);
@@ -3859,6 +4183,13 @@ int main(int argc, char **argv) {
         image_meta.timestamp_ns, &exact_exposure);
     if (has_exact_exposure_truth)
       exposure_ground_truth = exact_exposure.ground_truth;
+    if (stage3_truth_writer.enabled() &&
+        !stage3_truth_writer.write(image_sequence.producer_epoch, image_meta.seq,
+                                   image_meta.timestamp_ns,
+                                   has_exact_exposure_truth, exact_exposure)) {
+      std::cerr << "aim_sim_talos_bridge stage3 truth writer failed; stopping\n";
+      return 3;
+    }
     bridge_stage_metrics.exact_exposure_read.record(
         exact_exposure_read_started, std::chrono::steady_clock::now());
     const auto frame_assembly_started = std::chrono::steady_clock::now();
@@ -4071,6 +4402,28 @@ int main(int argc, char **argv) {
     }
 
     aim_sim_bridge::AimCommand aim = pipeline->process(frame);
+    if (stage3_truth_gimbal_enabled && has_exact_exposure_truth) {
+      double truth_yaw_deg = 0.0;
+      double truth_pitch_deg = 0.0;
+      double truth_distance_m = 0.0;
+      if (stage3_truth_writer.truthGimbalAim(
+              exact_exposure, &truth_yaw_deg, &truth_pitch_deg,
+              &truth_distance_m)) {
+        // Truth is used only as a collection-camera controller. Keep the
+        // estimator output and raw observation untouched, disable firing, and
+        // publish a current-provenance command so the target remains centred.
+        aim.has_target = true;
+        aim.yaw_deg = truth_yaw_deg;
+        aim.pitch_deg = truth_pitch_deg;
+        aim.distance_m = truth_distance_m;
+        aim.fire_advice = false;
+        aim.completed_vision_result = true;
+        aim.source_producer_epoch = image_sequence.producer_epoch;
+        aim.source_image_seq = image_meta.seq;
+        aim.source_capture_timestamp_ns = image_meta.timestamp_ns;
+        aim.vision_completion_timestamp_ns = nowNs();
+      }
+    }
     completed_vision_metrics.record(aim, std::chrono::steady_clock::now());
     const WallCommandSubmitStatus submit_status =
         wall_command_publisher.submitCompleted(aim);

@@ -39,6 +39,38 @@
       "sha256": "59C08CB40FA71460B1D204CCCE9C28D34755309BE5548C68956A9A4E781D834E",
       "source": "D:\\仿真\\worktrees\\energy-buff\\extensions\\aim_sim_bridge\\models\\buff.engine",
       "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v3-full-seed0/stage3-seed0-best.pt",
+      "role": "阶段三 v3 全量单 seed 离线训练的 epoch-28 最优 PyTorch checkpoint；非线上发布候选",
+      "bytes": 970797,
+      "sha256": "F3E501EAC136B985260A5DCAFCB1F5C08814A001EAEE18AD4C8E8AEF24DC81E2",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\stage3-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v3-full-seed0/stage3-seed0-last.pt",
+      "role": "阶段三 v3 全量单 seed 离线训练的 epoch-30 可恢复 checkpoint；非线上发布候选",
+      "bytes": 2921839,
+      "sha256": "F8227B5C6AF9CE8F31187804676C15595E62C238FD9C4BBCF20448A95234E4EA",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\stage3-seed0-last.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v3-full-seed0/stage3-seed0-best.onnx",
+      "role": "阶段三 v3 最优 checkpoint 的 opset-17 动态形状 ONNX；仅完成离线 parity 验证",
+      "bytes": 1011456,
+      "sha256": "CF8E42BBAD3F951F97014B0C34BA83A7B760F372605120170F9CE986FFAAB65B",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\stage3-seed0-best.onnx",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v3-full-seed0/feasibility-report.json",
+      "role": "阶段三 v3 全量单 seed 数据、训练、validation 与 ONNX 证据绑定报告",
+      "bytes": 2402,
+      "sha256": "B4FE4FA19D4B80FBBD855446E3D0E23B860BC660427938A8D9CDC2946A0C5EF1",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\feasibility-report.json",
+      "protected": true
     }
   ]
 }

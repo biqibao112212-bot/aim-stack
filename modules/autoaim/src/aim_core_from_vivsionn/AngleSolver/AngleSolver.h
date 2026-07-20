@@ -19,9 +19,9 @@ namespace rm
 // Coordinate contract used by the armor tracker and planner:
 // OpenCV camera (+x right, +y down, +z forward) ->
 // tracker (+x forward, +y left, +z up).
-// These functions intentionally make the axis permutation explicit. Do not
-// replace them with a calibration rotation unless the tracker-frame contract
-// and the live regression test are updated together.
+// These functions describe the exposure optical pose only. Calibrated
+// camera->gimbal translation is composed by AngleSolver's instance helpers.
+// They remain public for historical Stage-3 v1 migration and regression tests.
 Eigen::Vector3d cameraPointToTrackerConvention(
     const Eigen::Vector3d& camera_point, double gimbal_pitch_rad, double gimbal_yaw_rad);
 Eigen::Vector3d trackerPointToCameraConvention(
@@ -62,11 +62,12 @@ public:
     Eigen::Vector3d calculateGimblePointFromTvec(const cv::Mat& tvec);
     Eigen::Vector3d cameraPointToGimbal(const Eigen::Vector3d& camera_point) const;
     Eigen::Vector3d gimbalPointToCamera(const Eigen::Vector3d& gimbal_point) const;
+    Eigen::Vector3d cameraPointToTracker(const Eigen::Vector3d& camera_point) const;
+    Eigen::Vector3d trackerPointToCamera(const Eigen::Vector3d& tracker_point) const;
     Eigen::Matrix3d cameraToGimbalRotation() const;
     Eigen::Vector3d cameraToGimbalTranslationM() const;
     bool cameraGimbalExtrinsicEnabled() const;
     bool cameraGimbalExtrinsicFromConfig() const;
-    double legacyHeightM() const;
     double aimingOffsetCxPx() const;
     double aimingOffsetCyPx() const;
     bool applyAimingOffsetToIntrinsics() const;

@@ -697,7 +697,8 @@ std::string calibrationJson(const rm::AngleSolver& angle_solver)
     debug::appendString(
         out, "gimbal_frame", "solver gimbal frame, configured by R_camera2gimbal",
         first);
-    debug::appendNumber(out, "legacy_h_m", angle_solver.legacyHeightM(), first);
+    debug::appendString(
+        out, "position_contract", "calibrated-camera-gimbal-extrinsic-v1", first);
     debug::appendNumber(out, "aiming_cx_px", angle_solver.aimingOffsetCxPx(), first);
     debug::appendNumber(out, "aiming_cy_px", angle_solver.aimingOffsetCyPx(), first);
     debug::appendBool(
@@ -1719,6 +1720,89 @@ private:
             angle_solver_.solveArmors(std::move(armors));
         stage_telemetry_.recordSolveCompletion(
             elapsedNs(solve_begin, std::chrono::steady_clock::now()));
+
+        // Stage-three recording must observe value-copied PnP results before
+        // trackerUpdate mutates the shared Armor objects.  In particular,
+        // RobotEstimator writes the primary armor's position/yaw back through
+        // the same shared_ptr that is retained in `solved`.
+        if (config_.pre_tracker_observation_sink) {
+            PreTrackerObservationFrame observation;
+            observation.producer_epoch = profile_frame.source_producer_epoch;
+            observation.frame_seq = profile_frame.source_image_seq;
+            observation.timestamp_ns = profile_frame.source_capture_timestamp_ns;
+            observation.gimbal_pose_timestamp_ns = profile_frame.gimbal_pose_timestamp_ns;
+            observation.gimbal_pose_exposure_matched =
+                profile_frame.gimbal_pose_exposure_matched;
+            observation.tracker_world_transform_exposure_matched =
+                profile_frame.tracker_world_transform_exposure_matched;
+            for (std::size_t component = 0; component < 3; ++component) {
+                observation.tracker_origin_world_ros_m[component] =
+                    profile_frame.tracker_origin_world_ros_m[static_cast<int>(component)];
+                observation.camera_origin_world_ros_m[component] =
+                    profile_frame.camera_origin_world_ros_m[static_cast<int>(component)];
+            }
+            for (std::size_t component = 0; component < 4; ++component) {
+                observation.tracker_gimbal_quaternion_world_wxyz[component] =
+                    profile_frame.tracker_gimbal_quaternion_world_wxyz[
+                        static_cast<int>(component)];
+                observation.camera_quaternion_world_wxyz[component] =
+                    profile_frame.camera_quaternion_world_wxyz[static_cast<int>(component)];
+            }
+            observation.gimbal_yaw_deg = profile_frame.gimbal_yaw_deg;
+            observation.gimbal_pitch_deg = profile_frame.gimbal_pitch_deg;
+            observation.gimbal_yaw_speed_deg_s = profile_frame.gimbal_yaw_speed_deg_s;
+            observation.camera_profile_id = profile_frame.camera_profile_id;
+            observation.camera_gimbal_extrinsic_from_config =
+                angle_solver_.cameraGimbalExtrinsicFromConfig();
+            const Eigen::Matrix3d R_camera2gimbal = angle_solver_.cameraToGimbalRotation();
+            const Eigen::Vector3d t_camera2gimbal_m =
+                angle_solver_.cameraToGimbalTranslationM();
+            for (std::size_t row = 0; row < 3; ++row) {
+                observation.t_camera2gimbal_m[row] =
+                    t_camera2gimbal_m(static_cast<int>(row));
+                for (std::size_t column = 0; column < 3; ++column) {
+                    observation.R_camera2gimbal[row * 3 + column] =
+                        R_camera2gimbal(static_cast<int>(row), static_cast<int>(column));
+                }
+            }
+            observation.armors.reserve(solved.size());
+            for (const auto& armor : solved) {
+                if (!armor) continue;
+                PreTrackerArmorObservation item;
+                item.observation_id = armor->observation_id;
+                item.detector_number = armor->number;
+                item.detector_color = armor->color;
+                item.detector_type = static_cast<int>(armor->type);
+                item.position_m = {
+                    armor->armorPosition.x(), armor->armorPosition.y(), armor->armorPosition.z()};
+                if (!armor->tVec.empty() && armor->tVec.total() == 3) {
+                    cv::Mat tvec64;
+                    armor->tVec.reshape(1, 3).convertTo(tvec64, CV_64F);
+                    item.camera_tvec_m = {
+                        tvec64.at<double>(0, 0) / 1000.0,
+                        tvec64.at<double>(1, 0) / 1000.0,
+                        tvec64.at<double>(2, 0) / 1000.0};
+                }
+                item.yaw_rad = armor->yaw;
+                item.yaw_absolute_rad = armor->yaw_absolute;
+                item.reprojection_rms_px = armor->exposure_constrained_reprojection_error_px;
+                if (!std::isfinite(item.reprojection_rms_px)) {
+                    item.reprojection_rms_px = armor->legacy_constrained_reprojection_error_px;
+                }
+                item.reprojection_max_px = armor->exposure_constrained_max_reprojection_error_px;
+                if (!std::isfinite(item.reprojection_max_px)) {
+                    item.reprojection_max_px = armor->legacy_constrained_max_reprojection_error_px;
+                }
+                item.finite_valid = std::isfinite(item.position_m[0]) &&
+                    std::isfinite(item.position_m[1]) && std::isfinite(item.position_m[2]) &&
+                    std::isfinite(item.yaw_absolute_rad);
+                observation.armors.push_back(item);
+            }
+            if (!config_.pre_tracker_observation_sink->submit(std::move(observation))) {
+                std::cerr << "[aim_sim_bridge] stage3 observation sink failed; "
+                             "recording is no longer trustworthy\n";
+            }
+        }
 
         const auto tracker_aim_begin = std::chrono::steady_clock::now();
         if (!last_camera_profile_id_.empty() &&

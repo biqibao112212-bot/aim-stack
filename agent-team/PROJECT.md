@@ -1,6 +1,6 @@
 # Aim Stack：自瞄 B 与打符消费者
 
-- 上下文版本：`CTX-AIM-STACK-2026.07-v2`
+- 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 - 仓库：`aim-stack`
 - 分支：`main`
 - 工作目录：`D:\仿真\repos\aim-stack`
@@ -20,7 +20,7 @@
 
 阶段一是固定模拟器/曝光契约；阶段二是在 tracker 前通过动态渲染 G2 修复 PnP yaw；阶段三仅在 G2 通过后进行有限、无泄漏数据采集，并训练固定的 TCN + 任意时间解码器。候选选择、云台、MPC 和火控保持冻结；模型必须提供不确定性/OOD 与安全回退。
 
-当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三采集与训练仍未授权，下一步只讨论采集方案。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
+当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三正式 360-session 采集已完成；旧 `H=0.07 m` 已被经 exact-exposure 真值验证的 camera→gimbal R/T 取代。当前正式离线合同为最近最多 200 个真实观测事件及其真实时间戳的 `stage3-dataset-v3`，全量 111,527-train/36,297-validation 单 seed 训练、完整 validation 双物理基线评估和动态 ONNX parity 均已完成且未访问 test。该结果证明完整离线流程可行并在整体 validation 上超过刚体 baseline，但不构成多 seed/线上指标验收；test、TensorRT、tracker/MPC/火控和实弹接入仍冻结。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
 
 ## 2026-07-19 PnP joint-pose A/B checkpoint
 
@@ -41,8 +41,9 @@ consistent yaw repair and must not replace production output.
 The marginalized local yaw sensitivity grows from 3.73 to 5.33 to 6.58
 deg/px (p50) at 3/5/7 m. This directly supports a distance/pose conditioning
 limit: a one-pixel corner-residual perturbation can correspond to several
-degrees of yaw even after translation is optimized. Stage three collection and
-training remain unauthorized, and no G2 pass threshold has been declared.
+degrees of yaw even after translation is optimized. This was the pre-stage-three
+checkpoint; stage three was subsequently authorized on 2026-07-20. No numeric
+G2 threshold was retroactively declared.
 
 ## 2026-07-19 chassis-frame +15 repair and replay
 
@@ -65,5 +66,5 @@ m, versus the camera-fixed legacy 2.65/15.78, 5.66/39.24 and 8.76/69.40.
 Together with the nonzero-pose synthetic regression and reviewed continuous
 curves, this evidence closes G2 and stage two. The result validates the PnP
 input semantics required by the later predictor; these replay files are not
-declared training samples. Stage-three collection and training remain
-unauthorized.
+declared training samples. The later stage-three authorization did not change
+the status of these replay files.

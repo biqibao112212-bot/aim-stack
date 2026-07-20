@@ -405,7 +405,7 @@
         ["from config", fmt(get(pipeline, "calibration.extrinsic_from_config")), get(pipeline, "calibration.extrinsic_from_config") ? "ok" : "warn"],
         ["R camera->gimbal", matrixText(get(pipeline, "calibration.R_camera2gimbal"), 3)],
         ["t camera->gimbal", vec3(get(pipeline, "calibration.t_camera2gimbal_m"), 4)],
-        ["legacy H", meters(get(pipeline, "calibration.legacy_h_m"))],
+        ["position contract", fmt(get(pipeline, "calibration.position_contract")), "accent"],
         ["aim offset cx/cy", `${fmt(get(pipeline, "calibration.aiming_cx_px"), 1)} / ${fmt(get(pipeline, "calibration.aiming_cy_px"), 1)} px`],
         ["offset mutates K", fmt(get(pipeline, "calibration.apply_aiming_offset_to_intrinsics")), get(pipeline, "calibration.apply_aiming_offset_to_intrinsics") ? "warn" : "ok"],
         ["K effective", matrixText(get(pipeline, "calibration.camera_matrix_effective"), 1)],

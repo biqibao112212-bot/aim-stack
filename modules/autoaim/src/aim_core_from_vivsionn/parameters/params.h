@@ -2,6 +2,8 @@
 #define PARAMS_H
 
 #include <cstdlib>
+#include <cmath>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <opencv2/opencv.hpp>
@@ -46,7 +48,20 @@ inline cv::Mat defaultCameraToGimbalRotation()
 
 inline cv::Mat defaultCameraToGimbalTranslation()
 {
-    return (cv::Mat_<double>(3, 1) << 0.0, 0.0, 0.07);
+    return cv::Mat::zeros(3, 1, CV_64F);
+}
+
+inline bool isValidCameraToGimbalExtrinsic(const cv::Mat& rotation, const cv::Mat& translation)
+{
+    if (rotation.rows != 3 || rotation.cols != 3 || translation.total() != 3 ||
+        !cv::checkRange(rotation) || !cv::checkRange(translation)) {
+        return false;
+    }
+    const cv::Mat identity_error = rotation.t() * rotation - cv::Mat::eye(3, 3, CV_64F);
+    const double determinant = cv::determinant(rotation);
+    const double translation_norm_m = cv::norm(translation);
+    return cv::norm(identity_error, cv::NORM_INF) <= 1e-5 &&
+        std::abs(determinant - 1.0) <= 1e-5 && translation_norm_m <= 5.0;
 }
 
 inline bool readNumericSequence(const cv::FileNode& node, std::vector<double>* values)
@@ -185,7 +200,6 @@ public:
     bool GRAVITY_OFFSET_SWITCH;   //1=on 0=off, including gravity and yaw predict
     double AIMING_CX;     // 偏右调大
     double AIMING_CY;       // 偏下调大
-    double H;           // 偏下调小
     bool CAMERA_GIMBAL_EXTRINSIC_ENABLED = true;
     bool CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG = false;
     bool APPLY_AIMING_OFFSET_TO_INTRINSICS = false;
@@ -464,7 +478,6 @@ public:
         fs["GRAVITY_OFFSET_SWITCH"] >> GRAVITY_OFFSET_SWITCH;
         fs["AIMING_CX"] >> AIMING_CX;
         fs["AIMING_CY"] >> AIMING_CY;
-        fs["H"] >> H;
         const FileNode extrinsic_enabled_node = fs["CAMERA_GIMBAL_EXTRINSIC_ENABLED"];
         if (!extrinsic_enabled_node.empty()) {
             extrinsic_enabled_node >> CAMERA_GIMBAL_EXTRINSIC_ENABLED;
@@ -485,7 +498,15 @@ public:
         T_CAMERA2GIMBAL = readVector3(
             fs, {"T_CAMERA2GIMBAL", "t_camera2gimbal"}, defaultCameraToGimbalTranslation(),
             &found_translation);
-        CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG = found_rotation || found_translation;
+        CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG = found_rotation && found_translation;
+        if (CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG &&
+            !isValidCameraToGimbalExtrinsic(R_CAMERA2GIMBAL, T_CAMERA2GIMBAL)) {
+            CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG = false;
+        }
+        if (CAMERA_GIMBAL_EXTRINSIC_ENABLED && !CAMERA_GIMBAL_EXTRINSIC_FROM_CONFIG) {
+            throw std::runtime_error(
+                "CAMERA_GIMBAL_EXTRINSIC_ENABLED requires a valid calibrated R and T");
+        }
         fs["AUTO_SHOT_SWITCH"] >> AUTO_SHOT_SWITCH;
         fs["IGNORE_SAMENUM_CONDITION_SWITCH"] >> IGNORE_SAMENUM_CONDITION_SWITCH;
         const FileNode armor_neutral_grace_frames_node = fs["ARMOR_NEUTRAL_GRACE_FRAMES"];

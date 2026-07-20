@@ -330,6 +330,59 @@ int main()
             (live_round_trip_mm - live_camera_point_mm).norm() < 1e-9,
             "camera/tracker coordinate conversion is not invertible");
 
+        // Production coordinate contract: compose the exposure optical pose
+        // with the calibrated camera->gimbal rigid transform.  R is not a
+        // replacement for the tracker axis convention; it recovers ^T R_G.
+        solver._gimbal_pose.pitch = -0.9220832586;
+        solver._gimbal_pose.yaw = -21.48591232;
+        require(solver.cameraGimbalExtrinsicEnabled(), "sim extrinsic is disabled");
+        require(solver.cameraGimbalExtrinsicFromConfig(), "sim extrinsic is not calibrated config");
+        Eigen::Matrix3d R_tracker_camera;
+        const double configured_pitch_rad =
+            static_cast<double>(solver._gimbal_pose.pitch) * rm::D2R;
+        const double configured_yaw_rad =
+            static_cast<double>(solver._gimbal_pose.yaw) * rm::D2R;
+        R_tracker_camera.col(0) = rm::cameraPointToTrackerConvention(
+            Eigen::Vector3d::UnitX(), configured_pitch_rad, configured_yaw_rad);
+        R_tracker_camera.col(1) = rm::cameraPointToTrackerConvention(
+            Eigen::Vector3d::UnitY(), configured_pitch_rad, configured_yaw_rad);
+        R_tracker_camera.col(2) = rm::cameraPointToTrackerConvention(
+            Eigen::Vector3d::UnitZ(), configured_pitch_rad, configured_yaw_rad);
+        const Eigen::Matrix3d R_camera_gimbal = solver.cameraToGimbalRotation();
+        const Eigen::Vector3d t_camera_gimbal_mm =
+            solver.cameraToGimbalTranslationM() * 1000.0;
+        const Eigen::Matrix3d R_tracker_gimbal =
+            R_tracker_camera * R_camera_gimbal.transpose();
+        const Eigen::Vector3d expected_tracker_mm = R_tracker_gimbal *
+            (R_camera_gimbal * live_camera_point_mm + t_camera_gimbal_mm);
+        const Eigen::Vector3d calibrated_tracker_mm =
+            solver.cameraPointToTracker(live_camera_point_mm);
+        require(
+            (calibrated_tracker_mm - expected_tracker_mm).norm() < 1e-9,
+            "calibrated camera->gimbal->tracker composition is incorrect");
+        require(
+            (solver.trackerPointToCamera(calibrated_tracker_mm) - live_camera_point_mm).norm() < 1e-9,
+            "calibrated production coordinate conversion is not invertible");
+        require(
+            (solver.gimbalPointToCamera(solver.cameraPointToGimbal(live_camera_point_mm)) -
+             live_camera_point_mm).norm() < 1e-9,
+            "configured camera/gimbal extrinsic is not invertible");
+
+        cv::Mat live_tvec = (cv::Mat_<double>(3, 1) <<
+            live_camera_point_mm.x(), live_camera_point_mm.y(), live_camera_point_mm.z());
+        require(
+            (solver.calculateGimblePointFromTvec(live_tvec) - calibrated_tracker_mm).norm() < 1e-9,
+            "PnP tvec does not use the calibrated production transform");
+        const cv::Point2f projected = solver.calculateImagePoint(calibrated_tracker_mm);
+        std::vector<cv::Point2f> expected_projection;
+        cv::projectPoints(
+            std::vector<cv::Point3f>{cv::Point3f(0.0f, 0.0f, 0.0f)},
+            cv::Mat::zeros(3, 1, CV_64F), live_tvec, camera_matrix,
+            solver.configuredDistortionCoeffs(), expected_projection);
+        require(
+            !expected_projection.empty() && cv::norm(projected - expected_projection.front()) < 1e-3,
+            "tracker->camera inverse projection disagrees with cv::projectPoints");
+
         std::cout << "angle_solver_pnp_candidates_test: PASS\n";
         return 0;
     } catch (const std::exception& error) {

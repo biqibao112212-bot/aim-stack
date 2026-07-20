@@ -3,11 +3,66 @@
 #include <opencv2/core.hpp>
 
 #include <cstdint>
+#include <array>
 #include <limits>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace aim_sim_bridge
 {
+
+struct PreTrackerArmorObservation
+{
+    std::uint32_t observation_id = 0;
+    int detector_number = 0;
+    int detector_color = 0;
+    int detector_type = 0;
+    bool finite_valid = false;
+    std::array<double, 3> position_m{};
+    std::array<double, 3> camera_tvec_m{
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN(),
+        std::numeric_limits<double>::quiet_NaN()};
+    double yaw_rad = std::numeric_limits<double>::quiet_NaN();
+    double yaw_absolute_rad = std::numeric_limits<double>::quiet_NaN();
+    double reprojection_rms_px = std::numeric_limits<double>::quiet_NaN();
+    double reprojection_max_px = std::numeric_limits<double>::quiet_NaN();
+};
+
+struct PreTrackerObservationFrame
+{
+    std::string session_id;
+    std::uint64_t producer_epoch = 0;
+    std::uint64_t frame_seq = 0;
+    std::uint64_t timestamp_ns = 0;
+    std::uint64_t gimbal_pose_timestamp_ns = 0;
+    bool gimbal_pose_exposure_matched = false;
+    bool tracker_world_transform_exposure_matched = false;
+    std::array<double, 3> tracker_origin_world_ros_m{};
+    std::array<double, 3> camera_origin_world_ros_m{};
+    std::array<double, 4> tracker_gimbal_quaternion_world_wxyz{1.0, 0.0, 0.0, 0.0};
+    std::array<double, 4> camera_quaternion_world_wxyz{1.0, 0.0, 0.0, 0.0};
+    double gimbal_yaw_deg = 0.0;
+    double gimbal_pitch_deg = 0.0;
+    double gimbal_yaw_speed_deg_s = 0.0;
+    std::string camera_profile_id;
+    std::string position_contract = "calibrated-camera-gimbal-extrinsic-v1";
+    bool camera_gimbal_extrinsic_from_config = false;
+    std::array<double, 9> R_camera2gimbal{};
+    std::array<double, 3> t_camera2gimbal_m{};
+    std::vector<PreTrackerArmorObservation> armors;
+};
+
+class IPreTrackerObservationSink
+{
+public:
+    virtual ~IPreTrackerObservationSink() = default;
+    virtual bool submit(PreTrackerObservationFrame frame) = 0;
+    virtual bool healthy() const = 0;
+    virtual std::uint64_t submitted() const = 0;
+    virtual std::uint64_t failed() const = 0;
+};
 
 enum class TargetMode
 {
@@ -35,6 +90,7 @@ struct AimBridgeConfig
     double command_smoothing_alpha = 0.65;
     double command_smoothing_passthrough_deg = 1.5;
     std::string armor_detector_config;
+    std::shared_ptr<IPreTrackerObservationSink> pre_tracker_observation_sink;
 };
 
 struct SimFrame

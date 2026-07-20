@@ -565,23 +565,17 @@ cv::Point2f projectCameraPoint(
 
 } // namespace
 
-Eigen::Matrix3d gimbalPoseRotationFromCameraConvention(
-    const Eigen::Matrix3d& R_camera2gimbal, double gimbal_pitch_rad, double gimbal_yaw_rad)
+Eigen::Matrix3d cameraToTrackerRotationAtExposure(
+    double gimbal_pitch_rad, double gimbal_yaw_rad)
 {
-    Eigen::Matrix3d R_yaw, R_pitch;
-    R_yaw << cos(gimbal_yaw_rad), 0, sin(gimbal_yaw_rad), 0, 1, 0, -sin(gimbal_yaw_rad), 0,
-        cos(gimbal_yaw_rad);
-    R_pitch << 1, 0, 0, 0, cos(gimbal_pitch_rad), -sin(gimbal_pitch_rad), 0,
-        sin(gimbal_pitch_rad), cos(gimbal_pitch_rad);
-    const Eigen::Matrix3d R_camera_pose = R_yaw * R_pitch;
-    return R_camera2gimbal * R_camera_pose * R_camera2gimbal.transpose();
-}
-
-Eigen::Matrix3d currentGimbalPoseRotation(const AngleSolver& solver)
-{
-    return gimbalPoseRotationFromCameraConvention(
-        solver.cameraToGimbalRotation(), solver._gimbal_pose.pitch * D2R,
-        solver._gimbal_pose.yaw * D2R);
+    Eigen::Matrix3d rotation;
+    rotation.col(0) = cameraPointToTrackerConvention(
+        Eigen::Vector3d::UnitX(), gimbal_pitch_rad, gimbal_yaw_rad);
+    rotation.col(1) = cameraPointToTrackerConvention(
+        Eigen::Vector3d::UnitY(), gimbal_pitch_rad, gimbal_yaw_rad);
+    rotation.col(2) = cameraPointToTrackerConvention(
+        Eigen::Vector3d::UnitZ(), gimbal_pitch_rad, gimbal_yaw_rad);
+    return rotation;
 }
 
 Eigen::Vector3d cameraPointToTrackerConvention(
@@ -674,6 +668,35 @@ Eigen::Vector3d AngleSolver::gimbalPointToCamera(const Eigen::Vector3d& gimbal_p
     return _R_camera2gimbal.transpose() * (gimbal_point - _t_camera2gimbal_m * 1000.0);
 }
 
+Eigen::Vector3d AngleSolver::cameraPointToTracker(
+    const Eigen::Vector3d& camera_point) const
+{
+    const Eigen::Matrix3d R_tracker_camera = cameraToTrackerRotationAtExposure(
+        _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+    if (!_camera_gimbal_extrinsic_enabled) {
+        return R_tracker_camera * camera_point;
+    }
+    // poseEuler is the exposure-matched optical pose (^T R_C). Recover
+    // ^T R_G from the calibrated static ^G R_C, then apply the complete
+    // camera->gimbal rigid transform. This avoids counting mount rotation twice.
+    const Eigen::Matrix3d R_tracker_gimbal =
+        R_tracker_camera * _R_camera2gimbal.transpose();
+    return R_tracker_gimbal * cameraPointToGimbal(camera_point);
+}
+
+Eigen::Vector3d AngleSolver::trackerPointToCamera(
+    const Eigen::Vector3d& tracker_point) const
+{
+    const Eigen::Matrix3d R_tracker_camera = cameraToTrackerRotationAtExposure(
+        _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+    if (!_camera_gimbal_extrinsic_enabled) {
+        return R_tracker_camera.transpose() * tracker_point;
+    }
+    const Eigen::Matrix3d R_tracker_gimbal =
+        R_tracker_camera * _R_camera2gimbal.transpose();
+    return gimbalPointToCamera(R_tracker_gimbal.transpose() * tracker_point);
+}
+
 Eigen::Matrix3d AngleSolver::cameraToGimbalRotation() const
 {
     return _camera_gimbal_extrinsic_enabled ? _R_camera2gimbal : Eigen::Matrix3d::Identity();
@@ -692,11 +715,6 @@ bool AngleSolver::cameraGimbalExtrinsicEnabled() const
 bool AngleSolver::cameraGimbalExtrinsicFromConfig() const
 {
     return _camera_gimbal_extrinsic_from_config;
-}
-
-double AngleSolver::legacyHeightM() const
-{
-    return _params->H;
 }
 
 double AngleSolver::aimingOffsetCxPx() const
@@ -893,10 +911,22 @@ Eigen::Vector3d AngleSolver::calculateCamPoint(const cv::Point2f Center_of_armor
 
 Eigen::Vector3d AngleSolver::calculateGimblePoint(const cv::Point2f Center_of_armor, double dis)
 {
-    Eigen::Vector3d camPoint3D = calculateCamPoint(Center_of_armor, dis);
-    camPoint3D.y() -= _params->H * 1000.0;
-    return cameraPointToTrackerConvention(
-        camPoint3D, _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+    const Eigen::Vector3d camera_ray = calculateCamPoint(Center_of_armor, 1.0).normalized();
+    double camera_range_mm = dis;
+    if (_camera_gimbal_extrinsic_enabled) {
+        const Eigen::Vector3d gimbal_ray = _R_camera2gimbal * camera_ray;
+        const Eigen::Vector3d translation_mm = _t_camera2gimbal_m * 1000.0;
+        const double b = 2.0 * gimbal_ray.dot(translation_mm);
+        const double c = translation_mm.squaredNorm() - dis * dis;
+        const double discriminant = b * b - 4.0 * c;
+        if (discriminant >= 0.0) {
+            const double sqrt_discriminant = std::sqrt(discriminant);
+            const double first = (-b + sqrt_discriminant) * 0.5;
+            const double second = (-b - sqrt_discriminant) * 0.5;
+            camera_range_mm = std::max(first, second);
+        }
+    }
+    return cameraPointToTracker(camera_ray * camera_range_mm);
 }
 
 double AngleSolver::calculateDistance(Armor& armor, ArmorType objectType)
@@ -1276,17 +1306,13 @@ double AngleSolver::constrainedPoseReprojectionErrorAtExposure(
 Eigen::Vector3d AngleSolver::calculateGimblePointFromTvec(const cv::Mat& tvec)
 {
     Eigen::Vector3d camPoint3D;
-    camPoint3D << tvec.at<double>(0, 0),
-        tvec.at<double>(1, 0) - _params->H * 1000.0, tvec.at<double>(2, 0);
-    return cameraPointToTrackerConvention(
-        camPoint3D, _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
+    camPoint3D << tvec.at<double>(0, 0), tvec.at<double>(1, 0), tvec.at<double>(2, 0);
+    return cameraPointToTracker(camPoint3D);
 }
 
 cv::Point2f AngleSolver::calculateImagePoint(Eigen::Vector3d gimbal_point)
 {
-    Eigen::Vector3d camPoint3D = trackerPointToCameraConvention(
-        gimbal_point, _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
-    camPoint3D.y() += _params->H * 1000.0;
+    Eigen::Vector3d camPoint3D = trackerPointToCamera(gimbal_point);
     return projectCameraPoint(camPoint3D, _cam_instant_matrix, _ASparams.DISTORTION_COEFF);
 }
 
@@ -1294,9 +1320,7 @@ vector<cv::Point2f> AngleSolver::calculateImagePoint(vector<Eigen::Vector3d> gim
 {
     vector<Point2f> image_points;
     for (auto& gimbal_point : gimbal_points) {
-        Eigen::Vector3d camPoint3D = trackerPointToCameraConvention(
-            gimbal_point, _gimbal_pose.pitch * D2R, _gimbal_pose.yaw * D2R);
-        camPoint3D.y() += _params->H * 1000.0;
+        Eigen::Vector3d camPoint3D = trackerPointToCamera(gimbal_point);
         image_points.push_back(
             projectCameraPoint(camPoint3D, _cam_instant_matrix, _ASparams.DISTORTION_COEFF));
     }
