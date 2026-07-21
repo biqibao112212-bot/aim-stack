@@ -41,10 +41,14 @@ class Stage3TCN(nn.Module):
     obs_mask: [B,T,4], event_mask: [B,T], event_time_s: [B,T], tau: [B,Q]
     """
 
-    def __init__(self, channels: int = 64, dropout: float = 0.1) -> None:
+    def __init__(self, channels: int = 64, dropout: float = 0.1, input_features: int = 5, observation_heads: bool = False) -> None:
         super().__init__()
+        if input_features < 5:
+            raise ValueError("Stage3TCN requires at least xyz and sin/cos yaw features")
+        self.input_features = int(input_features)
+        self.observation_heads = bool(observation_heads)
         self.armor_mlp = nn.Sequential(
-            nn.Linear(5, 32), nn.SiLU(), nn.Linear(32, 32), nn.SiLU()
+            nn.Linear(self.input_features, 32), nn.SiLU(), nn.Linear(32, 32), nn.SiLU()
         )
         self.frame_projection = nn.Sequential(
             nn.Linear(32 + 32 + 1 + 2, channels), nn.SiLU()
@@ -59,6 +63,18 @@ class Stage3TCN(nn.Module):
         )
         self.position_mean = nn.Linear(128, 12)
         self.position_logvar = nn.Linear(128, 12)
+        if self.observation_heads:
+            self.observation_residual_mean = nn.Linear(128, 12)
+            self.observation_residual_logvar = nn.Linear(128, 12)
+            self.visibility_logits = nn.Linear(128, 4)
+            # Start as an exact physical predictor; the observation branch
+            # must earn any nonzero PnP correction during its warm-up.
+            nn.init.zeros_(self.observation_residual_mean.weight)
+            nn.init.zeros_(self.observation_residual_mean.bias)
+            nn.init.zeros_(self.observation_residual_logvar.weight)
+            nn.init.constant_(self.observation_residual_logvar.bias, -2.0)
+            nn.init.zeros_(self.visibility_logits.weight)
+            nn.init.zeros_(self.visibility_logits.bias)
         self.normal = nn.Linear(128, 12)
         self.motion_logits = nn.Linear(channels, 4)
 
@@ -105,9 +121,18 @@ class Stage3TCN(nn.Module):
         position_logvar = position_logvar.clamp(-6.907755, 0.0)
         normal = self.normal(decoded).reshape(-1, query_count, 4, 3)
         normal = F.normalize(normal, dim=-1, eps=1e-6)
-        return {
+        result = {
             "position_mean": position_mean,
             "position_logvar": position_logvar,
             "normal": normal,
             "motion_logits": self.motion_logits(state),
         }
+        if self.observation_heads:
+            residual_mean = self.observation_residual_mean(decoded).reshape(-1, query_count, 4, 3)
+            residual_logvar = self.observation_residual_logvar(decoded).reshape(-1, query_count, 4, 3)
+            result.update({
+                "observation_residual_mean": residual_mean,
+                "observation_residual_logvar": residual_logvar.clamp(-6.907755, 1.5),
+                "visibility_logits": self.visibility_logits(decoded).reshape(-1, query_count, 4),
+            })
+        return result

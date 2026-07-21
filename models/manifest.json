@@ -79,6 +79,22 @@
       "sha256": "B7584D55BFDE079B7F64E5D2B8F668FDF9EDD62297AB4B750CD01B6CE5443731",
       "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\triangle-error-analysis-r3.json",
       "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v4-observation-full-seed0-r5/stage3-observation-seed0-best.pt",
+      "role": "Stage-3 v4 future-observation masked-training experiment best checkpoint; not production-approved",
+      "bytes": 989275,
+      "sha256": "901BFEC7C1281D02B48A18D7C222D26C9A8FDB0530741BB57DFC73F5AEC1A689",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v4-observation-full-seed0-r5\\stage3-observation-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v4-observation-full-seed0-r5/validation-observation-report.json",
+      "role": "Stage-3 v4 future-observation validation report; paired P-O/P-G/O-G and visibility metrics",
+      "bytes": 6187,
+      "sha256": "8839A1B6177407128760B61A06E4BBAA1A7F3004C3C0A38F80BEBD0973720393",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v4-observation-full-seed0-r5\\validation-observation-report.json",
+      "protected": true
     }
   ]
 }

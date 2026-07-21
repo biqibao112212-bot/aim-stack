@@ -31,7 +31,7 @@ def _validate_shard_arrays(arrays: dict[str, np.ndarray], declared_count: int) -
     lengths = {name: int(arrays[name].shape[0]) for name in required}
     if set(lengths.values()) != {declared_count}:
         raise ValueError(f"shard first-dimension mismatch: {lengths}, declared={declared_count}")
-    if arrays["obs"].shape[1:] != (200, 4, 5):
+    if arrays["obs"].shape[1:3] != (200, 4) or arrays["obs"].shape[3] < 5:
         raise ValueError(f"invalid observation tensor shape: {arrays['obs'].shape}")
     if arrays["event_mask"].shape[1:] != (200,) or arrays["event_time_s"].shape[1:] != (200,):
         raise ValueError("invalid event mask/time tensor shape")
@@ -43,6 +43,13 @@ def _validate_shard_arrays(arrays: dict[str, np.ndarray], declared_count: int) -
             raise ValueError("valid event times must be ordered and no later than the anchor")
     if arrays["tau"].shape[1:] != (8,) or arrays["future_position"].shape[1:] != (8, 4, 3):
         raise ValueError("invalid query or target tensor shape")
+    if "future_observation_position" in arrays:
+        if arrays["future_observation_position"].shape[1:] != (8, 4, 3):
+            raise ValueError("invalid future observation position shape")
+        if arrays["future_observation_mask"].shape[1:] != (8, 4):
+            raise ValueError("invalid future observation mask shape")
+        if arrays["future_observation_frame_available"].shape[1:] != (8,):
+            raise ValueError("invalid future observation frame mask shape")
 
 
 class Stage3ShardDataset(IterableDataset):
@@ -73,8 +80,9 @@ class Stage3ShardDataset(IterableDataset):
         self.sample_limit = sample_limit
         self.session_ids = None if session_ids is None else frozenset(str(value) for value in session_ids)
         manifest = json.loads((self.dataset_dir / "dataset_manifest.json").read_text(encoding="utf-8"))
-        if manifest.get("schema_version") != "stage3-dataset-v3":
-            raise ValueError("formal shard training requires stage3-dataset-v3")
+        if manifest.get("schema_version") not in {"stage3-dataset-v3", "stage3-dataset-v4-observation"}:
+            raise ValueError("formal shard training requires stage3-dataset-v3 or v4-observation")
+        self.observation_target = manifest.get("schema_version") == "stage3-dataset-v4-observation"
         if not bool(manifest.get("qualification_passed", False)):
             raise ValueError("dataset qualification did not pass")
         if split not in {"train", "validation", "test"}:
@@ -94,6 +102,11 @@ class Stage3ShardDataset(IterableDataset):
         normalization = json.loads(normalization_path.read_text(encoding="utf-8"))
         self.obs_mean = np.asarray(normalization["obs_xyz"]["mean"], dtype=np.float32)
         self.obs_std = np.asarray(normalization["obs_xyz"]["std"], dtype=np.float32)
+        quality_payload = normalization.get("obs_quality", {})
+        self.quality_mean = np.asarray(quality_payload.get("mean", [0.0, 0.0]), dtype=np.float32)
+        self.quality_std = np.asarray(quality_payload.get("std", [1.0, 1.0]), dtype=np.float32)
+        if self.quality_mean.shape != (2,) or self.quality_std.shape != (2,) or np.any(self.quality_std <= 0):
+            raise ValueError("observation quality normalization must have two positive features")
         if self.obs_mean.shape != (3,) or self.obs_std.shape != (3,):
             raise ValueError("normalization mean/std must each have shape (3,)")
         if not np.all(np.isfinite(self.obs_mean)) or not np.all(np.isfinite(self.obs_std)):
@@ -206,9 +219,11 @@ class Stage3ShardDataset(IterableDataset):
                         obs, obs_mask, event_mask, event_time_s, source_seed
                     )
                 obs[..., :3] = (obs[..., :3] - self.obs_mean) / self.obs_std
+                if obs.shape[-1] >= 7:
+                    obs[..., 5:7] = (obs[..., 5:7] - self.quality_mean) / self.quality_std
                 future_position = arrays["future_position"][index].astype(np.float32, copy=False)
                 emitted += 1
-                yield {
+                result = {
                     "obs": torch.from_numpy(obs),
                     "obs_mask": torch.from_numpy(obs_mask),
                     "event_mask": torch.from_numpy(event_mask),
@@ -218,3 +233,11 @@ class Stage3ShardDataset(IterableDataset):
                     "future_normal": torch.from_numpy(arrays["future_normal"][index].astype(np.float32, copy=False)),
                     "motion_class": torch.tensor(int(arrays["motion_class"][index]), dtype=torch.long),
                 }
+                if self.observation_target:
+                    result.update({
+                        "future_observation_position": torch.from_numpy(arrays["future_observation_position"][index].astype(np.float32, copy=False)),
+                        "future_observation_mask": torch.from_numpy(arrays["future_observation_mask"][index].astype(np.bool_, copy=False)),
+                        "future_observation_frame_available": torch.from_numpy(arrays["future_observation_frame_available"][index].astype(np.bool_, copy=False)),
+                        "future_observation_ambiguous": torch.from_numpy(arrays["future_observation_ambiguous"][index].astype(np.bool_, copy=False)),
+                    })
+                yield result

@@ -206,3 +206,17 @@
   far-distance PnP, and rare multi-candidate outliers). The independent model
   limitation is long-horizon/high-speed prediction. Future training continues
   to use physical truth as target; future observation is diagnostic only.
+
+### 2026-07-21 future-observation target experiment
+
+- Built `stage3-dataset-v4-observation-20260721-r4` from the immutable v3
+  shards and exact raw timestamps. Missing future frames mask the observation
+  branch; zero-candidate frames are explicit visibility negatives.
+- Trained a full seed-0 dual-head model initialized from the v3 checkpoint.
+  The physical head remains `P-G=0.175675/0.569594 m`; the observation head
+  reaches `P-O=0.226535/1.353787 m` versus the old `0.223675/1.345863 m`.
+- The first observation-target run is therefore feasible but not an
+  improvement. Historical v1 inputs contain no reprojection quality and the
+  future PnP residual has near-zero mean with large random spread. Keep this
+  branch experimental until causal detector/image-quality features or a
+  probabilistic output are available.

@@ -255,3 +255,14 @@
     future observation is unavailable; (b)/(d) are coverage-qualified
     diagnostics. The full r3 report and slice-level attribution are retained
     under the Stage-3 model directory and the consumer docs.
+
+56. A v4 observation-target experiment is retained as an A/B branch. It adds
+    exact future observation positions, per-slot masks and frame-availability
+    masks, with no update for missing future frames. A zero-initialized PnP
+    residual head plus visibility head is jointly trained with the existing
+    physical head. On the full validation split, physical `P-G` remains
+    `0.175675/0.569594 m`, while `P-O` is `0.226535/1.353787 m` versus the
+    v3 baseline `0.223675/1.345863 m`. The branch is not a production
+    replacement: past xyz/yaw history does not contain enough information to
+    predict the random future-frame PnP error. Do not optimize away this
+    conclusion by treating missing observations as zero labels.

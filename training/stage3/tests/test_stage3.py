@@ -11,7 +11,7 @@ from training.stage3.build_dataset import discover_canonical_sources, stratified
 from training.stage3.baselines import rigid_constant_velocity_yaw_rate
 from training.stage3.analyze_triangle_errors import _match_observation_to_truth
 from training.stage3.dataset import CameraGimbalExtrinsic, _make_sample, _world_to_tracker
-from training.stage3.losses import stage3_loss
+from training.stage3.losses import stage3_loss, stage3_observation_loss
 from training.stage3.model import Stage3TCN
 from training.stage3.schema import ArmorObservation, ObservationFrame, TruthArmor, TruthFrame
 from training.stage3.train import _position_set_l2
@@ -150,6 +150,30 @@ def test_four_way_analysis_uses_injective_unordered_observation_matching() -> No
     assert set(assignment) == {0, 2, 3}
     assert np.isclose(error, np.linalg.norm([0.01, -0.02, 0.03]))
     assert _match_observation_to_truth(np.zeros((5, 3)), truth) is None
+
+
+def test_observation_loss_masks_missing_future_frames_and_keeps_physical_term() -> None:
+    torch.manual_seed(3)
+    model = Stage3TCN(input_features=7, observation_heads=True)
+    obs = torch.randn(2, 16, 4, 7)
+    obs_mask = torch.ones(2, 16, 4, dtype=torch.bool)
+    event_mask = torch.ones(2, 16, dtype=torch.bool)
+    event_time_s = torch.linspace(-0.2, 0.0, 16).expand(2, -1)
+    tau = torch.rand(2, 8) * 0.5
+    output = model(obs, obs_mask, event_mask, event_time_s, tau)
+    future_position = torch.randn(2, 8, 4, 3)
+    future_normal = torch.nn.functional.normalize(torch.randn(2, 8, 4, 3), dim=-1)
+    future_observation = torch.randn(2, 8, 4, 3)
+    future_mask = torch.zeros(2, 8, 4, dtype=torch.bool)
+    frame_available = torch.zeros(2, 8, dtype=torch.bool)
+    ambiguous = torch.zeros(2, 8, dtype=torch.bool)
+    loss, metrics = stage3_observation_loss(
+        output, future_position, future_normal, torch.tensor([0, 3]),
+        future_observation, future_mask, frame_available, ambiguous,
+    )
+    loss.backward()
+    assert np.isfinite(float(loss))
+    assert np.isfinite(metrics["loss"])
 
 
 def test_effective_tau_uses_matched_truth_timestamp() -> None:
