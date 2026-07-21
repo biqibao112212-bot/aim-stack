@@ -81,6 +81,44 @@ def _git_state() -> dict[str, object]:
     return {"git_commit": commit, "worktree_dirty": dirty}
 
 
+def _load_session_selection(
+    path_value: str, manifest_path: Path,
+) -> tuple[list[str] | None, list[str] | None, dict[str, object] | None]:
+    if not path_value:
+        return None, None, None
+    path = Path(path_value).resolve()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "stage3-pnp-state-pilot-selection-v1":
+        raise ValueError("unsupported PnP state pilot selection schema")
+    if payload.get("dataset_manifest_sha256") != _sha256(manifest_path):
+        raise ValueError("pilot selection does not match the dataset manifest")
+    if payload.get("validation_source_split") != "validation":
+        raise ValueError("pilot validation sessions must come from validation")
+    if payload.get("test") != []:
+        raise ValueError("pilot selection must keep test empty")
+
+    selections: dict[str, list[str]] = {}
+    for split in ("train", "validation"):
+        values = payload.get(split)
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"pilot selection has no non-empty {split} session list")
+        selected = [str(value) for value in values]
+        if len(selected) != len(set(selected)):
+            raise ValueError(f"pilot selection contains duplicate {split} sessions")
+        selections[split] = selected
+    if set(selections["train"]) & set(selections["validation"]):
+        raise ValueError("pilot train and validation session lists must be disjoint")
+    record = {
+        "path": str(path),
+        "sha256": _sha256(path),
+        "purpose": str(payload.get("purpose", "")),
+        "train": selections["train"],
+        "validation": selections["validation"],
+        "test": [],
+    }
+    return selections["train"], selections["validation"], record
+
+
 def _load_geometry_and_center_prior(
     dataset: Path,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, str, str]:
@@ -285,6 +323,15 @@ def _validate(
             arrays.setdefault("constant_twist_yaw_rms_rad", []).append(
                 yaw_rms.detach().cpu().numpy()
             )
+            if "velocity" in output:
+                arrays.setdefault("shared_speed_mps", []).append(
+                    torch.linalg.vector_norm(output["velocity"].float(), dim=-1)
+                    .detach().cpu().numpy()
+                )
+            if "omega" in output:
+                arrays.setdefault("shared_abs_omega_rad_s", []).append(
+                    output["omega"].float().abs().detach().cpu().numpy()
+                )
             tau_parts.append(batch["tau"].detach().cpu().numpy())
             motion_parts.append(batch["motion_class"].detach().cpu().numpy())
             distance_parts.append(torch.linalg.vector_norm(
@@ -319,9 +366,14 @@ def _validate(
     def stratum(mask: np.ndarray) -> dict[str, object]:
         return {
             "sample_count": int(mask.sum()),
-            "q0": summary(merged["state_q0_m"][mask]),
-            "q3_centroid_motion": summary(merged["centroid_motion_m"][mask, 2]),
-            "q3_absolute": summary(merged["absolute_set_m"][mask, 3]),
+            "queries": [{
+                "query_index": query,
+                "absolute": summary(merged["absolute_set_m"][mask, query]),
+                "centroid_motion": (
+                    {"count": 0} if query == 0 else
+                    summary(merged["centroid_motion_m"][mask, query - 1])
+                ),
+            } for query in range(min(4, tau.shape[1]))],
         }
 
     motion_names = {0: "stationary", 1: "linear", 2: "spin", 3: "linear_and_spin"}
@@ -332,6 +384,13 @@ def _validate(
         "rigid_shape": summary(merged["rigid_shape_m"].reshape(-1)),
         "constant_twist_center_rms": summary(merged["constant_twist_center_rms_m"]),
         "constant_twist_yaw_rms_rad": summary(merged["constant_twist_yaw_rms_rad"]),
+        "shared_state": (
+            {
+                "speed_mps": summary(merged["shared_speed_mps"]),
+                "abs_omega_rad_s": summary(merged["shared_abs_omega_rad_s"]),
+            }
+            if "shared_speed_mps" in merged else None
+        ),
         "queries": queries,
         "strata": {
             "motion_class": {
@@ -398,14 +457,21 @@ def train(args: argparse.Namespace) -> Path:
     geometry, center_reference, center_scale, geometry_sha, normalization_sha = (
         _load_geometry_and_center_prior(dataset)
     )
+    train_sessions, validation_sessions, selection_record = _load_session_selection(
+        args.selection, manifest_path
+    )
+    if args.validation_on_train and selection_record is not None:
+        raise ValueError("session selection cannot be combined with validation-on-train")
     train_ds = Stage3ShardDataset(
         dataset, "train", augment=not args.no_augment, seed=args.seed,
         shuffle=not args.validation_on_train, sample_limit=args.train_sample_limit,
+        session_ids=train_sessions,
     )
     validation_split = "train" if args.validation_on_train else "validation"
     validation_ds = Stage3ShardDataset(
         dataset, validation_split, augment=False, seed=args.seed,
         shuffle=False, sample_limit=args.validation_sample_limit,
+        session_ids=validation_sessions,
     )
     loader_options = {
         "batch_size": args.batch_size, "num_workers": 0,
@@ -463,6 +529,7 @@ def train(args: argparse.Namespace) -> Path:
         "normalization_sha256": normalization_sha,
         "test_accessed": False,
         "validation_split": validation_split,
+        "session_selection": selection_record,
         "diagnostic_only": bool(args.validation_on_train),
         "set_policy": SET_POLICY,
         "predictor_input_allowlist": [
@@ -622,6 +689,10 @@ def main() -> None:
     parser.add_argument("--device", default="")
     parser.add_argument("--no-augment", action="store_true")
     parser.add_argument("--validation-on-train", action="store_true")
+    parser.add_argument(
+        "--selection", default="",
+        help="hashed train/validation session selection JSON for a dynamic pilot",
+    )
     parser.add_argument("--train-sample-limit", type=int, default=0)
     parser.add_argument("--validation-sample-limit", type=int, default=0)
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)

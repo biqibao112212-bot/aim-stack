@@ -24,8 +24,13 @@
   overwhelmingly contain one or two candidates, and no sample has four fully
   visible slots in each of its last four events. The clean four-slot analytic
   LS core is therefore not a valid PnP adapter baseline.
-- Current step: implement paired models, cyclic-phase loss/metrics, mask/time
-  tests and a tiny-fit/pilot gate before any full run.
+- Paired implementation and 57 Stage-3 tests pass. A bounded stationary
+  tiny-fit learned in both arms after the explicit-state zero-motion prior was
+  added; this is optimization evidence only, not a generalization result.
+- Current step: run the hash-bound dynamic pilot on 8 train and 8 disjoint
+  validation sessions (two per motion class, 4,584/4,615 samples). The pilot
+  reports every q0--q3 set/centroid-motion stratum, plus A's learned speed/yaw
+  rate and both arms' cross-query consistency, before any full run.
 
 ## 2026-07-21 causal clean-physics A/B (completed)
 

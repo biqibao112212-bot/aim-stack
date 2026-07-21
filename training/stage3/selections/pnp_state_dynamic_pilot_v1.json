@@ -1,0 +1,46 @@
+{
+  "schema_version": "stage3-pnp-state-pilot-selection-v1",
+  "dataset_manifest_sha256": "bbf1c18b3bfad8a184e9b2c03725e34320a56ac3dbb0077b9317b5783aab157e",
+  "purpose": "dynamic_pilot_with_stationary_control",
+  "validation_source_split": "validation",
+  "selection_policy": "two session-disjoint sessions per motion class and split; medium sample counts; paired near/far distance and one/two-candidate visibility coverage",
+  "motion_class_counts": {
+    "train": {
+      "stationary": 2,
+      "linear": 2,
+      "spin": 2,
+      "linear_and_spin": 2
+    },
+    "validation": {
+      "stationary": 2,
+      "linear": 2,
+      "spin": 2,
+      "linear_and_spin": 2
+    }
+  },
+  "expected_sample_counts": {
+    "train": 4584,
+    "validation": 4615
+  },
+  "train": [
+    "stage3-20260719-v1-0018",
+    "stage3-20260719-v1-0032",
+    "stage3-20260719-v1-0123",
+    "stage3-20260719-v1-0103",
+    "stage3-20260719-v1-0147",
+    "stage3-20260719-v1-0158",
+    "stage3-20260719-v1-0345",
+    "stage3-20260719-v1-0304"
+  ],
+  "validation": [
+    "stage3-20260719-v1-0024",
+    "stage3-20260719-v1-0014",
+    "stage3-20260719-v1-0072",
+    "stage3-20260719-v1-0107",
+    "stage3-20260719-v1-0135",
+    "stage3-20260719-v1-0134",
+    "stage3-20260719-v1-0303",
+    "stage3-20260719-v1-0259"
+  ],
+  "test": []
+}

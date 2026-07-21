@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
+import pytest
 import torch
 
 from training.stage3.pnp_state_loss import pnp_state_position_loss
@@ -8,7 +12,11 @@ from training.stage3.pnp_state_model import (
     ImplicitQueryPosePredictor,
     trainable_parameter_count,
 )
-from training.stage3.train_pnp_state_ab import _to_device, _trajectory_consistency
+from training.stage3.train_pnp_state_ab import (
+    _load_session_selection,
+    _to_device,
+    _trajectory_consistency,
+)
 
 
 GEOMETRY = torch.tensor([
@@ -187,3 +195,47 @@ def test_training_device_allowlist_excludes_future_observation_and_state_labels(
         "obs", "obs_mask", "event_mask", "event_time_s", "tau",
         "future_position", "motion_class",
     }
+
+
+def test_pilot_session_selection_is_manifest_bound_and_keeps_test_empty(tmp_path) -> None:
+    manifest = tmp_path / "dataset_manifest.json"
+    manifest.write_text('{"schema_version":"stage3-dataset-v4-observation"}', encoding="utf-8")
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps({
+        "schema_version": "stage3-pnp-state-pilot-selection-v1",
+        "dataset_manifest_sha256": digest,
+        "purpose": "dynamic_pilot",
+        "validation_source_split": "validation",
+        "train": ["train-a", "train-b"],
+        "validation": ["validation-a"],
+        "test": [],
+    }), encoding="utf-8")
+    train, validation, record = _load_session_selection(str(selection), manifest)
+    assert train == ["train-a", "train-b"]
+    assert validation == ["validation-a"]
+    assert record is not None and record["test"] == []
+
+
+def test_pilot_session_selection_rejects_overlap_or_any_test_entry(tmp_path) -> None:
+    manifest = tmp_path / "dataset_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    base = {
+        "schema_version": "stage3-pnp-state-pilot-selection-v1",
+        "dataset_manifest_sha256": digest,
+        "purpose": "dynamic_pilot",
+        "validation_source_split": "validation",
+        "train": ["shared"],
+        "validation": ["shared"],
+        "test": [],
+    }
+    selection = tmp_path / "selection.json"
+    selection.write_text(json.dumps(base), encoding="utf-8")
+    with pytest.raises(ValueError, match="disjoint"):
+        _load_session_selection(str(selection), manifest)
+    base["validation"] = ["validation-a"]
+    base["test"] = ["forbidden"]
+    selection.write_text(json.dumps(base), encoding="utf-8")
+    with pytest.raises(ValueError, match="test empty"):
+        _load_session_selection(str(selection), manifest)

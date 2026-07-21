@@ -389,3 +389,12 @@
     recursive EKFs: every new exposure recomputes the result from the latest N
     real-timestamp events. Exact state is never fed to either forward path or
     used as an arm-specific training label.
+
+72. The first PnP dynamic pilot is fixed by
+    `training/stage3/selections/pnp_state_dynamic_pilot_v1.json`, whose dataset
+    manifest hash is verified before any shard is opened. It contains two
+    train and two disjoint validation sessions per motion class, with 4,584
+    and 4,615 samples respectively; the test list is exactly empty. Selection
+    balances near/far distance and the dominant one/two-visible-candidate
+    conditions. Any different sessions, source hash or hyperparameters define
+    a new non-overwriting run, not a continuation of this pilot.
