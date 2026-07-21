@@ -39,9 +39,13 @@
 - The v2 dynamic-only held-out micro gate completed but failed: stronger state
   supervision reduced neither velocity nor yaw-rate tails to a useful level,
   and training-session replay remains similarly poor. No full run is authorized.
-- Current step: run one bounded same-session linear-and-spin overfit capacity
-  gate (561 samples). If it fails, replace the temporal encoder; if it passes,
-  investigate optimization budget and cross-session invariance separately.
+- The bounded 561-sample combined-motion capacity gate passed. A and B both
+  learned, while A converged to materially lower velocity/yaw-rate and 0.5 s
+  motion error with numerical constant-twist consistency. It remains a
+  train-sourced diagnostic and is not a generalization candidate.
+- Current step: design a shared relative-time/relative-motion encoder and a
+  broader held-out session pilot. No full run, test access, export or online
+  integration is authorized from the current absolute-frame encoder.
 
 ## 2026-07-21 causal clean-physics A/B (completed)
 

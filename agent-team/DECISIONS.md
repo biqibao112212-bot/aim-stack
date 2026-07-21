@@ -456,3 +456,16 @@
     current encoder lacks capacity or merely needs a different optimization
     budget. This diagnostic must be marked train-sourced, bounded, unqualified,
     and must not be confused with validation evidence.
+
+79. The clean same-session capacity reproduction r2 completed 160 epochs from
+    commit `a0e4f61`; it is correctly marked `diagnostic_only=true`,
+    `qualified_training_candidate=false`, and `test_accessed=false`. A/B best
+    epochs are 151/156. A versus B velocity error median/P95 is
+    0.0136/0.0427 versus 0.0294/0.0796 m/s; yaw-rate error is 0.0375/0.1184
+    versus 0.0711/0.2250 rad/s; 0.5 s motion error is 9.48/25.58 versus
+    15.86/41.03 mm. A's decoded center/yaw constant-twist P95 is numerical
+    precision, whereas B is 5.25 mm/0.0789 rad. This proves capacity and the
+    utility of the hard shared state on one motion distribution, but the prior
+    held-out failure still forbids a full run. The next experiment must change
+    the common encoder to a learned relative-time/relative-motion
+    representation and increase train-session motion diversity.
