@@ -365,3 +365,27 @@
     plus real timestamps are sufficient for the agreed constant-rigid-motion
     layer; it does not establish causal slot association, PnP robustness,
     acceleration handling, test performance, export parity or online release.
+
+69. The PnP state-adapter experiment reuses only train/validation shards from
+    qualified `stage3-dataset-v4-observation-20260721-r4`. Both arms receive
+    the same normalized PnP xyz/yaw, reprojection/count quality, masks, real
+    event times and tau; future observation labels, exact motion state, motion
+    class and test shards are forbidden predictor inputs. Exact physical future
+    positions remain the common supervision target.
+
+70. Existing PnP tensor rows are unordered per-frame candidates and contain no
+    persistent armor identity. The main state A/B therefore predicts an
+    unordered hard-rigid four-armor set and uses a symmetric nearest-set loss
+    and metric. It does not enumerate 24 permutations, select a q0 truth slot,
+    or rematch identity per query. This isolates the value of a shared motion
+    state without pretending that online cyclic identity is solved; continuous
+    local-slot tracking remains a separate required deployment experiment.
+
+71. Main A maps the shared causal set/temporal encoding to one
+    `center0/velocity/yaw0/omega` state and uses a frozen constant-twist rigid
+    decoder for every tau. Main B maps the same encoding and each tau directly
+    to that query's center/yaw and uses the identical rigid decoder; it has no
+    shared velocity/omega propagation. Both are rolling-window estimators, not
+    recursive EKFs: every new exposure recomputes the result from the latest N
+    real-timestamp events. Exact state is never fed to either forward path or
+    used as an arm-specific training label.

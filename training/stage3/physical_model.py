@@ -78,18 +78,22 @@ class TemporalArmorSetEncoder(nn.Module):
         token_mean = token_mean.reshape(batch, time, -1)
         token_max = token_max.reshape(batch, time, -1)
         count_feature = effective_mask.to(tokens.dtype).sum(dim=2, keepdim=True) / 4.0
-        effective_event = event_mask.to(torch.bool) & effective_mask.any(dim=2)
-        previous_time = torch.cat((event_time_s[:, :1], event_time_s[:, :-1]), dim=1)
+        effective_event = (
+            event_mask.to(torch.bool) & effective_mask.any(dim=2)
+            & torch.isfinite(event_time_s)
+        )
+        safe_time = torch.where(effective_event, event_time_s, torch.zeros_like(event_time_s))
+        previous_time = torch.cat((safe_time[:, :1], safe_time[:, :-1]), dim=1)
         previous_valid = torch.cat(
             (torch.zeros_like(effective_event[:, :1]), effective_event[:, :-1]), dim=1
         )
         delta_time = torch.where(
             effective_event & previous_valid,
-            event_time_s - previous_time,
+            safe_time - previous_time,
             torch.zeros_like(event_time_s),
         )
         time_features = torch.stack(
-            (event_time_s.clamp(-15.0, 0.0), delta_time.clamp(0.0, 1.0)), dim=-1
+            (safe_time.clamp(-15.0, 0.0), delta_time.clamp(0.0, 1.0)), dim=-1
         ).to(tokens.dtype)
         frame = self.frame_projection(torch.cat(
             (slots, token_mean, token_max, count_feature, time_features), dim=-1

@@ -2,7 +2,32 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-21 causal clean-physics A/B (full run pending)
+## 2026-07-21 PnP state-adapter A/B (in progress)
+
+- Goal: quantify whether a single explicit constant-rigid-motion state helps
+  predict physical future positions from the existing noisy PnP history.
+- Shared input is the qualified v4 train/validation history: up to 200 real
+  PnP events, masks, real timestamps and reprojection/count quality. Test stays
+  sealed; future observation labels are not predictor inputs or objectives.
+- Main A predicts one `center0/velocity/unit-phase/omega` state and passes it
+  through a frozen arbitrary-tau rigid decoder. Main B predicts one rigid pose
+  independently for each tau, with no shared velocity/omega propagation. Both
+  use the same set/temporal encoder, geometry, position target and validation
+  metrics; head parameter counts are matched within one percent.
+- Existing PnP rows are unordered per-frame candidates, not persistent armor
+  IDs. Both encoders and the main physical-set objective are candidate-order
+  invariant; the objective uses symmetric nearest-set distance without q0/
+  per-query identity, truth-slot input or 24-permutation enumeration. Online
+  persistent identity remains a separate deployment gate and cannot be claimed
+  from this A/B.
+- Data audit: train/validation have 111,527/36,297 samples. Active PnP events
+  overwhelmingly contain one or two candidates, and no sample has four fully
+  visible slots in each of its last four events. The clean four-slot analytic
+  LS core is therefore not a valid PnP adapter baseline.
+- Current step: implement paired models, cyclic-phase loss/metrics, mask/time
+  tests and a tiny-fit/pilot gate before any full run.
+
+## 2026-07-21 causal clean-physics A/B (completed)
 
 - Scope is physical truth only: causal clean visible armor positions and real
   timestamps in, future physical armor positions out. PnP coordinates and
@@ -22,8 +47,8 @@
 - Validation input-sufficiency P95 is 0.00082 mm at q0 and at most 0.0364 mm
   at the 0.5 s rule query in every motion class; all samples are below 1 mm.
   A/B training selected their identical epoch-0 physical solution and rejected
-  degrading neural residual updates. Current step: reviewed full train/
-  validation derivative, paired run, protected packaging, and final context.
+  degrading neural residual updates. The full train/validation derivative,
+  paired run, protected packaging and repository synchronization are complete.
 
 ## 当前状态
 
