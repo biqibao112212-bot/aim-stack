@@ -61,7 +61,16 @@ def _state_dict_sha256(state: dict[str, torch.Tensor]) -> str:
 def _write_json(path: Path, value: object) -> None:
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(value, indent=2, sort_keys=True), encoding="utf-8")
-    temporary.replace(path)
+    # A read-only dashboard can briefly hold the destination on Windows.
+    # Preserve atomic replacement while tolerating that transient sharing lock.
+    for attempt in range(20):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(0.05)
 
 
 def _seed(seed: int) -> None:
