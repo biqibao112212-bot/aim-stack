@@ -266,3 +266,14 @@
     replacement: past xyz/yaw history does not contain enough information to
     predict the random future-frame PnP error. Do not optimize away this
     conclusion by treating missing observations as zero labels.
+
+57. Supersede decision 56's negative learnability conclusion with the v5
+    controlled scratch result. Future-observation training uses a direct
+    observation head, geometry-only permutation shared by training and
+    evaluation, and masked Huber labels. Model A is observation-only; model B
+    adds a 0.2 physical-position auxiliary. Both start from one identical
+    random state and share batches/dropout masks. On validation, A reaches
+    P-O median/P95 `0.198660/1.090279 m` and B reaches
+    `0.201418/1.069940 m`, both better than v3 `0.223675/1.345864 m`. Retain B
+    as the composite-score winner and A as the median winner. Neither is an
+    online release until test, multi-seed, export and runtime gates pass.

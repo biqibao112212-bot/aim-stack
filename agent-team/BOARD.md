@@ -220,3 +220,19 @@
   future PnP residual has near-zero mean with large random spread. Keep this
   branch experimental until causal detector/image-quality features or a
   probabilistic output are available.
+
+### 2026-07-21 scratch future-observation A/B
+
+- Replaced the residual fine-tune with two controlled random-initialization
+  models that consume identical batches and random masks. A uses masked direct
+  future-observation Huber only; B adds a 0.2 physical-position auxiliary.
+- Full training completed for 30 epochs on 111,527 train samples; test was not
+  accessed. Both best checkpoints are epoch 29 on 222,848 usable validation
+  queries.
+- A reaches P-O median/P95 `0.198660/1.090279 m`; B reaches
+  `0.201418/1.069940 m`, versus v3 `0.223675/1.345864 m`. B wins the predefined
+  median-plus-0.25-P95 score; A wins median alone.
+- The result supersedes the earlier claim that past observations contain no
+  useful future-PnP signal. The old r5 residual implementation was
+  miscalibrated and permutation-inconsistent; direct scratch training learns a
+  real validation improvement. P99 remains slightly worse and is still open.

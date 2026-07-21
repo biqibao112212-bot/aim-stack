@@ -95,6 +95,70 @@
       "sha256": "8839A1B6177407128760B61A06E4BBAA1A7F3004C3C0A38F80BEBD0973720393",
       "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v4-observation-full-seed0-r5\\validation-observation-report.json",
       "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/stage3-scratch-a-seed0-best.pt",
+      "role": "Stage-3 v5 scratch A observation-only epoch-29 best checkpoint; validation candidate only",
+      "bytes": 977767,
+      "sha256": "51E03ED2E260F806B507480EDD346AE60180ED20807CFB1328BAAC817126491B",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\stage3-scratch-a-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/stage3-scratch-b-seed0-best.pt",
+      "role": "Stage-3 v5 scratch B observation-plus-physical-aux epoch-29 best checkpoint; validation A/B winner",
+      "bytes": 977767,
+      "sha256": "AB528C2953AD1067E11814C05C337E7F14E4C019EB885E257C848194AE4D130F",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\stage3-scratch-b-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/stage3-scratch-a-seed0-last.pt",
+      "role": "Stage-3 v5 scratch A epoch-30 resumable checkpoint",
+      "bytes": 2897743,
+      "sha256": "F1FD4333389639C93E8467E16C8931131DD5DAC77E3E78DB6DD3EF13B300690F",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\stage3-scratch-a-seed0-last.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/stage3-scratch-b-seed0-last.pt",
+      "role": "Stage-3 v5 scratch B epoch-30 resumable checkpoint",
+      "bytes": 2911747,
+      "sha256": "9C0B68C299F32B28FA48396FBC1DBEFE26E3EF724A5CBA23E4BB468CC379EADB",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\stage3-scratch-b-seed0-last.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/stage3-scratch-ab-history.json",
+      "role": "Stage-3 v5 scratch A/B epoch-by-epoch train and validation history",
+      "bytes": 53592,
+      "sha256": "FC8BED98E5EA74F5A0D26ED821196294A28B0C4E495AFA27256C2E1FC0CB1874",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\stage3-scratch-ab-history.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/run_manifest.json",
+      "role": "Stage-3 v5 scratch A/B immutable run provenance and artifact hashes",
+      "bytes": 2187,
+      "sha256": "6BB747C3599B137FAEA199F5E51004D35C32535D2D6BCD8AE127057BE5D3D479",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\run_manifest.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/validation-scratch-a-report.json",
+      "role": "Stage-3 v5 scratch A independent full-validation report",
+      "bytes": 3128,
+      "sha256": "5C9A9E459AC2092F8E7D0F4C2217008B315B9778CE873221CD76E7AE9A30DC4D",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\validation-scratch-a-report.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v5-scratch-ab-full-seed0-r3/validation-scratch-b-report.json",
+      "role": "Stage-3 v5 scratch B independent full-validation report",
+      "bytes": 3146,
+      "sha256": "924D3931957B4DB4CB0CF7C18FB20684BCCD3461156C7A70C039CE2F45C98FC9",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v5-scratch-ab-full-seed0-r3\\validation-scratch-b-report.json",
+      "protected": true
     }
   ]
 }
