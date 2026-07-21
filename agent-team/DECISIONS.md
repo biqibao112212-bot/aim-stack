@@ -277,3 +277,29 @@
     `0.201418/1.069940 m`, both better than v3 `0.223675/1.345864 m`. Retain B
     as the composite-score winner and A as the median winner. Neither is an
     online release until test, multi-seed, export and runtime gates pass.
+
+58. Stage-three physical-core isolation reuses the existing v3 exact-exposure
+    truth; a new simulator capture is neither required nor authorized. The r3
+    truth-history derivative contains train and validation only, reproduces q0
+    labels with zero maximum error, and records `test_accessed=false`.
+
+59. Physical evaluation selects one four-slot permutation from all q0 truth
+    plates and holds it fixed for every future query. Queries are separately
+    labeled `rule` only when exact velocity and yaw rate remain unchanged over
+    the entire q0-to-query interval. Future-event tails are reported but may
+    not fail a constant-state physics gate.
+
+60. The accepted physical core is the parameter-free exact-state rigid
+    operator, not a network trained from scratch to imitate mechanics. It
+    translates the exact target center and rotates q0 armor offsets around that
+    center using exact yaw rate. Rotating around the arithmetic armor centroid
+    is rejected because the template is not exactly centroid-symmetric and the
+    resulting fictitious translation creates centimetre errors.
+
+61. On the full validation split, the accepted operator has q0 P95
+    `1.86e-9 m` and rule-query motion P95
+    `4.45e-6/8.19e-6/1.76e-5 m` at nominal 0.1/0.2/0.5 seconds. The protected
+    r4 artifact passes all 1 mm gates. Its public API exposes positions only;
+    center/velocity/yaw-rate are internal inputs. The next trainable boundary
+    is PnP history to these internal initial conditions, while propagation is
+    frozen.

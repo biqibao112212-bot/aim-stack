@@ -68,3 +68,18 @@ curves, this evidence closes G2 and stage two. The result validates the PnP
 input semantics required by the later predictor; these replay files are not
 declared training samples. The later stage-three authorization did not change
 the status of these replay files.
+
+## 2026-07-21 physical-core isolation
+
+- Existing exact-exposure truth was reused; no recapture was needed. The
+  qualified derived truth-history r3 dataset contains 111,527 train and 36,297
+  validation samples and records `test_accessed=false`.
+- A fixed exact-state constant-twist operator now propagates the real target
+  center, exact translational velocity, exact yaw rate and q0 armor offsets.
+  Its external output is still four future armor positions.
+- On 36,297 validation samples, q0 P95 is 1.86e-9 m. Rule-query motion P95 is
+  4.45e-6/8.19e-6/1.76e-5 m at nominal 0.1/0.2/0.5 s. All 1 mm gates pass.
+- The previous centimetre physical tail was traced to numerical state recovery
+  and rotating about the four-armor arithmetic centroid instead of the true
+  vehicle center. The accepted physical equation is frozen; the next learned
+  component is only the PnP-history observation adapter.

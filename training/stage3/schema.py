@@ -197,6 +197,7 @@ class TruthFrame:
     camera_quaternion_world_wxyz: tuple[float, float, float, float]
     exposure_state_flags: int = 0
     geometry_hash: str | None = None
+    target_origin_world_m: tuple[float, float, float] | None = None
     schema_version: str = TRUTH_SCHEMA_VERSION
 
     @classmethod
@@ -300,6 +301,7 @@ class TruthFrame:
             camera_quaternion_world_wxyz=camera_quat,
             exposure_state_flags=exposure_flags,
             geometry_hash=(None if value.get("geometry_hash") is None else str(value["geometry_hash"])),
+            target_origin_world_m=target_pos,
         )
 
 

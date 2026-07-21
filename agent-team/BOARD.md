@@ -236,3 +236,21 @@
   useful future-PnP signal. The old r5 residual implementation was
   miscalibrated and permutation-inconsistent; direct scratch training learns a
   real validation improvement. P99 remains slightly worse and is still open.
+
+### 2026-07-21 physical-core acceptance
+
+- [x] Cancel unnecessary recapture and bind the experiment to existing exact
+  truth without opening the held-out test split.
+- [x] Derive causal truth-history train/validation shards with exact target
+  center, velocity, yaw rate, rule-query labels and distance strata.
+- [x] Add q0-fixed assignment metrics, anchored-direct and rigid-latent A/B,
+  masked rule-query loss, and physical-core unit tests.
+- [x] Diagnose FP16 gradient overflow and invalid moving-sample tiny-fit;
+  rerun a fixed-sample full-precision memorization gate.
+- [x] Reject two-frame differentiation and armor-centroid rotation as the
+  physical acceptance implementation.
+- [x] Package and validate the exact-state rigid operator. All 1 mm gates pass;
+  accepted report is under `20260721-v7-physical-exact-state-core-r4`.
+- [ ] Design and train the PnP-history adapter to estimate only the frozen
+  physical core's internal initial conditions. Test/export/online integration
+  remain frozen.
