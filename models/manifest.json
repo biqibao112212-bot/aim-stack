@@ -185,27 +185,27 @@
       "protected": true
     },
     {
-      "name": "stage3-training/20260721-v7-physical-exact-state-core-r4/analytic-physical-core.pt",
+      "name": "stage3-training/20260721-v7-physical-exact-state-core-r5/analytic-physical-core.pt",
       "role": "Stage-3 accepted parameter-free exact-state rigid physical core; validation-only, not an online release",
       "bytes": 19629,
-      "sha256": "718E3EA936A8A6B63DCB6A499DE0903B77561B89FC06A5C9C504B49AB47E4FF2",
-      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r4\\analytic-physical-core.pt",
+      "sha256": "07634DABC0E491D0F7B0418D4FBD401C833147296E02E40A473576EDD2FC31F9",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r5\\analytic-physical-core.pt",
       "protected": true
     },
     {
-      "name": "stage3-training/20260721-v7-physical-exact-state-core-r4/validation_report.json",
+      "name": "stage3-training/20260721-v7-physical-exact-state-core-r5/validation_report.json",
       "role": "Stage-3 full-validation exact-state physical-core acceptance report with rule/event and motion/distance strata",
-      "bytes": 74902,
-      "sha256": "B7CDBF8EFB185E6EA833C2DDD3890B2B907C10978DD70E56EDC8673AB7B30C5B",
-      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r4\\validation_report.json",
+      "bytes": 74903,
+      "sha256": "AB44D51B35D55F893ABBFAE33F3025F0BE83A7737723EE293124E3D338CB16DE",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r5\\validation_report.json",
       "protected": true
     },
     {
-      "name": "stage3-training/20260721-v7-physical-exact-state-core-r4/artifact_manifest.json",
+      "name": "stage3-training/20260721-v7-physical-exact-state-core-r5/artifact_manifest.json",
       "role": "Stage-3 accepted physical-core artifact hashes and qualification state",
       "bytes": 405,
-      "sha256": "713362E22934D95960CB392099E34A57B714A753DB3AE44B7E6774D7B918C5B4",
-      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r4\\artifact_manifest.json",
+      "sha256": "E8F9F46212C4C0B8B2F81AEC42275F36099EE651FBC67E5D79081D94F1686FB8",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r5\\artifact_manifest.json",
       "protected": true
     }
   ]

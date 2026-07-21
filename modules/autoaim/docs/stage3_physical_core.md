@@ -18,7 +18,7 @@ reused. A derived truth-history dataset was built from the existing exact
 exposure truth stream:
 
 - source: `stage3-dataset-v3-20260721-r1`;
-- derived: `stage3-truth-history-v1-20260721-r3`;
+- derived: `stage3-truth-history-v1-20260721-r5`;
 - train/validation: 111,527 / 36,297 samples from 212 / 70 sessions;
 - exact q0 label reproduction maximum error: 0 m;
 - reconstructed history timestamp maximum error: 953 ns;
@@ -75,7 +75,7 @@ physics gate.
 
 The protected accepted artifact is:
 
-`D:\仿真\models\engines\stage3-training\20260721-v7-physical-exact-state-core-r4`
+`D:\仿真\models\engines\stage3-training\20260721-v7-physical-exact-state-core-r5`
 
 The next learned component is an observation adapter:
 

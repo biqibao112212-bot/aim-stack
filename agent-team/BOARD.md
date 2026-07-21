@@ -250,7 +250,7 @@
 - [x] Reject two-frame differentiation and armor-centroid rotation as the
   physical acceptance implementation.
 - [x] Package and validate the exact-state rigid operator. All 1 mm gates pass;
-  accepted report is under `20260721-v7-physical-exact-state-core-r4`.
+  accepted report is under `20260721-v7-physical-exact-state-core-r5`.
 - [ ] Design and train the PnP-history adapter to estimate only the frozen
   physical core's internal initial conditions. Test/export/online integration
   remain frozen.

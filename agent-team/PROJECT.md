@@ -72,7 +72,7 @@ the status of these replay files.
 ## 2026-07-21 physical-core isolation
 
 - Existing exact-exposure truth was reused; no recapture was needed. The
-  qualified derived truth-history r3 dataset contains 111,527 train and 36,297
+  qualified derived truth-history r5 dataset contains 111,527 train and 36,297
   validation samples and records `test_accessed=false`.
 - A fixed exact-state constant-twist operator now propagates the real target
   center, exact translational velocity, exact yaw rate and q0 armor offsets.

@@ -279,7 +279,7 @@
     online release until test, multi-seed, export and runtime gates pass.
 
 58. Stage-three physical-core isolation reuses the existing v3 exact-exposure
-    truth; a new simulator capture is neither required nor authorized. The r3
+    truth; a new simulator capture is neither required nor authorized. The r5
     truth-history derivative contains train and validation only, reproduces q0
     labels with zero maximum error, and records `test_accessed=false`.
 
@@ -299,7 +299,7 @@
 61. On the full validation split, the accepted operator has q0 P95
     `1.86e-9 m` and rule-query motion P95
     `4.45e-6/8.19e-6/1.76e-5 m` at nominal 0.1/0.2/0.5 seconds. The protected
-    r4 artifact passes all 1 mm gates. Its public API exposes positions only;
+    r5 artifact passes all 1 mm gates. Its public API exposes positions only;
     center/velocity/yaw-rate are internal inputs. The next trainable boundary
     is PnP history to these internal initial conditions, while propagation is
     frozen.
