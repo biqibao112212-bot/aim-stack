@@ -41,12 +41,20 @@ class Stage3TCN(nn.Module):
     obs_mask: [B,T,4], event_mask: [B,T], event_time_s: [B,T], tau: [B,Q]
     """
 
-    def __init__(self, channels: int = 64, dropout: float = 0.1, input_features: int = 5, observation_heads: bool = False) -> None:
+    def __init__(
+        self,
+        channels: int = 64,
+        dropout: float = 0.1,
+        input_features: int = 5,
+        observation_heads: bool = False,
+        direct_observation_heads: bool = False,
+    ) -> None:
         super().__init__()
         if input_features < 5:
             raise ValueError("Stage3TCN requires at least xyz and sin/cos yaw features")
         self.input_features = int(input_features)
         self.observation_heads = bool(observation_heads)
+        self.direct_observation_heads = bool(direct_observation_heads)
         self.armor_mlp = nn.Sequential(
             nn.Linear(self.input_features, 32), nn.SiLU(), nn.Linear(32, 32), nn.SiLU()
         )
@@ -63,6 +71,11 @@ class Stage3TCN(nn.Module):
         )
         self.position_mean = nn.Linear(128, 12)
         self.position_logvar = nn.Linear(128, 12)
+        if self.direct_observation_heads:
+            # Scratch A/B models predict the future PnP observation directly.
+            # This head is intentionally normally initialized: unlike the v4
+            # residual branch, it is not a correction around a pretrained G.
+            self.observation_mean = nn.Linear(128, 12)
         if self.observation_heads:
             self.observation_residual_mean = nn.Linear(128, 12)
             self.observation_residual_logvar = nn.Linear(128, 12)
@@ -127,6 +140,10 @@ class Stage3TCN(nn.Module):
             "normal": normal,
             "motion_logits": self.motion_logits(state),
         }
+        if self.direct_observation_heads:
+            result["observation_mean"] = self.observation_mean(decoded).reshape(
+                -1, query_count, 4, 3
+            )
         if self.observation_heads:
             residual_mean = self.observation_residual_mean(decoded).reshape(-1, query_count, 4, 3)
             residual_logvar = self.observation_residual_logvar(decoded).reshape(-1, query_count, 4, 3)

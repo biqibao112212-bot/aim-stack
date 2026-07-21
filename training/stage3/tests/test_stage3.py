@@ -11,7 +11,11 @@ from training.stage3.build_dataset import discover_canonical_sources, stratified
 from training.stage3.baselines import rigid_constant_velocity_yaw_rate
 from training.stage3.analyze_triangle_errors import _match_observation_to_truth
 from training.stage3.dataset import CameraGimbalExtrinsic, _make_sample, _world_to_tracker
-from training.stage3.losses import stage3_loss, stage3_observation_loss
+from training.stage3.losses import (
+    stage3_direct_observation_loss,
+    stage3_loss,
+    stage3_observation_loss,
+)
 from training.stage3.model import Stage3TCN
 from training.stage3.schema import ArmorObservation, ObservationFrame, TruthArmor, TruthFrame
 from training.stage3.train import _position_set_l2
@@ -174,6 +178,31 @@ def test_observation_loss_masks_missing_future_frames_and_keeps_physical_term() 
     loss.backward()
     assert np.isfinite(float(loss))
     assert np.isfinite(metrics["loss"])
+
+
+def test_direct_observation_ab_loss_uses_one_geometry_permutation() -> None:
+    target = torch.arange(1 * 2 * 4 * 3, dtype=torch.float32).reshape(1, 2, 4, 3)
+    permutation = [2, 0, 3, 1]
+    observation = target[:, :, permutation, :].clone().requires_grad_(True)
+    physical = (target[:, :, permutation, :] + 1.0).clone().requires_grad_(True)
+    mask = torch.ones(1, 2, 4, dtype=torch.bool)
+    available = torch.ones(1, 2, dtype=torch.bool)
+    ambiguous = torch.zeros(1, 2, dtype=torch.bool)
+    prediction = {"observation_mean": observation, "position_mean": physical}
+    loss_a, _ = stage3_direct_observation_loss(
+        prediction, target, target, mask, available, ambiguous,
+        physical_aux_weight=0.0,
+    )
+    loss_b, metrics_b = stage3_direct_observation_loss(
+        prediction, target, target, mask, available, ambiguous,
+        physical_aux_weight=0.2,
+    )
+    assert torch.allclose(loss_a, torch.zeros_like(loss_a))
+    assert loss_b > loss_a
+    assert metrics_b["physical_huber"] > 0.0
+    loss_b.backward()
+    assert observation.grad is not None
+    assert physical.grad is not None
 
 
 def test_effective_tau_uses_matched_truth_timestamp() -> None:
