@@ -398,3 +398,26 @@
     balances near/far distance and the dominant one/two-visible-candidate
     conditions. Any different sessions, source hash or hyperparameters define
     a new non-overwriting run, not a continuation of this pilot.
+
+73. Seed-0 dynamic pilot r2 completed 30 epochs from clean commit `5e5a42a`,
+    with `test_accessed=false`. A/B selected epochs 28/22. A versus B q0 P95
+    is 0.533/0.573 m, q3 absolute-set P95 is 1.466/1.478 m, and q3
+    centroid-motion P95 is 1.384/1.401 m. The apparent aggregate A advantage
+    is not a dynamic-state win: A q3 motion P95 is worse than B by 3.1%, 5.9%
+    and 2.7% in linear, spin and linear-and-spin respectively.
+
+74. The pilot is rejected before any full run. A's validation median speed is
+    only 0.082 m/s for linear truth near 0.956 m/s and 0.138 m/s for combined
+    truth near 2.535 m/s; median direction cosines are 0.118/0.183. A simple
+    diagnostic one-second least-squares slope of the same PnP history reaches
+    direction-cosine medians 0.970/0.964, so motion direction is present in the
+    input but the indirect set-position objective did not extract it. The
+    diagnostic is not a deployment candidate. The next A/B must give both
+    arms equivalent truth-derived state/delta supervision during training only
+    and retain raw PnP history as the sole inference input.
+
+75. The frozen rigid decoder and all state propagation run in FP32 even when
+    the learned encoder/head uses AMP. Pilot r2 exposed a B-only bfloat16 phase
+    normalization artifact (rigid-shape P95 0.663 mm); this numerical artifact
+    is separate from the rejected meter-scale motion result and must not be
+    carried into the next experiment.

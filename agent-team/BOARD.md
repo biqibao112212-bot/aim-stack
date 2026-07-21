@@ -27,10 +27,14 @@
 - Paired implementation and 57 Stage-3 tests pass. A bounded stationary
   tiny-fit learned in both arms after the explicit-state zero-motion prior was
   added; this is optimization evidence only, not a generalization result.
-- Current step: run the hash-bound dynamic pilot on 8 train and 8 disjoint
-  validation sessions (two per motion class, 4,584/4,615 samples). The pilot
-  reports every q0--q3 set/centroid-motion stratum, plus A's learned speed/yaw
-  rate and both arms' cross-query consistency, before any full run.
+- The hash-bound seed-0 dynamic pilot completed on 8 train and 8 disjoint
+  validation sessions (4,584/4,615 samples) without opening test. It is
+  rejected as a full-run candidate: A/B both collapse toward almost-static
+  translation, and A does not improve any dynamic motion-class q3 P95.
+- Current step: preserve the failed pilot, force the rigid decoder to FP32, and
+  redesign the common supervision so physical state/delta targets constrain
+  both arms during training without ever entering inference. No full run is
+  authorized from the current indirect set-position objective.
 
 ## 2026-07-21 causal clean-physics A/B (completed)
 

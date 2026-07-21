@@ -70,6 +70,20 @@ def test_both_models_always_decode_the_fixed_rigid_geometry() -> None:
         assert torch.allclose(actual, expected.view(1, 1, -1), atol=2e-6)
 
 
+def test_bfloat16_encoding_cannot_change_the_decoded_rigid_geometry() -> None:
+    inputs = _inputs()
+    pair_i, pair_j = torch.triu_indices(4, 4, offset=1)
+    expected = torch.linalg.vector_norm(GEOMETRY[pair_i] - GEOMETRY[pair_j], dim=-1)
+    for model in _models():
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16):
+            position = model(*inputs)["position_mean"]
+        actual = torch.linalg.vector_norm(
+            position[:, :, pair_i] - position[:, :, pair_j], dim=-1
+        )
+        assert position.dtype == torch.float32
+        assert torch.allclose(actual, expected.view(1, 1, -1), atol=2e-6)
+
+
 def test_explicit_state_is_propagated_by_the_frozen_equation() -> None:
     model = ExplicitStatePnPAdapter(
         GEOMETRY, channels=32, dropout=0.0,

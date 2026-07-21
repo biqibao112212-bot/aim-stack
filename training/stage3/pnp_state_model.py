@@ -32,20 +32,28 @@ class _RigidGeometryDecoder(nn.Module):
             raise ValueError("center must have shape [B,Q,3]")
         if phase.shape != (*center.shape[:2], 2):
             raise ValueError("phase must have shape [B,Q,2]")
-        norm = torch.linalg.vector_norm(phase.float(), dim=-1, keepdim=True)
-        identity = torch.zeros_like(phase)
-        identity[..., 0] = 1.0
-        phase = torch.where(
-            norm > 1e-6, phase / norm.to(phase.dtype).clamp_min(1e-6), identity
-        )
-        cosine, sine = phase[..., 0], phase[..., 1]
-        gx = self.geometry[:, 0].view(1, 1, 4)
-        gy = self.geometry[:, 1].view(1, 1, 4)
-        gz = self.geometry[:, 2].view(1, 1, 4).expand(center.shape[0], center.shape[1], -1)
-        x = cosine[:, :, None] * gx - sine[:, :, None] * gy
-        y = sine[:, :, None] * gx + cosine[:, :, None] * gy
-        relative = torch.stack((x, y, gz), dim=-1)
-        return center[:, :, None, :] + relative
+        # Learned encoding may use AMP, but rigid propagation is a physical
+        # layer. Keep its unit phase and geometry arithmetic in FP32 so a
+        # bfloat16 norm round-off cannot change armor-to-armor distances.
+        with torch.autocast(device_type=center.device.type, enabled=False):
+            center = center.float()
+            phase = phase.float()
+            norm = torch.linalg.vector_norm(phase, dim=-1, keepdim=True)
+            identity = torch.zeros_like(phase)
+            identity[..., 0] = 1.0
+            phase = torch.where(
+                norm > 1e-6, phase / norm.clamp_min(1e-6), identity
+            )
+            cosine, sine = phase[..., 0], phase[..., 1]
+            gx = self.geometry[:, 0].float().view(1, 1, 4)
+            gy = self.geometry[:, 1].float().view(1, 1, 4)
+            gz = self.geometry[:, 2].float().view(1, 1, 4).expand(
+                center.shape[0], center.shape[1], -1
+            )
+            x = cosine[:, :, None] * gx - sine[:, :, None] * gy
+            y = sine[:, :, None] * gx + cosine[:, :, None] * gy
+            relative = torch.stack((x, y, gz), dim=-1)
+            return center[:, :, None, :] + relative
 
 
 class ExplicitStatePnPAdapter(nn.Module):
@@ -108,7 +116,7 @@ class ExplicitStatePnPAdapter(nn.Module):
         tau: torch.Tensor,
     ) -> dict[str, torch.Tensor]:
         encoded = self.encoder(obs, obs_mask, event_mask, event_time_s)
-        latent = self.state_head(encoded)
+        latent = self.state_head(encoded).float()
         center0 = self.center_reference + self.center_scale * latent[:, 0:3]
         velocity = self.maximum_speed_mps * torch.tanh(latent[:, 3:6])
         yaw0 = torch.pi * torch.tanh(latent[:, 6])
@@ -199,7 +207,7 @@ class ImplicitQueryPosePredictor(nn.Module):
             (expanded, tau[:, :, None], tau.square()[:, :, None], tau.pow(3)[:, :, None]),
             dim=-1,
         )
-        latent = self.query_head(query)
+        latent = self.query_head(query).float()
         center = self.center_reference + self.center_scale * latent[..., 0:3]
         yaw = torch.pi * torch.tanh(latent[..., 3])
         phase = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=-1)
