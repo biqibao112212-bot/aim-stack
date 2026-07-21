@@ -95,6 +95,35 @@ def physical_batch_errors(
     }
 
 
+def fixed_slot_physical_batch_errors(
+    prediction: torch.Tensor, target: torch.Tensor
+) -> dict[str, torch.Tensor]:
+    """Physical errors for a causal fixed-slot contract with no reassignment."""
+    if prediction.shape != target.shape or prediction.ndim != 4:
+        raise ValueError("prediction and target must both have shape [B,Q,4,3]")
+    if prediction.shape[1] < 1 or prediction.shape[2:] != (4, 3):
+        raise ValueError("fixed-slot physical tensors require [B,Q,4,3]")
+    point = torch.linalg.vector_norm(prediction - target, dim=-1)
+    absolute = point.mean(dim=-1)
+    predicted_delta = prediction - prediction[:, :1]
+    target_delta = target - target[:, :1]
+    motion = torch.linalg.vector_norm(predicted_delta - target_delta, dim=-1).mean(dim=-1)
+    pair_i, pair_j = torch.triu_indices(4, 4, offset=1, device=prediction.device)
+    predicted_pair = torch.linalg.vector_norm(
+        prediction[:, :, pair_i] - prediction[:, :, pair_j], dim=-1
+    )
+    target_pair = torch.linalg.vector_norm(
+        target[:, :, pair_i] - target[:, :, pair_j], dim=-1
+    )
+    rigid = torch.abs(predicted_pair - target_pair).mean(dim=-1)
+    return {
+        "state_q0_m": absolute[:, 0],
+        "absolute_pg_m": absolute,
+        "motion_delta_m": motion,
+        "rigid_residual_m": rigid,
+    }
+
+
 def summary(values: np.ndarray | list[float]) -> dict[str, float | int]:
     array = np.asarray(values, dtype=np.float64).reshape(-1)
     if not len(array):
@@ -108,5 +137,7 @@ def summary(values: np.ndarray | list[float]) -> dict[str, float | int]:
         "p90_m": float(np.quantile(array, 0.90)),
         "p95_m": float(np.quantile(array, 0.95)),
         "p99_m": float(np.quantile(array, 0.99)),
+        "max_m": float(array.max()),
+        "over_1mm_fraction": float(np.mean(array > 0.001)),
+        "over_10mm_fraction": float(np.mean(array > 0.010)),
     }
-

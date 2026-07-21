@@ -303,3 +303,38 @@
     center/velocity/yaw-rate are internal inputs. The next trainable boundary
     is PnP history to these internal initial conditions, while propagation is
     frozen.
+
+62. Decisions 59--61 remain an exact-state oracle but do not define the new
+    causal-input A/B experiment. The causal experiment admits only exact
+    physical armor positions, real event times, masks and query tau from train
+    and validation. It uses fixed cyclic geometry slots with no 24-permutation
+    association in either loss or metrics. The truth slot phase is an explicit
+    assumed-correct external causal-slotter contract, so this experiment is an
+    oracle physical upper bound and not yet an online PnP release.
+
+63. A reacquired segment must accumulate at least eight continuous observation
+    events before it may train or predict. The last four admitted events and
+    t0 must belong to one producer epoch, target id, geometry hash and constant
+    translation/yaw-rate interval. Windows failing those causal identifiability
+    checks are reported and excluded; they are not zero-filled labels. Future
+    rule queries retain the existing t0-to-future constant-motion gate. Test is
+    neither constructed nor opened.
+
+64. The common A/B architecture is a causal last-four fixed-slot rigid-pose
+    least-squares main path plus a zero-initialized hard-rigid neural residual
+    for arbitrary tau. It derives pose only from admitted past positions and
+    times; exact center, velocity, yaw and yaw rate remain forbidden predictor
+    inputs. A trains q0/future/motion terms. B adds same-segment history
+    reconstruction and shared constant-motion consistency. The common position
+    output API and paired initialization/batch/RNG contract are unchanged.
+
+65. The strict 8-session pilot retained 2,690 of 3,509 windows: 812 were below
+    eight post-reset events and 7 changed motion between the last-four history
+    and t0. All 173,449 retained history events passed identity continuity.
+    On 1,335 validation windows the causal input-sufficiency oracle has q0 P95
+    8.20e-7 m and 0.5 s motion P95 of 0/2.29e-5/1.27e-5/3.64e-5 m for
+    stationary/linear/spin/linear-and-spin; maximum q0 and 0.5 s errors are
+    2.81e-6 and 7.48e-5 m. Both A and B selected the identical epoch-0 physical
+    solution (headline motion P95 2.74e-5 m); learned residual updates degraded
+    validation and were rejected by early stopping. This passes the pilot and
+    authorizes a full train/validation run, but not test or online integration.

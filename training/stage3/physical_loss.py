@@ -73,3 +73,109 @@ def physical_loss(
         "mean_permutation": float(best_index.float().mean().detach().cpu()),
         "active_query_fraction": float(query_mask.float().mean().detach().cpu()),
     }
+
+
+def _masked_huber(
+    value: torch.Tensor, reference: torch.Tensor, active: torch.Tensor,
+    beta_m: float,
+) -> torch.Tensor:
+    element = F.smooth_l1_loss(value, reference, beta=beta_m, reduction="none")
+    mask = active.to(torch.bool)
+    while mask.ndim < element.ndim:
+        mask = mask.unsqueeze(-1)
+    expanded = mask.expand_as(element).to(element.dtype)
+    return (element * expanded).sum() / expanded.sum().clamp_min(1.0)
+
+
+def causal_physical_base_loss(
+    prediction: dict[str, torch.Tensor], target: torch.Tensor, tau: torch.Tensor,
+    rule_query: torch.Tensor, *, huber_beta_m: float = 0.005,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """A objective: fixed-slot q0, future position, and motion delta."""
+    position = prediction["position_mean"]
+    if position.shape != target.shape or position.shape[2:] != (4, 3):
+        raise ValueError("causal physical position/target must be [B,Q,4,3]")
+    if tau.shape != rule_query.shape or tau.shape[:2] != position.shape[:2]:
+        raise ValueError("tau and rule_query must match [B,Q]")
+    if not torch.allclose(tau[:, 0], torch.zeros_like(tau[:, 0]), atol=0.0, rtol=0.0):
+        raise ValueError("causal physical query zero must be exact tau=0")
+    active = rule_query.to(torch.bool)
+    if not torch.all(active[:, 0]):
+        raise ValueError("causal physical query zero must always be active")
+    q0 = F.smooth_l1_loss(
+        position[:, 0], target[:, 0], beta=huber_beta_m, reduction="mean"
+    )
+    absolute = _masked_huber(position, target, active, huber_beta_m)
+    predicted_delta = position[:, 1:] - position[:, :1]
+    target_delta = target[:, 1:] - target[:, :1]
+    motion = _masked_huber(
+        predicted_delta, target_delta, active[:, 1:], huber_beta_m
+    )
+    total = 2.0 * q0 + absolute + motion
+    return total, {"q0": q0, "absolute": absolute, "motion": motion}
+
+
+def causal_physical_history_regularizers(
+    future_prediction: dict[str, torch.Tensor],
+    history_prediction: dict[str, torch.Tensor],
+    history_position_m: torch.Tensor,
+    obs_mask: torch.Tensor,
+    event_mask: torch.Tensor,
+    event_time_s: torch.Tensor,
+    tau: torch.Tensor,
+    rule_query: torch.Tensor,
+    *,
+    geometry_rms_radius_m: float,
+    huber_beta_m: float = 0.005,
+    constant_history_s: float = 0.2,
+    minimum_abs_tau_s: float = 0.005,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """B-only history reconstruction and state-label-free shared motion."""
+    if geometry_rms_radius_m <= 0:
+        raise ValueError("geometry_rms_radius_m must be positive")
+    history_active = obs_mask.to(torch.bool) & event_mask.to(torch.bool).unsqueeze(-1)
+    history = _masked_huber(
+        history_prediction["position_mean"], history_position_m,
+        history_active, huber_beta_m,
+    )
+
+    recent_history = (
+        event_mask.to(torch.bool)
+        & (event_time_s >= -constant_history_s)
+        & (event_time_s.abs() >= minimum_abs_tau_s)
+    )
+    future_active = (
+        rule_query.to(torch.bool)
+        & (tau.abs() >= minimum_abs_tau_s)
+    )
+    if "query_horizon" not in future_prediction or "query_horizon" not in history_prediction:
+        raise ValueError("shared motion requires anchor-relative query horizons")
+    all_tau = torch.cat((
+        history_prediction["query_horizon"], future_prediction["query_horizon"]
+    ), dim=1)
+    all_active = torch.cat((recent_history, future_active), dim=1)
+    all_center = torch.cat((
+        history_prediction["delta_center"], future_prediction["delta_center"]
+    ), dim=1)
+    all_angle = torch.cat((
+        history_prediction["delta_angle"], future_prediction["delta_angle"]
+    ), dim=1)
+    weight = all_active.to(all_tau.dtype)
+    denominator = (weight * all_tau.square()).sum(dim=1).clamp_min(1e-8)
+    velocity = (
+        weight.unsqueeze(-1) * all_tau.unsqueeze(-1) * all_center
+    ).sum(dim=1) / denominator.unsqueeze(-1)
+    omega = (weight * all_tau * all_angle).sum(dim=1) / denominator
+    center_residual = all_center - all_tau.unsqueeze(-1) * velocity.unsqueeze(1)
+    angle_residual_m = geometry_rms_radius_m * (
+        all_angle - all_tau * omega.unsqueeze(1)
+    )
+    shared_value = torch.cat((center_residual, angle_residual_m.unsqueeze(-1)), dim=-1)
+    shared = _masked_huber(
+        shared_value, torch.zeros_like(shared_value), all_active, huber_beta_m
+    )
+    return history + shared, {
+        "history": history,
+        "shared": shared,
+        "shared_active_fraction": all_active.float().mean(),
+    }

@@ -2,6 +2,28 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
+## 2026-07-21 causal clean-physics A/B (full run pending)
+
+- Scope is physical truth only: causal clean visible armor positions and real
+  timestamps in, future physical armor positions out. PnP coordinates and
+  exact center/velocity/yaw-rate are forbidden predictor inputs; test remains
+  sealed.
+- Both arms now share a causal last-four fixed-slot rigid least-squares core
+  plus a zero-initialized learned residual. A uses q0/future/delta supervision;
+  B adds same-segment history reconstruction and shared constant-motion
+  consistency. The network never receives exact center/velocity/yaw-rate.
+- Armor identity is a causal cyclic preprocessing contract. No 24-permutation
+  training or evaluation alignment is permitted; a discontinuity starts a new
+  segment instead of stitching identities across loss of view.
+- The strict 8-session pilot retained 2,690/3,509 windows after rejecting 812
+  under-observed reacquisition windows and 7 history-to-t0 motion changes.
+  All 173,449 admitted history events passed producer/target/geometry identity.
+- Validation input-sufficiency P95 is 0.00082 mm at q0 and at most 0.0364 mm
+  at the 0.5 s rule query in every motion class; all samples are below 1 mm.
+  A/B training selected their identical epoch-0 physical solution and rejected
+  degrading neural residual updates. Current step: reviewed full train/
+  validation derivative, paired run, protected packaging, and final context.
+
 ## 当前状态
 
 ### 2026-07-21 阶段三 v3 全量离线轮次已完成
