@@ -207,6 +207,86 @@
       "sha256": "E8F9F46212C4C0B8B2F81AEC42275F36099EE651FBC67E5D79081D94F1686FB8",
       "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v7-physical-exact-state-core-r5\\artifact_manifest.json",
       "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/feasibility-report.json",
+      "role": "Stage-3 causal exact-position physical A/B full-validation acceptance and provenance report; upper-bound evidence only",
+      "bytes": 4868,
+      "sha256": "6FCB0A6D174963F98BC2B7D9C2EA29A1A59EDB3AA2A52514F6B332939F2D6659",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\feasibility-report.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/oracle/causal-input-sufficiency-oracle.pt",
+      "role": "Stage-3 parameter-free causal last-four fixed-slot rigid input-sufficiency oracle",
+      "bytes": 11041,
+      "sha256": "CEB3D4CF0BE8EAFE25D8AE7D82263BDBA1446186DA6707C1C1FDE882CC99A875",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\oracle\\causal-input-sufficiency-oracle.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/oracle/validation_report.json",
+      "role": "Stage-3 causal physical oracle full-validation metrics and 1 mm gates",
+      "bytes": 30026,
+      "sha256": "8EF0C63F2E0289600CE0D3C2377E05B71D0AF965C291E05AB971098B5DF48594",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\oracle\\validation_report.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/oracle/artifact_manifest.json",
+      "role": "Stage-3 causal physical oracle immutable artifact hashes and qualification state",
+      "bytes": 441,
+      "sha256": "AFDB6F8328E7C6B98CB4A393AE1010DB579ACC09ADF50409F5BDDA4F8734E225",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\oracle\\artifact_manifest.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/stage3-causal-physical-A_future_rigid-seed0-best.pt",
+      "role": "Stage-3 causal physical A best epoch-0 checkpoint; exact-position upper-bound model, not an online release",
+      "bytes": 1119960,
+      "sha256": "B933FCE9547FA280A7CF2DF69A508F3EEB6265DBAFC2642C3AD88F2A45CBABC5",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\stage3-causal-physical-A_future_rigid-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/stage3-causal-physical-B_history_shared_rigid-seed0-best.pt",
+      "role": "Stage-3 causal physical B best epoch-0 checkpoint; paired state equals A, not an online release",
+      "bytes": 1119960,
+      "sha256": "0315FA027F3F1B216A3863C15E0901C5D2040BFCF2FD80F7C72EEE117B21C7A7",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\stage3-causal-physical-B_history_shared_rigid-seed0-best.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/stage3-causal-physical-A_future_rigid-seed0-last.pt",
+      "role": "Stage-3 causal physical A resumable epoch-2 checkpoint retained for audit",
+      "bytes": 3340571,
+      "sha256": "CB2C3E82E646EF52B37A7935EF17CAEE6C7B6FE450DCE5740580F036E877B0D3",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\stage3-causal-physical-A_future_rigid-seed0-last.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/stage3-causal-physical-B_history_shared_rigid-seed0-last.pt",
+      "role": "Stage-3 causal physical B resumable epoch-2 checkpoint retained for audit",
+      "bytes": 3340571,
+      "sha256": "BA2563C638C3D04F0F8C0BC01CFD0368C6F40164273D1D8D98A344DB08DDE687",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\stage3-causal-physical-B_history_shared_rigid-seed0-last.pt",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/stage3-causal-physical-ab-history.json",
+      "role": "Stage-3 causal physical paired A/B epoch-by-epoch training and full-validation history",
+      "bytes": 191862,
+      "sha256": "4F838BC46D76F88C80DB6FBDB08C3CDC858DB8467D496ED3824EB8AEE4492C63",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\stage3-causal-physical-ab-history.json",
+      "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-causal-physical-full-seed0-r2/ab/run_manifest.json",
+      "role": "Stage-3 causal physical paired A/B immutable training provenance and best-checkpoint hashes",
+      "bytes": 3912,
+      "sha256": "59237FAA536BE691E8F1132E14372D91B0D909276D1A4F0C79DE27D4A97032CC",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-causal-physical-full-seed0-r2\\ab\\run_manifest.json",
+      "protected": true
     }
   ]
 }

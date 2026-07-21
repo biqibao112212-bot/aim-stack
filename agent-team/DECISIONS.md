@@ -347,3 +347,21 @@
     validation motion P95 moved from 2.15e-5 m to 3.91e-4 m for B. B history
     and shared-motion losses are therefore restricted to the qualified last
     four events. A new non-overwriting full run is required.
+
+67. The corrected full causal physical A/B run is accepted under
+    `20260721-causal-physical-full-seed0-r2`. Its qualified dataset retains
+    77,725 train and 25,695 validation samples from 147,824 candidates, rejects
+    43,994 short post-reset histories and 410 nonconstant recent histories,
+    verifies 4,495,070 history identities, and records `test_accessed=false`.
+    Independent checkpoint reload reproduces q0 P95 `9.08e-7 m` and 0.1/0.2/
+    0.5 s rule-motion P95 `4.73e-6/9.03e-6/2.15e-5 m`; the 0.5 s maximum is
+    `7.32e-5 m` and every motion-class P95 is below 1 mm.
+
+68. A and B both select epoch 0 and their best model-state SHA-256 is the same
+    (`dfcf3af7ea33663536e8458eea3ad62737c55fd8695df66c849ade34debb1c3a`).
+    Paired learned-residual updates degrade the already numerical-precision
+    physical solution, so no trained residual is enabled in the accepted pure
+    physical model. This establishes that exact recent fixed-slot positions
+    plus real timestamps are sufficient for the agreed constant-rigid-motion
+    layer; it does not establish causal slot association, PnP robustness,
+    acceleration handling, test performance, export parity or online release.

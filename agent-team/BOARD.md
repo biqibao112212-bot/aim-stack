@@ -274,6 +274,16 @@
   physical acceptance implementation.
 - [x] Package and validate the exact-state rigid operator. All 1 mm gates pass;
   accepted report is under `20260721-v7-physical-exact-state-core-r5`.
-- [ ] Design and train the PnP-history adapter to estimate only the frozen
-  physical core's internal initial conditions. Test/export/online integration
-  remain frozen.
+- [x] Build the stricter causal last-N exact-position experiment with fixed
+  cyclic slots, reset-on-gap, eight-event warmup, real timestamps and no
+  24-permutation search.
+- [x] Complete the paired full A/B run on 77,725 train and 25,695 validation
+  samples. Both models select the identical epoch-0 causal physical solution;
+  the 0.5 s validation motion P95/max are `2.15e-5/7.32e-5 m` and every
+  1 mm gate passes. Test remains unopened.
+- [x] Preserve the qualified dataset, oracle, A/B checkpoints, history and
+  feasibility report under
+  `models/engines/stage3-training/20260721-causal-physical-full-seed0-r2`.
+- [ ] Jointly design the PnP-history adapter/noise layer around the frozen
+  physical propagation. Test/export/online integration remain frozen until
+  that separate layer has its own acceptance contract.
