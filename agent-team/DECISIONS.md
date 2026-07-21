@@ -444,3 +444,15 @@
     uses the query-constant-twist subset; overall and per-motion-class coverage
     must each remain at least 75%. The frozen pilot validation coverage is
     4,348/4,615 (94.21%), with class coverage 100.0/93.59/98.59/84.20%.
+
+78. V2 dynamic-only micro r1 completed 30 epochs from clean commit `c39557d`
+    on 3,377 train and 3,405 disjoint validation samples; test stayed sealed.
+    It is rejected. Best A/B validation velocity error median/P95 is
+    0.834/2.948 and 0.948/2.821 m/s; yaw-rate error is 4.90/15.12 and
+    1.03/14.00 rad/s. Replaying best checkpoints on their training sessions
+    remains poor (A velocity 0.621/2.664 m/s and yaw rate 2.92/13.66 rad/s),
+    so held-out session shift is not the sole failure. A bounded same-session
+    combined-motion overfit gate is required before deciding whether the
+    current encoder lacks capacity or merely needs a different optimization
+    budget. This diagnostic must be marked train-sourced, bounded, unqualified,
+    and must not be confused with validation evidence.

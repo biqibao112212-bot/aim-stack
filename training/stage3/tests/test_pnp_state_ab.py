@@ -368,3 +368,27 @@ def test_pilot_session_selection_rejects_overlap_or_any_test_entry(tmp_path) -> 
     selection.write_text(json.dumps(base), encoding="utf-8")
     with pytest.raises(ValueError, match="test empty"):
         _load_session_selection(str(selection), manifest)
+
+
+def test_train_sourced_selection_requires_the_exact_same_sessions(tmp_path) -> None:
+    manifest = tmp_path / "dataset_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    selection = tmp_path / "selection.json"
+    payload = {
+        "schema_version": "stage3-pnp-state-pilot-selection-v1",
+        "dataset_manifest_sha256": digest,
+        "purpose": "dynamic_overfit_combined",
+        "validation_source_split": "train",
+        "train": ["combined-session"],
+        "validation": ["combined-session"],
+        "test": [],
+    }
+    selection.write_text(json.dumps(payload), encoding="utf-8")
+    train, validation, record = _load_session_selection(str(selection), manifest)
+    assert train == validation == ["combined-session"]
+    assert record is not None and record["validation_source_split"] == "train"
+    payload["validation"] = ["different-session"]
+    selection.write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(ValueError, match="reuse train sessions"):
+        _load_session_selection(str(selection), manifest)

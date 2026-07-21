@@ -97,8 +97,9 @@ def _load_session_selection(
         raise ValueError("unsupported PnP state pilot selection schema")
     if payload.get("dataset_manifest_sha256") != _sha256(manifest_path):
         raise ValueError("pilot selection does not match the dataset manifest")
-    if payload.get("validation_source_split") != "validation":
-        raise ValueError("pilot validation sessions must come from validation")
+    validation_source_split = payload.get("validation_source_split")
+    if validation_source_split not in {"train", "validation"}:
+        raise ValueError("selection validation source must be train or validation")
     if payload.get("test") != []:
         raise ValueError("pilot selection must keep test empty")
 
@@ -111,12 +112,16 @@ def _load_session_selection(
         if len(selected) != len(set(selected)):
             raise ValueError(f"pilot selection contains duplicate {split} sessions")
         selections[split] = selected
-    if set(selections["train"]) & set(selections["validation"]):
-        raise ValueError("pilot train and validation session lists must be disjoint")
+    if validation_source_split == "validation":
+        if set(selections["train"]) & set(selections["validation"]):
+            raise ValueError("pilot train and validation session lists must be disjoint")
+    elif selections["train"] != selections["validation"]:
+        raise ValueError("train-sourced diagnostic validation must reuse train sessions")
     record = {
         "path": str(path),
         "sha256": _sha256(path),
         "purpose": str(payload.get("purpose", "")),
+        "validation_source_split": validation_source_split,
         "train": selections["train"],
         "validation": selections["validation"],
         "test": [],
@@ -540,7 +545,20 @@ def train(args: argparse.Namespace) -> Path:
         shuffle=not args.validation_on_train, sample_limit=args.train_sample_limit,
         session_ids=train_sessions,
     )
-    validation_split = "train" if args.validation_on_train else "validation"
+    validation_split = (
+        str(selection_record["validation_source_split"])
+        if selection_record is not None else
+        ("train" if args.validation_on_train else "validation")
+    )
+    if validation_split == "train" and selection_record is not None and (
+        not args.no_augment
+        or args.train_sample_limit <= 0
+        or args.validation_sample_limit <= 0
+    ):
+        raise ValueError(
+            "train-sourced selection is a bounded diagnostic requiring no augment "
+            "and positive train/validation sample limits"
+        )
     validation_ds = Stage3ShardDataset(
         dataset, validation_split, augment=False, seed=args.seed,
         shuffle=False, sample_limit=args.validation_sample_limit,
@@ -603,7 +621,7 @@ def train(args: argparse.Namespace) -> Path:
         "test_accessed": False,
         "validation_split": validation_split,
         "session_selection": selection_record,
-        "diagnostic_only": bool(args.validation_on_train),
+        "diagnostic_only": validation_split == "train",
         "set_policy": SET_POLICY,
         "predictor_input_allowlist": [
             "normalized PnP xyz", "PnP sin/cos yaw", "reprojection RMS",

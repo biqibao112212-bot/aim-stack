@@ -36,9 +36,12 @@
   windows that are not constant twist across every query within 1 mm/1 mrad, and adds
   common center/delta/velocity/relative-yaw/omega losses. Future truth remains
   loss/evaluator-only and is absent from predictor forward/export inputs.
-- Current step: run a bounded dynamic tiny-fit, then a new non-overwriting
-  pilot only if both arms demonstrably escape the near-zero velocity/constant
-  omega collapse. No full run is authorized yet.
+- The v2 dynamic-only held-out micro gate completed but failed: stronger state
+  supervision reduced neither velocity nor yaw-rate tails to a useful level,
+  and training-session replay remains similarly poor. No full run is authorized.
+- Current step: run one bounded same-session linear-and-spin overfit capacity
+  gate (561 samples). If it fails, replace the temporal encoder; if it passes,
+  investigate optimization budget and cross-session invariance separately.
 
 ## 2026-07-21 causal clean-physics A/B (completed)
 

@@ -1,0 +1,18 @@
+{
+  "schema_version": "stage3-pnp-state-pilot-selection-v1",
+  "dataset_manifest_sha256": "bbf1c18b3bfad8a184e9b2c03725e34320a56ac3dbb0077b9317b5783aab157e",
+  "purpose": "dynamic_overfit_combined_capacity_gate",
+  "validation_source_split": "train",
+  "selection_policy": "one linear-and-spin train session reused only for a bounded optimization/capacity diagnostic",
+  "expected_sample_counts": {
+    "train": 561,
+    "validation": 561
+  },
+  "train": [
+    "stage3-20260719-v1-0304"
+  ],
+  "validation": [
+    "stage3-20260719-v1-0304"
+  ],
+  "test": []
+}
