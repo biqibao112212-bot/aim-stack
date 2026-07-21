@@ -397,6 +397,8 @@ def train(args: argparse.Namespace) -> Path:
             label: _selection_score(initial_validation[label]) for label in ("A", "B")
         },
     }]
+    history_path = output / "stage3-scratch-ab-history.json"
+    history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
     best = {"A": float("inf"), "B": float("inf")}
     stale = {"A": 0, "B": 0}
     best_paths = {
@@ -425,6 +427,9 @@ def train(args: argparse.Namespace) -> Path:
             "lr": {"A": scheduler_a.get_last_lr()[0], "B": scheduler_b.get_last_lr()[0]},
         }
         history.append(record)
+        # Persist every completed epoch so a detached/long-running Windows
+        # process remains externally auditable even when stdout is buffered.
+        history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
         epochs_completed = epoch + 1
         print(json.dumps(record, sort_keys=True), flush=True)
         for label, model in (("A", model_a), ("B", model_b)):
@@ -459,9 +464,7 @@ def train(args: argparse.Namespace) -> Path:
             model, label, epochs_completed, validation[label], provenance, args,
             "last", optimizer, scheduler, scaler,
         )
-    (output / "stage3-scratch-ab-history.json").write_text(
-        json.dumps(history, indent=2), encoding="utf-8"
-    )
+    history_path.write_text(json.dumps(history, indent=2), encoding="utf-8")
     final = {
         **provenance,
         "status": "complete",
