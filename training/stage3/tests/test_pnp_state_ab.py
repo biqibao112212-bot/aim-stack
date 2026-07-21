@@ -43,6 +43,13 @@ def test_paired_parameter_counts_are_within_one_percent() -> None:
     assert abs(counts[0] - counts[1]) / max(counts) < 0.01
 
 
+def test_explicit_state_has_a_zero_motion_neutral_initialization() -> None:
+    model, _ = _models()
+    output = model(*_inputs())
+    assert torch.equal(output["velocity"], torch.zeros_like(output["velocity"]))
+    assert torch.equal(output["omega"], torch.zeros_like(output["omega"]))
+
+
 def test_both_models_always_decode_the_fixed_rigid_geometry() -> None:
     inputs = _inputs()
     pair_i, pair_j = torch.triu_indices(4, 4, offset=1)

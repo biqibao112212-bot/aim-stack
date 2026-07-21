@@ -81,6 +81,14 @@ class ExplicitStatePnPAdapter(nn.Module):
             nn.Linear(channels, 192), nn.SiLU(),
             nn.Linear(192, 192), nn.SiLU(), nn.Linear(192, 8),
         )
+        # A random 15-rad/s-scale initial motion is a poor neutral point for an
+        # unordered four-fold periodic set loss. Start translation/yaw rates at
+        # exactly zero; their rows still receive gradients and learn motion.
+        with torch.no_grad():
+            self.state_head[-1].weight[3:6].zero_()
+            self.state_head[-1].bias[3:6].zero_()
+            self.state_head[-1].weight[7].zero_()
+            self.state_head[-1].bias[7].zero_()
         reference = torch.zeros(3) if center_reference is None else center_reference
         scale = torch.ones(3) if center_scale is None else center_scale
         if tuple(reference.shape) != (3,) or tuple(scale.shape) != (3,):
