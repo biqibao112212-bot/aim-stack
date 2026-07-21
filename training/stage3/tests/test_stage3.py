@@ -9,6 +9,7 @@ import torch
 
 from training.stage3.build_dataset import discover_canonical_sources, stratified_session_split
 from training.stage3.baselines import rigid_constant_velocity_yaw_rate
+from training.stage3.analyze_triangle_errors import _match_observation_to_truth
 from training.stage3.dataset import CameraGimbalExtrinsic, _make_sample, _world_to_tracker
 from training.stage3.losses import stage3_loss
 from training.stage3.model import Stage3TCN
@@ -138,6 +139,17 @@ def test_position_monitor_uses_one_joint_permutation() -> None:
     prediction = target[:, :, [2, 0, 3, 1], :]
     error = _position_set_l2(prediction, target)
     assert torch.allclose(error, torch.zeros_like(error))
+
+
+def test_four_way_analysis_uses_injective_unordered_observation_matching() -> None:
+    truth = np.asarray([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]])
+    observed = truth[[2, 0, 3]] + np.asarray([0.01, -0.02, 0.03])
+    result = _match_observation_to_truth(observed, truth)
+    assert result is not None
+    error, assignment = result
+    assert set(assignment) == {0, 2, 3}
+    assert np.isclose(error, np.linalg.norm([0.01, -0.02, 0.03]))
+    assert _match_observation_to_truth(np.zeros((5, 3)), truth) is None
 
 
 def test_effective_tau_uses_matched_truth_timestamp() -> None:

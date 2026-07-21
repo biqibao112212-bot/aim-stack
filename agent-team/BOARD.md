@@ -187,3 +187,22 @@
   and 106 valid tensor samples. The previous zero-sample result was a retry/
   debug-telemetry artifact. The formal 24-session qualification gate remains
   the next required step.
+
+### 2026-07-21 four-way validation error analysis
+
+- Exact-exposure validation is complete for the four required comparisons:
+  `O(t0)-G(t0)`, `O(t1)-G(t1)`, `P(t1)-G(t1)`, and `P(t1)-O(t1)`.
+- Overall medians/P95 are `0.1024/1.2305`, `0.1019/1.1916`,
+  `0.1757/0.5696`, and `0.2237/1.3459 m`, respectively. The model-vs-truth
+  values reproduce the existing validation report exactly.
+- Exact future-frame coverage is 99.828%; usable future-observation coverage
+  is 76.745%, dominated by 67,016 zero-valid-candidate queries. Far targets
+  have 62.329% usable coverage and observation median/P95 `0.2688/1.5731 m`.
+- The machine-readable report is protected at
+  `models/engines/stage3-training/20260721-v3-full-seed0/triangle-error-analysis-r3.json`;
+  the method and slice tables are in
+  `modules/autoaim/docs/stage3_four_way_error_analysis.md`.
+- Current repair priority is the observation stream (zero-candidate coverage,
+  far-distance PnP, and rare multi-candidate outliers). The independent model
+  limitation is long-horizon/high-speed prediction. Future training continues
+  to use physical truth as target; future observation is diagnostic only.

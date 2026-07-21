@@ -245,3 +245,13 @@
     advantage over the rigid baseline. They do not authorize test evaluation,
     three-seed metric acceptance, TensorRT publication, online tracker/MPC/
     fire-control integration or live firing.
+
+55. The validation error contract is four-way, not a three-way triangle:
+    (a) current observation vs anchor truth, (b) exact future observation vs
+    future truth, (c) network prediction vs future truth, and (d) network
+    prediction vs exact future observation. Future observation joins use only
+    `future_timestamp_ns`; no nearest-frame or interpolation substitute is
+    permitted. Comparison (c) is retained for every query even when the raw
+    future observation is unavailable; (b)/(d) are coverage-qualified
+    diagnostics. The full r3 report and slice-level attribution are retained
+    under the Stage-3 model directory and the consumer docs.

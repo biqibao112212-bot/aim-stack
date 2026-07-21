@@ -71,6 +71,14 @@
       "sha256": "B4FE4FA19D4B80FBBD855446E3D0E23B860BC660427938A8D9CDC2946A0C5EF1",
       "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\feasibility-report.json",
       "protected": true
+    },
+    {
+      "name": "stage3-training/20260721-v3-full-seed0/triangle-error-analysis-r3.json",
+      "role": "Stage-3 v3 validation four-way exact-exposure error attribution report",
+      "bytes": 216541,
+      "sha256": "B7584D55BFDE079B7F64E5D2B8F668FDF9EDD62297AB4B750CD01B6CE5443731",
+      "source": "D:\\仿真\\models\\engines\\stage3-training\\20260721-v3-full-seed0\\triangle-error-analysis-r3.json",
+      "protected": true
     }
   ]
 }
