@@ -23,7 +23,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from .physical_metrics import summary
-from .pnp_state_loss import pnp_state_position_loss
+from .pnp_state_loss import pnp_state_constrained_loss
 from .pnp_state_metrics import SET_POLICY, pnp_state_set_batch_errors
 from .pnp_state_model import (
     ExplicitStatePnPAdapter,
@@ -31,6 +31,11 @@ from .pnp_state_model import (
     trainable_parameter_count,
 )
 from .shard_dataset import Stage3ShardDataset
+from .pnp_state_targets import (
+    decoded_trajectory_state,
+    geometry_c4_asymmetry_m,
+    truth_trajectory_targets,
+)
 
 
 LABEL_A = "A_explicit_state"
@@ -156,7 +161,7 @@ def _source_hashes() -> dict[str, str]:
     root = Path(__file__).resolve().parent
     names = (
         "train_pnp_state_ab.py", "pnp_state_model.py", "pnp_state_loss.py",
-        "pnp_state_metrics.py", "physical_model.py", "physical_metrics.py",
+        "pnp_state_metrics.py", "pnp_state_targets.py", "physical_model.py", "physical_metrics.py",
         "shard_dataset.py",
     )
     return {name: _sha256(root / name) for name in names}
@@ -239,8 +244,8 @@ def _train_one(
             batch["obs"], batch["obs_mask"], batch["event_mask"],
             batch["event_time_s"], batch["tau"],
         )
-        loss, parts = pnp_state_position_loss(
-            output["position_mean"], batch["future_position"], batch["tau"],
+        loss, parts = pnp_state_constrained_loss(
+            output, batch["future_position"], batch["tau"], model.decoder.geometry,
             huber_beta_m=args.huber_beta_m,
         )
     scaler.scale(loss).backward()
@@ -292,10 +297,14 @@ def _validate(
 ) -> dict[str, object]:
     model.eval()
     arrays: dict[str, list[np.ndarray]] = {}
+    all_absolute_parts: list[np.ndarray] = []
     tau_parts: list[np.ndarray] = []
     motion_parts: list[np.ndarray] = []
     distance_parts: list[np.ndarray] = []
     latest_visible_parts: list[np.ndarray] = []
+    input_sample_count = 0
+    qualified_by_motion = np.zeros(4, dtype=np.int64)
+    input_by_motion = np.zeros(4, dtype=np.int64)
     amp_enabled = device.type == "cuda" and args.amp != "off"
     amp_dtype = torch.float16 if args.amp == "float16" else torch.bfloat16
     with torch.no_grad():
@@ -308,12 +317,45 @@ def _validate(
                     batch["obs"], batch["obs_mask"], batch["event_mask"],
                     batch["event_time_s"], batch["tau"],
                 )
-            error = pnp_state_set_batch_errors(
+            truth_state = truth_trajectory_targets(
+                batch["future_position"], batch["tau"], model.decoder.geometry
+            )
+            eligible = truth_state["constant_motion"]
+            all_error = pnp_state_set_batch_errors(
                 output["position_mean"].float(), batch["future_position"]
             )
+            all_absolute_parts.append(
+                all_error["absolute_set_m"].detach().cpu().numpy()
+            )
+            input_sample_count += int(eligible.numel())
+            for motion_index in range(4):
+                class_mask = batch["motion_class"] == motion_index
+                input_by_motion[motion_index] += int(class_mask.sum().item())
+                qualified_by_motion[motion_index] += int((class_mask & eligible).sum().item())
+            if not bool(eligible.any()):
+                continue
+            error = pnp_state_set_batch_errors(
+                output["position_mean"][eligible].float(),
+                batch["future_position"][eligible],
+            )
             center_rms, yaw_rms = _trajectory_consistency(
-                output["query_center"].float(), output["query_phase"].float(),
-                batch["tau"],
+                output["query_center"][eligible].float(),
+                output["query_phase"][eligible].float(), batch["tau"][eligible],
+            )
+            predicted_state = decoded_trajectory_state(
+                output, batch["tau"], model.decoder.geometry
+            )
+            arrays.setdefault("velocity_error_mps", []).append(
+                torch.linalg.vector_norm(
+                    predicted_state["velocity"][eligible]
+                    - truth_state["velocity"][eligible], dim=-1,
+                ).detach().cpu().numpy()
+            )
+            arrays.setdefault("omega_error_rad_s", []).append(
+                (
+                    predicted_state["omega"][eligible]
+                    - truth_state["omega"][eligible]
+                ).abs().detach().cpu().numpy()
             )
             for name, value in error.items():
                 arrays.setdefault(name, []).append(value.detach().cpu().numpy())
@@ -325,17 +367,17 @@ def _validate(
             )
             if "velocity" in output:
                 arrays.setdefault("shared_speed_mps", []).append(
-                    torch.linalg.vector_norm(output["velocity"].float(), dim=-1)
+                    torch.linalg.vector_norm(output["velocity"][eligible].float(), dim=-1)
                     .detach().cpu().numpy()
                 )
             if "omega" in output:
                 arrays.setdefault("shared_abs_omega_rad_s", []).append(
-                    output["omega"].float().abs().detach().cpu().numpy()
+                    output["omega"][eligible].float().abs().detach().cpu().numpy()
                 )
-            tau_parts.append(batch["tau"].detach().cpu().numpy())
-            motion_parts.append(batch["motion_class"].detach().cpu().numpy())
+            tau_parts.append(batch["tau"][eligible].detach().cpu().numpy())
+            motion_parts.append(batch["motion_class"][eligible].detach().cpu().numpy())
             distance_parts.append(torch.linalg.vector_norm(
-                batch["future_position"][:, 0].mean(dim=1), dim=-1
+                batch["future_position"][eligible, 0].mean(dim=1), dim=-1
             ).detach().cpu().numpy())
             event_indices = torch.arange(
                 batch["event_mask"].shape[1], device=device
@@ -344,12 +386,13 @@ def _validate(
                 batch["event_mask"], event_indices, torch.full_like(event_indices, -1)
             ).amax(dim=1).clamp_min(0)
             visible = batch["obs_mask"].sum(dim=2).gather(1, last[:, None]).squeeze(1)
-            latest_visible_parts.append(visible.detach().cpu().numpy())
+            latest_visible_parts.append(visible[eligible].detach().cpu().numpy())
     merged = {name: np.concatenate(parts) for name, parts in arrays.items()}
     tau = np.concatenate(tau_parts)
     motion_class = np.concatenate(motion_parts)
     distance = np.concatenate(distance_parts)
     latest_visible = np.concatenate(latest_visible_parts)
+    all_absolute = np.concatenate(all_absolute_parts)
 
     queries = [{
         "query_index": query,
@@ -377,13 +420,40 @@ def _validate(
         }
 
     motion_names = {0: "stationary", 1: "linear", 2: "spin", 3: "linear_and_spin"}
+    qualification_fractions = np.divide(
+        qualified_by_motion, np.maximum(input_by_motion, 1)
+    )
+    if tau.shape[0] / max(input_sample_count, 1) < 0.75:
+        raise ValueError("constant-motion qualification coverage is below 75 percent")
+    if np.any((input_by_motion > 0) & (qualification_fractions < 0.75)):
+        raise ValueError("a motion-class qualification coverage is below 75 percent")
     return {
         "sample_count": int(tau.shape[0]),
+        "input_sample_count": input_sample_count,
+        "constant_motion_qualification": {
+            "qualified": int(tau.shape[0]),
+            "excluded": int(input_sample_count - tau.shape[0]),
+            "fraction": float(tau.shape[0] / max(input_sample_count, 1)),
+            "by_motion_class": {
+                motion_names[index]: {
+                    "input": int(input_by_motion[index]),
+                    "qualified": int(qualified_by_motion[index]),
+                } for index in range(4)
+            },
+        },
         "set_policy": SET_POLICY,
+        "all_input_queries": [{
+            "query_index": query,
+            "absolute": summary(all_absolute[:, query]),
+        } for query in range(min(4, all_absolute.shape[1]))],
         "state_q0": summary(merged["state_q0_m"]),
         "rigid_shape": summary(merged["rigid_shape_m"].reshape(-1)),
         "constant_twist_center_rms": summary(merged["constant_twist_center_rms_m"]),
         "constant_twist_yaw_rms_rad": summary(merged["constant_twist_yaw_rms_rad"]),
+        "trajectory_state_error": {
+            "velocity_mps": summary(merged["velocity_error_mps"]),
+            "omega_rad_s": summary(merged["omega_error_rad_s"]),
+        },
         "shared_state": (
             {
                 "speed_mps": summary(merged["shared_speed_mps"]),
@@ -457,6 +527,9 @@ def train(args: argparse.Namespace) -> Path:
     geometry, center_reference, center_scale, geometry_sha, normalization_sha = (
         _load_geometry_and_center_prior(dataset)
     )
+    geometry_c4_asymmetry = geometry_c4_asymmetry_m(geometry)
+    if geometry_c4_asymmetry <= 0.005:
+        raise ValueError("geometry does not support identifiable full relative yaw")
     train_sessions, validation_sessions, selection_record = _load_session_selection(
         args.selection, manifest_path
     )
@@ -521,7 +594,7 @@ def train(args: argparse.Namespace) -> Path:
         ) for label in models
     }
     provenance: dict[str, object] = {
-        "schema_version": "stage3-pnp-state-ab-run-v1",
+        "schema_version": "stage3-pnp-state-ab-run-v2",
         "dataset": str(dataset),
         "dataset_manifest_sha256": _sha256(manifest_path),
         "dataset_schema": manifest["schema_version"],
@@ -540,7 +613,22 @@ def train(args: argparse.Namespace) -> Path:
             "future observation", "future truth", "exact center", "exact velocity",
             "exact yaw", "exact yaw rate", "motion class", "test shard",
         ],
-        "objective": "shared unordered-set q0 + absolute + centroid-motion physical truth",
+        "objective": (
+            "shared unordered-set position plus trajectory-derived center/delta/"
+            "velocity/relative-yaw/omega on constant-motion physical truth"
+        ),
+        "physical_target_policy": {
+            "future_truth_is_training_and_evaluation_label_only": True,
+            "state_extraction_is_applied_equally_to_decoded_A_and_B_trajectories": True,
+            "constant_motion_center_tolerance_m": 0.001,
+            "constant_motion_yaw_tolerance_rad": 0.001,
+            "rule_queries": 4,
+            "q1_alias_guard_max_abs_omega_rad_s": 15.0,
+            "minimum_geometry_c4_asymmetry_m": 0.005,
+            "actual_geometry_c4_asymmetry_m": geometry_c4_asymmetry,
+            "minimum_overall_and_per_class_qualification_fraction": 0.75,
+            "qualification_name": "query_constant_twist_fit",
+        },
         "checkpoint_selection": (
             "lexicographic max(q0..q3 absolute P95), q0 P95, "
             "max(q1..q3 centroid-motion P95), max(q0..q3 absolute median)"

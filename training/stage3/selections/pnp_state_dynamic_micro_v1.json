@@ -1,0 +1,28 @@
+{
+  "schema_version": "stage3-pnp-state-pilot-selection-v1",
+  "dataset_manifest_sha256": "bbf1c18b3bfad8a184e9b2c03725e34320a56ac3dbb0077b9317b5783aab157e",
+  "purpose": "dynamic_micro_gate",
+  "validation_source_split": "validation",
+  "selection_policy": "dynamic-only subset of the frozen pilot; two disjoint sessions per linear, spin, and linear-and-spin class",
+  "expected_sample_counts": {
+    "train": 3377,
+    "validation": 3405
+  },
+  "train": [
+    "stage3-20260719-v1-0123",
+    "stage3-20260719-v1-0103",
+    "stage3-20260719-v1-0147",
+    "stage3-20260719-v1-0158",
+    "stage3-20260719-v1-0345",
+    "stage3-20260719-v1-0304"
+  ],
+  "validation": [
+    "stage3-20260719-v1-0072",
+    "stage3-20260719-v1-0107",
+    "stage3-20260719-v1-0135",
+    "stage3-20260719-v1-0134",
+    "stage3-20260719-v1-0303",
+    "stage3-20260719-v1-0259"
+  ],
+  "test": []
+}

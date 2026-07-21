@@ -6,7 +6,10 @@ import json
 import pytest
 import torch
 
-from training.stage3.pnp_state_loss import pnp_state_position_loss
+from training.stage3.pnp_state_loss import (
+    pnp_state_constrained_loss,
+    pnp_state_position_loss,
+)
 from training.stage3.pnp_state_model import (
     ExplicitStatePnPAdapter,
     ImplicitQueryPosePredictor,
@@ -16,6 +19,11 @@ from training.stage3.train_pnp_state_ab import (
     _load_session_selection,
     _to_device,
     _trajectory_consistency,
+)
+from training.stage3.pnp_state_targets import (
+    decoded_trajectory_state,
+    geometry_c4_asymmetry_m,
+    truth_trajectory_targets,
 )
 
 
@@ -189,6 +197,113 @@ def test_position_loss_backpropagates_into_explicit_state_head() -> None:
     assert gradient is not None
     assert torch.isfinite(gradient).all()
     assert gradient.abs().sum() > 0
+
+
+def test_truth_state_targets_recover_exact_high_rate_constant_twist() -> None:
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5], [0.0, 0.12, 0.2, 0.5]])
+    center0 = torch.tensor([[1.0, 2.0, 3.0], [-2.0, 0.5, 4.0]])
+    velocity = torch.tensor([[0.7, -0.2, 0.1], [-1.1, 0.3, 0.0]])
+    yaw0 = torch.tensor([0.3, -2.4])
+    omega = torch.tensor([14.0, -14.0])
+    center = center0[:, None] + tau[..., None] * velocity[:, None]
+    yaw = yaw0[:, None] + tau * omega[:, None]
+    phase = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=-1)
+    position = _models()[0].decoder(center, phase)
+    truth = truth_trajectory_targets(position, tau, GEOMETRY)
+    assert truth["constant_motion"].all()
+    assert torch.allclose(truth["center0"], center0, atol=2e-6)
+    assert torch.allclose(truth["velocity"], velocity, atol=2e-6)
+    assert torch.allclose(truth["omega"], omega, atol=2e-5)
+    decoded = decoded_trajectory_state(
+        {"position_mean": position}, tau, GEOMETRY
+    )
+    assert torch.allclose(decoded["velocity"], velocity, atol=1e-6)
+    assert torch.allclose(decoded["omega"], omega, atol=2e-5)
+
+
+def test_constrained_loss_is_common_and_zero_on_exact_decoded_trajectory() -> None:
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    center = torch.tensor([[[1.0, 2.0, 3.0], [1.1, 2.0, 3.0],
+                            [1.2, 2.0, 3.0], [1.5, 2.0, 3.0]]])
+    yaw = 0.4 + 1.2 * tau
+    phase = torch.stack((torch.cos(yaw), torch.sin(yaw)), dim=-1)
+    position = _models()[0].decoder(center, phase)
+    output = {
+        "position_mean": position,
+        "query_center": center,
+        "query_phase": phase,
+    }
+    loss, parts = pnp_state_constrained_loss(output, position, tau, GEOMETRY)
+    assert loss < 1e-10
+    assert parts["constant_motion_fraction"] == 1
+
+
+def test_truth_state_targets_reject_a_future_motion_discontinuity() -> None:
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    center = torch.zeros(1, 4, 3)
+    center[:, 3, 0] = 0.2
+    phase = torch.tensor([1.0, 0.0]).view(1, 1, 2).expand(1, 4, -1)
+    position = _models()[0].decoder(center, phase)
+    truth = truth_trajectory_targets(position, tau, GEOMETRY)
+    assert not truth["constant_motion"].item()
+
+
+def test_full_relative_yaw_requires_nonsymmetric_geometry() -> None:
+    symmetric = torch.tensor([
+        [0.2, 0.0, -0.07], [0.0, 0.2, -0.07],
+        [-0.2, 0.0, -0.07], [0.0, -0.2, -0.07],
+    ])
+    assert geometry_c4_asymmetry_m(GEOMETRY) > 0.005
+    assert geometry_c4_asymmetry_m(symmetric) < 1e-6
+    position = symmetric.view(1, 1, 4, 3).expand(1, 4, -1, -1)
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    with pytest.raises(ValueError, match="C4 asymmetry"):
+        truth_trajectory_targets(position, tau, symmetric)
+
+
+def test_decoded_state_is_reparsed_from_position_not_internal_pose() -> None:
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    center = torch.zeros(1, 4, 3)
+    phase = torch.tensor([1.0, 0.0]).view(1, 1, 2).expand(1, 4, -1)
+    position = _models()[0].decoder(center, phase)
+    output = {
+        "position_mean": position,
+        "query_center": torch.full_like(center, 123.0),
+        "query_phase": torch.flip(phase, dims=(-1,)),
+    }
+    decoded = decoded_trajectory_state(output, tau, GEOMETRY)
+    assert torch.allclose(decoded["query_center"], center, atol=1e-6)
+    assert torch.allclose(decoded["query_phase"], phase, atol=1e-6)
+
+
+def test_constrained_loss_handles_a_zero_eligible_batch_without_crashing() -> None:
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    center = torch.zeros(1, 4, 3)
+    center[:, 3, 0] = 0.2
+    phase = torch.tensor([1.0, 0.0]).view(1, 1, 2).expand(1, 4, -1)
+    position = _models()[0].decoder(center, phase)
+    predicted = position.clone().requires_grad_(True)
+    loss, parts = pnp_state_constrained_loss(
+        {"position_mean": predicted}, position, tau, GEOMETRY
+    )
+    loss.backward()
+    assert loss == 0
+    assert parts["constant_motion_fraction"] == 0
+    assert torch.equal(predicted.grad, torch.zeros_like(predicted))
+
+
+def test_q1_alias_guard_uses_q1_delta_and_requires_exact_q0() -> None:
+    center = torch.zeros(1, 4, 3)
+    phase = torch.tensor([1.0, 0.0]).view(1, 1, 2).expand(1, 4, -1)
+    position = _models()[0].decoder(center, phase)
+    with pytest.raises(ValueError, match="tau=0"):
+        truth_trajectory_targets(
+            position, torch.tensor([[0.01, 0.11, 0.21, 0.51]]), GEOMETRY
+        )
+    with pytest.raises(ValueError, match="alias"):
+        truth_trajectory_targets(
+            position, torch.tensor([[0.0, 0.21, 0.3, 0.5]]), GEOMETRY
+        )
 
 
 def test_training_device_allowlist_excludes_future_observation_and_state_labels() -> None:

@@ -31,10 +31,14 @@
   validation sessions (4,584/4,615 samples) without opening test. It is
   rejected as a full-run candidate: A/B both collapse toward almost-static
   translation, and A does not improve any dynamic motion-class q3 P95.
-- Current step: preserve the failed pilot, force the rigid decoder to FP32, and
-  redesign the common supervision so physical state/delta targets constrain
-  both arms during training without ever entering inference. No full run is
-  authorized from the current indirect set-position objective.
+- The v2 common trajectory supervision is implemented and covered by 65
+  Stage-3 tests. It re-parses both arms' final decoded positions, masks truth
+  windows that are not constant twist across every query within 1 mm/1 mrad, and adds
+  common center/delta/velocity/relative-yaw/omega losses. Future truth remains
+  loss/evaluator-only and is absent from predictor forward/export inputs.
+- Current step: run a bounded dynamic tiny-fit, then a new non-overwriting
+  pilot only if both arms demonstrably escape the near-zero velocity/constant
+  omega collapse. No full run is authorized yet.
 
 ## 2026-07-21 causal clean-physics A/B (completed)
 

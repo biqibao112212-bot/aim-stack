@@ -421,3 +421,26 @@
     normalization artifact (rigid-shape P95 0.663 mm); this numerical artifact
     is separate from the rejected meter-scale motion result and must not be
     carried into the next experiment.
+
+76. PnP state A/B v2 uses the same trajectory-derived supervision on both
+    final decoded position outputs. It fits all query centers and alias-safe q0-to-q1
+    yaw rate, then applies center, center-delta, velocity, relative-yaw and
+    omega losses in addition to the unordered position-set loss. A receives no
+    latent-only state loss; B therefore has soft trajectory-state supervision
+    but still no shared constant-twist state in its forward graph. Training and
+    validation exclude future truth windows whose complete query trajectory departs
+    from one constant twist by more than 1 mm or 1 mrad. This implements the
+    user's constant-motion scope and prevents simulator span reversals from
+    being mislabeled as learnable constant velocity. Exact future truth is
+    detached label/evaluator data only and remains forbidden predictor input.
+
+77. Full relative yaw, not a modulo-90-degree label, is used because the real
+    geometry template is measurably non-C4-symmetric: its minimum symmetric set
+    distance to a non-trivial quarter turn is 15.89 mm. A 5 mm asymmetry gate
+    is enforced before training. Only relative phase/yaw rate are supervised;
+    no absolute truth slot phase is a predictor input or auxiliary target. The
+    q0-to-q1 alias guard uses the actual time delta and the 15 rad/s bound.
+    Validation retains an all-input position report while checkpoint selection
+    uses the query-constant-twist subset; overall and per-motion-class coverage
+    must each remain at least 75%. The frozen pilot validation coverage is
+    4,348/4,615 (94.21%), with class coverage 100.0/93.59/98.59/84.20%.
