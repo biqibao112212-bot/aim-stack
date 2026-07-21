@@ -10,8 +10,9 @@
   sealed.
 - Both arms now share a causal last-four fixed-slot rigid least-squares core
   plus a zero-initialized learned residual. A uses q0/future/delta supervision;
-  B adds same-segment history reconstruction and shared constant-motion
-  consistency. The network never receives exact center/velocity/yaw-rate.
+  B adds reconstruction and shared constant-motion consistency only on the
+  last four events qualified as one motion segment. The network never receives
+  exact center/velocity/yaw-rate.
 - Armor identity is a causal cyclic preprocessing contract. No 24-permutation
   training or evaluation alignment is permitted; a discontinuity starts a new
   segment instead of stitching identities across loss of view.

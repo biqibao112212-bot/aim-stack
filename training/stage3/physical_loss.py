@@ -128,19 +128,28 @@ def causal_physical_history_regularizers(
     geometry_rms_radius_m: float,
     huber_beta_m: float = 0.005,
     constant_history_s: float = 0.2,
+    constant_history_events: int = 4,
     minimum_abs_tau_s: float = 0.005,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """B-only history reconstruction and state-label-free shared motion."""
     if geometry_rms_radius_m <= 0:
         raise ValueError("geometry_rms_radius_m must be positive")
-    history_active = obs_mask.to(torch.bool) & event_mask.to(torch.bool).unsqueeze(-1)
+    if constant_history_events < 2:
+        raise ValueError("constant_history_events must be at least two")
+    event = event_mask.to(torch.bool)
+    reverse_rank = torch.flip(
+        torch.cumsum(torch.flip(event.to(torch.int64), dims=(1,)), dim=1),
+        dims=(1,),
+    )
+    qualified_history = event & (reverse_rank <= constant_history_events)
+    history_active = obs_mask.to(torch.bool) & qualified_history.unsqueeze(-1)
     history = _masked_huber(
         history_prediction["position_mean"], history_position_m,
         history_active, huber_beta_m,
     )
 
     recent_history = (
-        event_mask.to(torch.bool)
+        qualified_history
         & (event_time_s >= -constant_history_s)
         & (event_time_s.abs() >= minimum_abs_tau_s)
     )

@@ -300,6 +300,36 @@ def test_causal_base_and_history_losses_are_zero_for_perfect_constant_motion() -
     assert regularizers["shared"].item() == pytest.approx(0.0, abs=1e-7)
 
 
+def test_b_history_regularizer_ignores_unqualified_older_motion() -> None:
+    history_time = torch.tensor([[-0.6, -0.5, -0.2, -0.1, -0.05, 0.0]])
+    tau = torch.tensor([[0.0, 0.1, 0.2, 0.5]])
+    history_target = GEOMETRY.view(1, 1, 4, 3).expand(1, 6, -1, -1).clone()
+    history_position = history_target.clone()
+    history_position[:, :2] += 10.0
+    history_prediction = {
+        "position_mean": history_position,
+        "delta_center": torch.zeros(1, 6, 3),
+        "delta_angle": torch.zeros(1, 6),
+        "query_horizon": history_time,
+    }
+    future_prediction = {
+        "position_mean": GEOMETRY.view(1, 1, 4, 3).expand(1, 4, -1, -1).clone(),
+        "delta_center": torch.zeros(1, 4, 3),
+        "delta_angle": torch.zeros(1, 4),
+        "query_horizon": tau,
+    }
+    mask = torch.ones(1, 6, 4, dtype=torch.bool)
+    event = torch.ones(1, 6, dtype=torch.bool)
+    rule = torch.ones(1, 4, dtype=torch.bool)
+    _, values = causal_physical_history_regularizers(
+        future_prediction, history_prediction, history_target, mask, event,
+        history_time, tau, rule, geometry_rms_radius_m=0.25,
+        constant_history_events=4,
+    )
+    assert values["history"].item() == pytest.approx(0.0, abs=1e-8)
+    assert values["shared"].item() == pytest.approx(0.0, abs=1e-8)
+
+
 def test_causal_gap_segmentation_keeps_only_latest_suffix() -> None:
     mask = torch.tensor([False, True, True, True, True]).numpy()
     times = torch.tensor([0.0, -0.30, -0.29, -0.10, -0.09]).numpy()

@@ -135,6 +135,7 @@ def _train_one(
                 geometry_rms_radius_m=radius_m,
                 huber_beta_m=args.huber_beta_m,
                 constant_history_s=args.constant_history_s,
+                constant_history_events=args.constant_history_events,
             )
             history_value = extra["history"]
             shared_value = extra["shared"]
@@ -511,6 +512,7 @@ def main() -> None:
     parser.add_argument("--history-weight", type=float, default=0.5)
     parser.add_argument("--shared-weight", type=float, default=0.25)
     parser.add_argument("--constant-history-s", type=float, default=0.2)
+    parser.add_argument("--constant-history-events", type=int, default=4)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument(
         "--minimum-update-loss", type=float, default=1e-10,
@@ -536,6 +538,8 @@ def main() -> None:
         parser.error("sample limits cannot be negative")
     if args.minimum_update_loss < 0:
         parser.error("minimum-update-loss cannot be negative")
+    if args.constant_history_events < 2:
+        parser.error("constant-history-events must be at least two")
     if args.validation_on_train and (
         args.train_sample_limit <= 0 or args.validation_sample_limit <= 0
     ):

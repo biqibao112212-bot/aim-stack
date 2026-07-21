@@ -324,8 +324,9 @@
     least-squares main path plus a zero-initialized hard-rigid neural residual
     for arbitrary tau. It derives pose only from admitted past positions and
     times; exact center, velocity, yaw and yaw rate remain forbidden predictor
-    inputs. A trains q0/future/motion terms. B adds same-segment history
-    reconstruction and shared constant-motion consistency. The common position
+    inputs. A trains q0/future/motion terms. B adds history reconstruction and
+    shared constant-motion consistency only on the last four events qualified
+    as one motion segment. The common position
     output API and paired initialization/batch/RNG contract are unchanged.
 
 65. The strict 8-session pilot retained 2,690 of 3,509 windows: 812 were below
@@ -338,3 +339,11 @@
     solution (headline motion P95 2.74e-5 m); learned residual updates degraded
     validation and were rejected by early stopping. This passes the pilot and
     authorizes a full train/validation run, but not test or online integration.
+
+66. A first full A/B attempt was stopped after epoch 1 and retained as failed
+    evidence because B reconstructed the entire visibility segment while only
+    the last four events were certified as one motion segment. Earlier motion
+    changes made that auxiliary incompatible with the current physical fit;
+    validation motion P95 moved from 2.15e-5 m to 3.91e-4 m for B. B history
+    and shared-motion losses are therefore restricted to the qualified last
+    four events. A new non-overwriting full run is required.
