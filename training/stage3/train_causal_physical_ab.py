@@ -706,12 +706,14 @@ def main() -> None:
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)
     args = parser.parse_args()
     positive = (
-        args.epochs, args.patience, args.batch_size, args.lr, args.weight_decay,
+        args.epochs, args.patience, args.batch_size, args.lr,
         args.channels, args.huber_beta_m, args.q0_weight,
         args.absolute_weight, args.motion_weight, args.grad_clip,
     )
     if any(value <= 0 for value in positive):
         parser.error("causal physical A/B arguments must be positive")
+    if args.weight_decay < 0:
+        parser.error("weight decay cannot be negative")
     if args.channels % 4:
         parser.error("channels must be divisible by four")
     if args.train_sample_limit < 0 or args.validation_sample_limit < 0:

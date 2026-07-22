@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import inspect
 import json
+import subprocess
+import sys
 
 import pytest
 import torch
@@ -196,3 +198,16 @@ def test_capacity_selection_reuses_train_without_opening_test(tmp_path) -> None:
     train, validation, record = _load_selection(str(selection), manifest)
     assert train == validation == ["combined"]
     assert record is not None and record["validation_source_split"] == "train"
+
+
+def test_cli_accepts_zero_weight_decay() -> None:
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "training.stage3.train_causal_physical_ab",
+            "--dataset", "missing", "--output", "missing",
+            "--weight-decay", "0",
+        ],
+        capture_output=True, text=True,
+    )
+    assert "arguments must be positive" not in result.stderr
+    assert "weight decay cannot be negative" not in result.stderr
