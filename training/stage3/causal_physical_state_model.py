@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -227,6 +229,122 @@ class ExplicitStatePhysicalPredictor(_StateBase):
             "history_events": self.history_events,
             "maximum_speed_mps": self.maximum_speed_mps,
             "maximum_yaw_rate_rad_s": self.maximum_yaw_rate_rad_s,
+            "geometry": self.decoder.geometry.detach().cpu().tolist(),
+            "position_mean": (
+                self.center_reference + self.decoder.geometry.mean(dim=0)
+            ).detach().cpu().tolist(),
+            "position_std": self.center_scale.detach().cpu().tolist(),
+        }
+
+
+class FactorizedExpertPhysicalPredictor(_StateBase):
+    """Infer q0 pose, translation and rotation through supervised experts."""
+
+    model_family = "fixed-slot-factorized-motion-experts-v1"
+
+    def __init__(
+        self, geometry: torch.Tensor, position_mean: torch.Tensor,
+        position_std: torch.Tensor, input_features: int = 5,
+        channels: int = 64, dropout: float = 0.05,
+        history_events: int = 32, maximum_speed_mps: float = 3.5,
+        maximum_yaw_rate_rad_s: float = 15.0,
+        moving_prior: float = 0.464, rotating_prior: float = 0.544,
+    ) -> None:
+        super().__init__()
+        if not 0 < moving_prior < 1 or not 0 < rotating_prior < 1:
+            raise ValueError("expert gate priors must lie within (0,1)")
+        self._init_common(
+            geometry, position_mean, position_std, input_features,
+            channels, dropout, history_events,
+        )
+        self.maximum_speed_mps = float(maximum_speed_mps)
+        self.maximum_yaw_rate_rad_s = float(maximum_yaw_rate_rad_s)
+        self.moving_prior = float(moving_prior)
+        self.rotating_prior = float(rotating_prior)
+
+        def head(outputs: int) -> nn.Sequential:
+            module = nn.Sequential(
+                nn.Linear(channels, 192), nn.SiLU(),
+                nn.Linear(192, 128), nn.SiLU(), nn.Linear(128, outputs),
+            )
+            nn.init.normal_(module[-1].weight, mean=0.0, std=1e-3)
+            nn.init.zeros_(module[-1].bias)
+            return module
+
+        self.q0_head = head(4)
+        self.translation_expert = head(4)
+        self.rotation_expert = head(2)
+        with torch.no_grad():
+            self.translation_expert[-1].bias[3] = math.log(
+                moving_prior / (1.0 - moving_prior)
+            )
+            self.rotation_expert[-1].bias[1] = math.log(
+                rotating_prior / (1.0 - rotating_prior)
+            )
+
+    def forward(
+        self, obs: torch.Tensor, obs_mask: torch.Tensor,
+        event_mask: torch.Tensor, event_time_s: torch.Tensor,
+        tau: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        encoded = self.encoder(obs, obs_mask, event_mask, event_time_s)
+        q0_raw = self.q0_head(encoded)
+        translation_raw = self.translation_expert(encoded)
+        rotation_raw = self.rotation_expert(encoded)
+        center0 = self._center(q0_raw[:, :3])
+        phase0 = self._phase(q0_raw[:, 3])
+        velocity_expert = self.maximum_speed_mps * torch.tanh(
+            translation_raw[:, :3]
+        )
+        move_logit = translation_raw[:, 3]
+        move_probability = torch.sigmoid(move_logit)
+        move_active = move_probability >= 0.5
+        soft_velocity = move_probability[:, None] * velocity_expert
+        velocity = move_active.to(velocity_expert.dtype)[:, None] * velocity_expert
+        omega_expert = self.maximum_yaw_rate_rad_s * torch.tanh(
+            rotation_raw[:, 0]
+        )
+        rotate_logit = rotation_raw[:, 1]
+        rotate_probability = torch.sigmoid(rotate_logit)
+        rotate_active = rotate_probability >= 0.5
+        soft_omega = rotate_probability * omega_expert
+        omega = rotate_active.to(omega_expert.dtype) * omega_expert
+
+        tau = _expanded_tau(tau, obs.shape[0])
+        center = center0[:, None] + tau.unsqueeze(-1) * velocity[:, None]
+        angle = tau * omega[:, None]
+        cosine, sine = torch.cos(angle), torch.sin(angle)
+        phase = torch.stack((
+            phase0[:, None, 0] * cosine - phase0[:, None, 1] * sine,
+            phase0[:, None, 1] * cosine + phase0[:, None, 0] * sine,
+        ), dim=-1)
+        return {
+            "position_mean": self.decoder(center, phase),
+            "query_center": center, "query_phase": phase,
+            "center0": center0, "phase0": phase0,
+            "velocity_expert": velocity_expert,
+            "move_logit": move_logit,
+            "move_probability": move_probability,
+            "move_active": move_active,
+            "soft_velocity": soft_velocity,
+            "velocity": velocity,
+            "omega_expert": omega_expert,
+            "rotate_logit": rotate_logit,
+            "rotate_probability": rotate_probability,
+            "rotate_active": rotate_active,
+            "soft_omega": soft_omega,
+            "omega": omega,
+        }
+
+    def config(self) -> dict[str, object]:
+        return {
+            "family": self.model_family, "input_features": self.input_features,
+            "channels": self.channels, "dropout": self.dropout,
+            "history_events": self.history_events,
+            "maximum_speed_mps": self.maximum_speed_mps,
+            "maximum_yaw_rate_rad_s": self.maximum_yaw_rate_rad_s,
+            "moving_prior": self.moving_prior,
+            "rotating_prior": self.rotating_prior,
             "geometry": self.decoder.geometry.detach().cpu().tolist(),
             "position_mean": (
                 self.center_reference + self.decoder.geometry.mean(dim=0)

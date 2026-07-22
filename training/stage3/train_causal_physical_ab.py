@@ -368,16 +368,18 @@ def _validate(
     state_parts: dict[str, list[np.ndarray]] = {}
     state_motion_parts: list[np.ndarray] = []
     eligibility_parts: list[np.ndarray] = []
+    gate_parts: dict[str, list[np.ndarray]] = {}
     amp_enabled = device.type == "cuda" and args.amp != "off"
     amp_dtype = torch.float16 if args.amp == "float16" else torch.bfloat16
     with torch.no_grad():
         for raw in loader:
             batch = _to_device(raw, device)
             with torch.autocast(device_type=device.type, dtype=amp_dtype, enabled=amp_enabled):
-                prediction = model(
+                model_output = model(
                     batch["obs"], batch["obs_mask"], batch["event_mask"],
                     batch["event_time_s"], batch["tau"],
-                )["position_mean"]
+                )
+                prediction = model_output["position_mean"]
             errors = fixed_slot_physical_batch_errors(
                 prediction.float(), batch["future_position"]
             )
@@ -400,6 +402,29 @@ def _validate(
                 & truth_state["constant_motion"]
             )
             eligibility_parts.append(eligible.detach().cpu().numpy())
+            if "move_logit" in model_output and "rotate_logit" in model_output:
+                truth_speed = torch.linalg.vector_norm(truth_state["velocity"], dim=-1)
+                truth_abs_omega = truth_state["omega"].abs()
+                move_negative = float(getattr(args, "move_negative_mps", 0.01))
+                move_positive = float(getattr(args, "move_positive_mps", 0.10))
+                rotate_negative = float(
+                    getattr(args, "rotate_negative_rad_s", 0.05)
+                )
+                rotate_positive = float(
+                    getattr(args, "rotate_positive_rad_s", 0.20)
+                )
+                values = {
+                    "move_probability": torch.sigmoid(model_output["move_logit"]),
+                    "move_positive": eligible & (truth_speed >= move_positive),
+                    "move_negative": eligible & (truth_speed <= move_negative),
+                    "rotate_probability": torch.sigmoid(model_output["rotate_logit"]),
+                    "rotate_positive": eligible & (truth_abs_omega >= rotate_positive),
+                    "rotate_negative": eligible & (truth_abs_omega <= rotate_negative),
+                }
+                for name, value in values.items():
+                    gate_parts.setdefault(name, []).append(
+                        value.detach().float().cpu().numpy()
+                    )
             if bool(eligible.any()):
                 predicted_velocity = predicted_state["velocity"][eligible]
                 truth_velocity = truth_state["velocity"][eligible]
@@ -450,6 +475,35 @@ def _validate(
     trajectory_eligible = np.concatenate(eligibility_parts, axis=0).astype(
         np.bool_, copy=False
     )
+    gate_values = {
+        name: np.concatenate(parts, axis=0) for name, parts in gate_parts.items()
+    }
+
+    def gate_diagnostics(prefix: str) -> dict[str, float | int | None] | None:
+        probability = gate_values.get(f"{prefix}_probability")
+        positive = gate_values.get(f"{prefix}_positive")
+        negative = gate_values.get(f"{prefix}_negative")
+        if probability is None or positive is None or negative is None:
+            return None
+        positive = positive.astype(np.bool_, copy=False)
+        negative = negative.astype(np.bool_, copy=False)
+        predicted = probability >= 0.5
+        return {
+            "positive_count": int(positive.sum()),
+            "negative_count": int(negative.sum()),
+            "positive_recall": (
+                float(predicted[positive].mean()) if np.any(positive) else None
+            ),
+            "negative_false_positive_rate": (
+                float(predicted[negative].mean()) if np.any(negative) else None
+            ),
+            "positive_probability_mean": (
+                float(probability[positive].mean()) if np.any(positive) else None
+            ),
+            "negative_probability_mean": (
+                float(probability[negative].mean()) if np.any(negative) else None
+            ),
+        }
 
     def state_diagnostics(mask: np.ndarray) -> dict[str, object]:
         if not state_values or not np.any(mask):
@@ -526,11 +580,14 @@ def _validate(
             "q3_rule_motion": summary(
                 merged["motion_delta_m"][mask & rule[:, 3], 3]
             ),
+            "q3_trajectory_eligible_motion": summary(
+                merged["motion_delta_m"][mask & trajectory_eligible, 3]
+            ),
         }
 
     motion_labels = {0: "stationary", 1: "linear", 2: "spin", 3: "linear_and_spin"}
     all_state = np.ones(state_motion.shape, dtype=np.bool_)
-    return {
+    result = {
         "sample_count": int(tau.shape[0]),
         "slot_policy": "fixed-causal-slots; no permutation search",
         "state_q0": summary(merged["state_q0_m"]),
@@ -564,6 +621,24 @@ def _validate(
             },
         },
     }
+    move_gate = gate_diagnostics("move")
+    rotate_gate = gate_diagnostics("rotate")
+    if move_gate is not None and rotate_gate is not None:
+        result["expert_gate_diagnostics"] = {
+            "move": move_gate, "rotate": rotate_gate,
+            "threshold": 0.5,
+            "dead_band": {
+                "move_mps": [
+                    float(getattr(args, "move_negative_mps", 0.01)),
+                    float(getattr(args, "move_positive_mps", 0.10)),
+                ],
+                "rotate_rad_s": [
+                    float(getattr(args, "rotate_negative_rad_s", 0.05)),
+                    float(getattr(args, "rotate_positive_rad_s", 0.20)),
+                ],
+            },
+        }
+    return result
 
 
 def _selection_tuple(metrics: dict[str, object]) -> tuple[float, ...]:

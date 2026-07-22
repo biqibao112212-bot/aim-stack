@@ -413,3 +413,31 @@
   seed-0 full run for 300 epochs. The run uses all qualified train/validation
   samples, patience 0, gradient clipping 0, and a new non-overwriting protected
   output directory. Test, export and online integration remain sealed.
+
+### 2026-07-22 factorized motion experts (launch authorized; clean-commit gate)
+
+- The v11 300-epoch run completed with test sealed. Best A selected epoch 272:
+  q0 P95 is `0.1108 m`, q3 motion P95 is `1.0163 m`, and linear/combined
+  median speed ratios are `0.59/0.70`. B selected epoch 169 and is worse on the
+  registered headline motion metric.
+- The active v12 contract retains the causal 32-event TCN and hard rigid
+  constant-twist decoder, but factorizes q0 pose, translation, and rotation
+  heads. Translation and rotation each have a directly supervised positive
+  expert plus a separately supervised activity gate.
+- The objective has six group-mean terms: q0 center, q0 phase, balanced moving
+  BCE, balanced rotating BCE, moving-positive velocity, and rotating-positive
+  yaw rate. Static samples do not regress velocity to zero and non-rotating
+  samples do not regress yaw rate to zero.
+- The paired arms differ only by training-side spatial augmentation. The second
+  arm rotates a complete sample around its latest-history center and translates xy within
+  `+/-0.25 m`; validation remains untouched. Both arms share initialization,
+  batches, dropout RNG, optimizer, scheduler, AMP, and 300-epoch budget.
+- Unit and smoke validation must pass before commit. Formal training must start
+  from a clean commit in a new protected directory and retain initial, best,
+  last, and milestone checkpoints. Test, export and online integration remain
+  sealed.
+- Registered protected output:
+  `D:\仿真\models\engines\stage3-training\20260722-v12-factorized-motion-experts-300ep-seed0-r1`.
+  Runtime logs use the matching
+  `D:\仿真\runtime\stage3-training-20260722-v12-factorized-motion-experts-300ep-seed0-r1`
+  directory.

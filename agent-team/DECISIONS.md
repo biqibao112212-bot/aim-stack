@@ -561,3 +561,21 @@
     gradient clipping disabled. It must use a new protected output directory,
     retain stdout/stderr logs, and keep test, export and online integration
     sealed.
+
+88. The completed v11 run is evidence against continuing the same shared
+    aggregate state objective for more epochs, not evidence against a causal
+    TCN. Best A reaches q0 P95 `0.1108 m` and q3 motion P95 `1.0163 m`, but
+    linear and combined-motion median speed ratios remain `0.59/0.70` after
+    300 epochs. With 53.6% zero-translation eligible training windows, the next
+    experiment must separate positive motion regression from activity
+    classification instead of letting static samples dominate one state loss.
+
+89. V12 retains the 32-event causal TCN and frozen hard-rigid constant-twist
+    decoder while factorizing q0 pose, translation and rotation heads. Moving
+    and rotating gates receive balanced BCE with truth-derived detached labels;
+    velocity and yaw-rate experts receive positive-only direct supervision.
+    Static/non-rotating samples do not impose zero expert regression. The paired
+    augmentation arm rotates the complete history/future sample around a center
+    recovered only from the latest causal history and translates xy by at most
+    0.25 m. Checkpoint selection prioritizes the worst
+    dynamic-class q3 motion P95, and the test split remains sealed.
