@@ -484,3 +484,17 @@
     final decoded positions for symmetric diagnostics only. Any future change
     to this input, architecture, or loss contract requires user discussion
     before implementation.
+
+81. The fixed-slot neural physical A/B capacity gate is rejected before the
+    held-out pilot. The clean run from commit `a8b3f89` used the frozen common
+    loss, identical batches/RNG/optimizer, one train-sourced combined-motion
+    session for both fitting and evaluation, and never accessed test. A chose
+    epoch 0; B chose epoch 1. A/B q0 median/P95 is `1.7528/3.5261` and
+    `1.6284/3.3051 m`; 0.5 s motion median/P95 is `1.42535/1.44519` and
+    `1.42548/1.44412 m`. Both reconstruct nearly zero speed instead of the
+    session's approximately `2.85 m/s` motion. Because the model cannot even
+    fit its own training motion distribution, more held-out data or epochs are
+    not presently accepted as evidence of feasibility. Per the user's frozen
+    process, the held-out pilot remains blocked and no change to representation,
+    initialization, objective, training schedule, or checkpoint selection is
+    authorized until a joint failure analysis chooses it explicitly.

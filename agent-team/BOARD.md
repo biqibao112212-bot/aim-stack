@@ -333,7 +333,7 @@
   physical propagation. Test/export/online integration remain frozen until
   that separate layer has its own acceptance contract.
 
-### 2026-07-22 fixed-slot neural physical state A/B (in progress)
+### 2026-07-22 fixed-slot neural physical state A/B (capacity gate failed)
 
 - Frozen scope: existing clean fixed-slot physical train/validation only;
   test, PnP, export and online integration remain sealed.
@@ -343,8 +343,17 @@
 - Removed the unapproved unordered-PnP switching workaround before starting
   this experiment. No analytic LS or hand-derived velocity exists in the new
   forward paths.
-- Unit/regression status: 77 Stage-3 tests pass; protected dirty-tree smoke
+- Unit/regression status: 79 Stage-3 tests pass; protected dirty-tree smoke
   runs prove paired training, checkpointing and common state diagnostics execute.
-- Current step: run the pre-registered train-sourced combined-motion capacity
-  gate, then launch the frozen 16-train/8-validation held-out convergence pilot
-  only if both neural arms demonstrate learnability.
+- The pre-registered train-sourced combined-motion capacity gate completed from
+  clean commit `a8b3f89` for 31 epochs and stopped by paired early stopping.
+  Test remained sealed. A selected the untrained epoch-0 checkpoint and B
+  selected epoch 1. Their 0.5 s motion median/P95 errors are respectively
+  `1.42535/1.44519 m` and `1.42548/1.44412 m`; A/B velocity-error medians are
+  `2.84747/2.84569 m/s`. This is a hard learnability failure, not a threshold
+  near miss.
+- The frozen 16-train/8-validation held-out pilot has therefore not started.
+  No architecture, loss, input, schedule, or selection rule will be changed
+  until the failure is jointly diagnosed with the user.
+- Protected evidence is retained under
+  `models/engines/stage3-training/20260722-v10-causal-neural-state-ab-capacity-seed0-r2`.
