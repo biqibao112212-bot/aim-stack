@@ -369,6 +369,9 @@ def _validate(
     state_motion_parts: list[np.ndarray] = []
     eligibility_parts: list[np.ndarray] = []
     gate_parts: dict[str, list[np.ndarray]] = {}
+    factor_parts: list[np.ndarray] = []
+    router_parts: dict[str, list[np.ndarray]] = {}
+    raw_expert_parts: dict[str, list[np.ndarray]] = {}
     amp_enabled = device.type == "cuda" and args.amp != "off"
     amp_dtype = torch.float16 if args.amp == "float16" else torch.bfloat16
     with torch.no_grad():
@@ -402,17 +405,34 @@ def _validate(
                 & truth_state["constant_motion"]
             )
             eligibility_parts.append(eligible.detach().cpu().numpy())
+            truth_speed = torch.linalg.vector_norm(
+                truth_state["velocity"], dim=-1
+            )
+            truth_abs_omega = truth_state["omega"].abs()
+            move_negative = float(getattr(args, "move_negative_mps", 0.01))
+            move_positive = float(getattr(args, "move_positive_mps", 0.10))
+            rotate_negative = float(
+                getattr(args, "rotate_negative_rad_s", 0.05)
+            )
+            rotate_positive = float(
+                getattr(args, "rotate_positive_rad_s", 0.20)
+            )
+            move_is_positive = truth_speed >= move_positive
+            move_is_negative = truth_speed <= move_negative
+            rotate_is_positive = truth_abs_omega >= rotate_positive
+            rotate_is_negative = truth_abs_omega <= rotate_negative
+            factor_valid = eligible & (move_is_positive | move_is_negative) & (
+                rotate_is_positive | rotate_is_negative
+            )
+            factor_class = (
+                move_is_positive.to(torch.long)
+                + 2 * rotate_is_positive.to(torch.long)
+            )
+            factor_class = torch.where(
+                factor_valid, factor_class, torch.full_like(factor_class, -1)
+            )
+            factor_parts.append(factor_class.detach().cpu().numpy())
             if "move_logit" in model_output and "rotate_logit" in model_output:
-                truth_speed = torch.linalg.vector_norm(truth_state["velocity"], dim=-1)
-                truth_abs_omega = truth_state["omega"].abs()
-                move_negative = float(getattr(args, "move_negative_mps", 0.01))
-                move_positive = float(getattr(args, "move_positive_mps", 0.10))
-                rotate_negative = float(
-                    getattr(args, "rotate_negative_rad_s", 0.05)
-                )
-                rotate_positive = float(
-                    getattr(args, "rotate_positive_rad_s", 0.20)
-                )
                 values = {
                     "move_probability": torch.sigmoid(model_output["move_logit"]),
                     "move_positive": eligible & (truth_speed >= move_positive),
@@ -423,6 +443,31 @@ def _validate(
                 }
                 for name, value in values.items():
                     gate_parts.setdefault(name, []).append(
+                        value.detach().float().cpu().numpy()
+                    )
+            if "router_probability" in model_output and "route_index" in model_output:
+                router_values = {
+                    "probability": model_output["router_probability"],
+                    "prediction": model_output["route_index"],
+                    "truth": factor_class,
+                    "valid": factor_valid,
+                    "dataset_motion_class": batch["motion_class"],
+                }
+                for name, value in router_values.items():
+                    router_parts.setdefault(name, []).append(
+                        value.detach().cpu().numpy()
+                    )
+                raw_values = {
+                    "translation_velocity": model_output["translation_velocity"],
+                    "rotation_omega": model_output["rotation_omega"],
+                    "combined_velocity": model_output["combined_velocity"],
+                    "combined_omega": model_output["combined_omega"],
+                    "truth_velocity": truth_state["velocity"],
+                    "truth_omega": truth_state["omega"],
+                    "factor_class": factor_class,
+                }
+                for name, value in raw_values.items():
+                    raw_expert_parts.setdefault(name, []).append(
                         value.detach().float().cpu().numpy()
                     )
             if bool(eligible.any()):
@@ -477,6 +522,14 @@ def _validate(
     )
     gate_values = {
         name: np.concatenate(parts, axis=0) for name, parts in gate_parts.items()
+    }
+    factor_class = np.concatenate(factor_parts, axis=0)
+    router_values = {
+        name: np.concatenate(parts, axis=0) for name, parts in router_parts.items()
+    }
+    raw_expert_values = {
+        name: np.concatenate(parts, axis=0)
+        for name, parts in raw_expert_parts.items()
     }
 
     def gate_diagnostics(prefix: str) -> dict[str, float | int | None] | None:
@@ -547,6 +600,127 @@ def _validate(
             ),
         }
 
+    def raw_motion_summary(
+        velocity_name: str | None, omega_name: str | None, route: int,
+    ) -> dict[str, object]:
+        if not raw_expert_values:
+            return {"sample_count": 0}
+        mask = raw_expert_values["factor_class"] == route
+        if not np.any(mask):
+            return {"sample_count": 0}
+
+        def values_summary(values: np.ndarray) -> dict[str, float | int]:
+            return {
+                "count": int(values.size), "median": float(np.median(values)),
+                "p95": float(np.quantile(values, 0.95)),
+                "max": float(np.max(values)),
+            }
+
+        result: dict[str, object] = {"sample_count": int(mask.sum())}
+        if velocity_name is not None:
+            predicted = raw_expert_values[velocity_name][mask]
+            truth = raw_expert_values["truth_velocity"][mask]
+            predicted_speed = np.linalg.norm(predicted, axis=-1)
+            truth_speed = np.linalg.norm(truth, axis=-1)
+            error = np.linalg.norm(predicted - truth, axis=-1)
+            direction = np.sum(predicted * truth, axis=-1) / np.maximum(
+                predicted_speed * truth_speed, 1e-8
+            )
+            result["velocity_error_mps"] = values_summary(error)
+            result["velocity_direction_cosine_median"] = float(
+                np.median(direction)
+            )
+            result["speed_ratio_median"] = float(
+                np.median(predicted_speed / np.maximum(truth_speed, 1e-8))
+            )
+        if omega_name is not None:
+            predicted = raw_expert_values[omega_name][mask]
+            truth = raw_expert_values["truth_omega"][mask]
+            result["omega_error_rad_s"] = values_summary(
+                np.abs(predicted - truth)
+            )
+            result["omega_sign_accuracy"] = float(
+                np.mean(np.sign(predicted) == np.sign(truth))
+            )
+            result["abs_omega_ratio_median"] = float(
+                np.median(np.abs(predicted) / np.maximum(np.abs(truth), 1e-8))
+            )
+        return result
+
+    def router_diagnostics() -> dict[str, object] | None:
+        if not router_values:
+            return None
+        valid = router_values["valid"].astype(np.bool_, copy=False)
+        truth = router_values["truth"].astype(np.int64, copy=False)[valid]
+        predicted = router_values["prediction"].astype(np.int64, copy=False)[valid]
+        dataset_class = router_values["dataset_motion_class"].astype(
+            np.int64, copy=False
+        )[valid]
+        confusion = np.zeros((4, 4), dtype=np.int64)
+        np.add.at(confusion, (truth, predicted), 1)
+        labels = ("stationary", "translation", "rotation", "combined")
+        per_class: dict[str, object] = {}
+        recalls = []
+        for index, label in enumerate(labels):
+            support = int(confusion[index].sum())
+            predicted_count = int(confusion[:, index].sum())
+            true_positive = int(confusion[index, index])
+            negatives = int(confusion.sum() - support)
+            recall = true_positive / support if support else None
+            precision = true_positive / predicted_count if predicted_count else None
+            false_positive = predicted_count - true_positive
+            fpr = false_positive / negatives if negatives else None
+            if recall is not None:
+                recalls.append(recall)
+            per_class[label] = {
+                "support": support, "predicted_count": predicted_count,
+                "precision": precision, "recall": recall,
+                "false_positive_rate": fpr,
+            }
+        move_truth = np.isin(truth, (1, 3))
+        move_predicted = np.isin(predicted, (1, 3))
+        rotate_truth = np.isin(truth, (2, 3))
+        rotate_predicted = np.isin(predicted, (2, 3))
+
+        def factor_gate(
+            factor_truth: np.ndarray, factor_predicted: np.ndarray,
+        ) -> dict[str, float | int | None]:
+            positive = int(factor_truth.sum())
+            negative = int((~factor_truth).sum())
+            return {
+                "positive_count": positive, "negative_count": negative,
+                "positive_recall": (
+                    float(factor_predicted[factor_truth].mean())
+                    if positive else None
+                ),
+                "negative_false_positive_rate": (
+                    float(factor_predicted[~factor_truth].mean())
+                    if negative else None
+                ),
+            }
+
+        dataset_cross_tab = np.zeros((4, 4), dtype=np.int64)
+        np.add.at(dataset_cross_tab, (truth, dataset_class), 1)
+        eligible_count = int(trajectory_eligible.sum())
+        return {
+            "labels": list(labels),
+            "confusion_true_rows_predicted_columns": confusion.tolist(),
+            "per_class": per_class,
+            "valid_count": int(valid.sum()),
+            "eligible_count": eligible_count,
+            "valid_over_eligible": (
+                float(valid.sum() / eligible_count) if eligible_count else 0.0
+            ),
+            "accuracy": float(np.mean(truth == predicted)) if truth.size else None,
+            "macro_recall": float(np.mean(recalls)) if recalls else None,
+            "move_from_hard_route": factor_gate(move_truth, move_predicted),
+            "rotate_from_hard_route": factor_gate(rotate_truth, rotate_predicted),
+            "factor_vs_dataset_motion_class_agreement": (
+                float(np.mean(truth == dataset_class)) if truth.size else None
+            ),
+            "factor_true_rows_dataset_class_columns": dataset_cross_tab.tolist(),
+        }
+
     queries: list[dict[str, object]] = []
     for query in range(tau.shape[1]):
         active = rule[:, query]
@@ -586,6 +760,9 @@ def _validate(
         }
 
     motion_labels = {0: "stationary", 1: "linear", 2: "spin", 3: "linear_and_spin"}
+    factor_labels = {
+        0: "stationary", 1: "translation", 2: "rotation", 3: "combined",
+    }
     all_state = np.ones(state_motion.shape, dtype=np.bool_)
     result = {
         "sample_count": int(tau.shape[0]),
@@ -614,6 +791,10 @@ def _validate(
                 label: stratum(motion_class == index)
                 for index, label in motion_labels.items()
             },
+            "motion_factor": {
+                label: stratum(factor_class == index)
+                for index, label in factor_labels.items()
+            },
             "distance": {
                 "near_lt_3m": stratum(distance < 3.0),
                 "mid_3_to_5m": stratum((distance >= 3.0) & (distance < 5.0)),
@@ -637,6 +818,22 @@ def _validate(
                     float(getattr(args, "rotate_positive_rad_s", 0.20)),
                 ],
             },
+        }
+    router = router_diagnostics()
+    if router is not None:
+        result["router_diagnostics"] = router
+        result["raw_expert_diagnostics"] = {
+            "translation": raw_motion_summary(
+                "translation_velocity", None, 1,
+            ),
+            "rotation": raw_motion_summary(None, "rotation_omega", 2),
+            "combined": raw_motion_summary(
+                "combined_velocity", "combined_omega", 3,
+            ),
+            "policy": (
+                "raw specialist outputs before hard routing; truth-derived "
+                "factor labels on trajectory-eligible non-dead-band samples"
+            ),
         }
     return result
 

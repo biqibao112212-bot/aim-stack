@@ -353,6 +353,263 @@ class FactorizedExpertPhysicalPredictor(_StateBase):
         }
 
 
+class IndependentMotionExpertSystem(_StateBase):
+    """Route observations to independent rigid-motion specialists.
+
+    The pose and translation branches are frozen foundations imported from
+    registered v12 checkpoints.  Rotation, combined motion, and routing each
+    own an independent causal encoder.  Combined motion is predicted jointly
+    by one specialist; it is never assembled by adding specialist trajectories.
+    """
+
+    model_family = "fixed-slot-independent-motion-experts-v1"
+    route_names = ("stationary", "translation", "rotation", "combined")
+
+    def __init__(
+        self, geometry: torch.Tensor, position_mean: torch.Tensor,
+        position_std: torch.Tensor, input_features: int = 5,
+        channels: int = 64, dropout: float = 0.05,
+        history_events: int = 32, maximum_speed_mps: float = 3.5,
+        maximum_yaw_rate_rad_s: float = 15.0,
+    ) -> None:
+        super().__init__()
+        self._init_common(
+            geometry, position_mean, position_std, input_features,
+            channels, dropout, history_events,
+        )
+        self.maximum_speed_mps = float(maximum_speed_mps)
+        self.maximum_yaw_rate_rad_s = float(maximum_yaw_rate_rad_s)
+
+        # _init_common creates the first encoder.  It becomes the frozen pose
+        # foundation; all other branches receive structurally independent TCNs.
+        self.pose_encoder = self.encoder
+        del self.encoder
+        self.translation_encoder = self._encoder()
+        self.rotation_encoder = self._encoder()
+        self.combined_encoder = self._encoder()
+        self.router_encoder = self._encoder()
+        self.q0_head = self._head(4)
+        self.translation_head = self._head(4)
+        self.rotation_head = self._head(2)
+        self.combined_translation_head = self._head(4)
+        self.combined_rotation_head = self._head(2)
+        self.router_head = self._head(4)
+        self._foundation_frozen = False
+
+    def _encoder(self) -> FixedSlotHistoryEncoder:
+        return FixedSlotHistoryEncoder(
+            self.input_features, self.channels, self.dropout,
+            self.history_events,
+        )
+
+    def _head(self, outputs: int) -> nn.Sequential:
+        module = nn.Sequential(
+            nn.Linear(self.channels, 192), nn.SiLU(),
+            nn.Linear(192, 128), nn.SiLU(), nn.Linear(128, outputs),
+        )
+        nn.init.normal_(module[-1].weight, mean=0.0, std=1e-3)
+        nn.init.zeros_(module[-1].bias)
+        return module
+
+    def initialize_from_factorized(
+        self, pose_source: FactorizedExpertPhysicalPredictor,
+        translation_source: FactorizedExpertPhysicalPredictor,
+    ) -> None:
+        """Import registered v12 foundations and warm-start new specialists."""
+        expected = self.config()
+        for source_name, source in (
+            ("pose", pose_source), ("translation", translation_source),
+        ):
+            config = source.config()
+            for key in (
+                "input_features", "channels", "history_events",
+                "maximum_speed_mps", "maximum_yaw_rate_rad_s",
+                "geometry", "position_mean", "position_std",
+            ):
+                if config[key] != expected[key]:
+                    raise ValueError(
+                        f"{source_name} source is incompatible at {key}: "
+                        f"{config[key]} != {expected[key]}"
+                    )
+        self.pose_encoder.load_state_dict(pose_source.encoder.state_dict())
+        self.q0_head.load_state_dict(pose_source.q0_head.state_dict())
+        self.translation_encoder.load_state_dict(
+            translation_source.encoder.state_dict()
+        )
+        self.translation_head.load_state_dict(
+            translation_source.translation_expert.state_dict()
+        )
+        self.rotation_encoder.load_state_dict(
+            translation_source.encoder.state_dict()
+        )
+        self.rotation_head.load_state_dict(
+            translation_source.rotation_expert.state_dict()
+        )
+        self.combined_encoder.load_state_dict(
+            translation_source.encoder.state_dict()
+        )
+        self.combined_translation_head.load_state_dict(
+            translation_source.translation_expert.state_dict()
+        )
+        self.combined_rotation_head.load_state_dict(
+            translation_source.rotation_expert.state_dict()
+        )
+        self.router_encoder.load_state_dict(
+            translation_source.encoder.state_dict()
+        )
+
+    def freeze_foundations(self) -> None:
+        for module in (
+            self.pose_encoder, self.q0_head,
+            self.translation_encoder, self.translation_head,
+        ):
+            module.requires_grad_(False)
+            module.eval()
+        self._foundation_frozen = True
+
+    def train(self, mode: bool = True) -> "IndependentMotionExpertSystem":
+        super().train(mode)
+        if self._foundation_frozen:
+            self.pose_encoder.eval()
+            self.q0_head.eval()
+            self.translation_encoder.eval()
+            self.translation_head.eval()
+        return self
+
+    def forward_trainable_experts(
+        self, obs: torch.Tensor, obs_mask: torch.Tensor,
+        event_mask: torch.Tensor, event_time_s: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        """Evaluate only the three trainable branches used by the objective."""
+        rotation_raw = self.rotation_head(self.rotation_encoder(
+            obs, obs_mask, event_mask, event_time_s,
+        ))
+        combined_encoded = self.combined_encoder(
+            obs, obs_mask, event_mask, event_time_s,
+        )
+        combined_translation_raw = self.combined_translation_head(
+            combined_encoded
+        )
+        combined_rotation_raw = self.combined_rotation_head(combined_encoded)
+        router_logit = self.router_head(self.router_encoder(
+            obs, obs_mask, event_mask, event_time_s,
+        ))
+        return {
+            "rotation_omega": self.maximum_yaw_rate_rad_s * torch.tanh(
+                rotation_raw[:, 0]
+            ),
+            "combined_velocity": self.maximum_speed_mps * torch.tanh(
+                combined_translation_raw[:, :3]
+            ),
+            "combined_omega": self.maximum_yaw_rate_rad_s * torch.tanh(
+                combined_rotation_raw[:, 0]
+            ),
+            "router_logit": router_logit,
+        }
+
+    def forward(
+        self, obs: torch.Tensor, obs_mask: torch.Tensor,
+        event_mask: torch.Tensor, event_time_s: torch.Tensor,
+        tau: torch.Tensor,
+    ) -> dict[str, torch.Tensor]:
+        # Frozen branches are explicitly no-grad: their outputs remain useful
+        # inputs to the physical decoder without retaining activation graphs.
+        foundation_context = torch.no_grad if self._foundation_frozen else torch.enable_grad
+        with foundation_context():
+            pose_encoded = self.pose_encoder(
+                obs, obs_mask, event_mask, event_time_s,
+            )
+            translation_encoded = self.translation_encoder(
+                obs, obs_mask, event_mask, event_time_s,
+            )
+            q0_raw = self.q0_head(pose_encoded)
+            translation_raw = self.translation_head(translation_encoded)
+        trainable = self.forward_trainable_experts(
+            obs, obs_mask, event_mask, event_time_s,
+        )
+
+        center0 = self._center(q0_raw[:, :3])
+        phase0 = self._phase(q0_raw[:, 3])
+        translation_velocity = self.maximum_speed_mps * torch.tanh(
+            translation_raw[:, :3]
+        )
+        rotation_omega = trainable["rotation_omega"]
+        combined_velocity = trainable["combined_velocity"]
+        combined_omega = trainable["combined_omega"]
+        router_logit = trainable["router_logit"]
+        router_probability = torch.softmax(router_logit, dim=-1)
+        route_index = torch.argmax(router_probability, dim=-1)
+        translation_route = route_index == 1
+        rotation_route = route_index == 2
+        combined_route = route_index == 3
+        velocity = torch.where(
+            translation_route[:, None], translation_velocity,
+            torch.where(
+                combined_route[:, None], combined_velocity,
+                torch.zeros_like(translation_velocity),
+            ),
+        )
+        omega = torch.where(
+            rotation_route, rotation_omega,
+            torch.where(
+                combined_route, combined_omega,
+                torch.zeros_like(rotation_omega),
+            ),
+        )
+        move_probability = (
+            router_probability[:, 1] + router_probability[:, 3]
+        ).clamp(1e-6, 1.0 - 1e-6)
+        rotate_probability = (
+            router_probability[:, 2] + router_probability[:, 3]
+        ).clamp(1e-6, 1.0 - 1e-6)
+        move_logit = torch.logit(move_probability)
+        rotate_logit = torch.logit(rotate_probability)
+
+        tau = _expanded_tau(tau, obs.shape[0])
+        center = center0[:, None] + tau.unsqueeze(-1) * velocity[:, None]
+        angle = tau * omega[:, None]
+        cosine, sine = torch.cos(angle), torch.sin(angle)
+        phase = torch.stack((
+            phase0[:, None, 0] * cosine - phase0[:, None, 1] * sine,
+            phase0[:, None, 1] * cosine + phase0[:, None, 0] * sine,
+        ), dim=-1)
+        return {
+            "position_mean": self.decoder(center, phase),
+            "query_center": center, "query_phase": phase,
+            "center0": center0, "phase0": phase0,
+            "translation_velocity": translation_velocity,
+            "rotation_omega": rotation_omega,
+            "combined_velocity": combined_velocity,
+            "combined_omega": combined_omega,
+            "router_logit": router_logit,
+            "router_probability": router_probability,
+            "route_index": route_index,
+            "move_logit": move_logit,
+            "move_probability": move_probability,
+            "move_active": translation_route | combined_route,
+            "rotate_logit": rotate_logit,
+            "rotate_probability": rotate_probability,
+            "rotate_active": rotation_route | combined_route,
+            "velocity": velocity, "omega": omega,
+        }
+
+    def config(self) -> dict[str, object]:
+        return {
+            "family": self.model_family, "input_features": self.input_features,
+            "channels": self.channels, "dropout": self.dropout,
+            "history_events": self.history_events,
+            "maximum_speed_mps": self.maximum_speed_mps,
+            "maximum_yaw_rate_rad_s": self.maximum_yaw_rate_rad_s,
+            "route_names": list(self.route_names),
+            "foundation_frozen": self._foundation_frozen,
+            "geometry": self.decoder.geometry.detach().cpu().tolist(),
+            "position_mean": (
+                self.center_reference + self.decoder.geometry.mean(dim=0)
+            ).detach().cpu().tolist(),
+            "position_std": self.center_scale.detach().cpu().tolist(),
+        }
+
+
 class ImplicitQueryPhysicalPredictor(_StateBase):
     """B: infer each query pose directly, with no shared velocity or omega."""
 

@@ -441,3 +441,26 @@
   Runtime logs use the matching
   `D:\仿真\runtime\stage3-training-20260722-v12-factorized-motion-experts-300ep-seed0-r1`
   directory.
+
+### 2026-07-22 independent rotation/combined experts (v13 launch in progress)
+
+- V12 completed all 300 epochs with clean provenance and test sealed. Its best
+  original arm is epoch 266; its best augmented arm is epoch 283. Translation
+  is strong enough to freeze, while the rotation and combined-motion tails and
+  route behavior require a structurally independent experiment.
+- V13 has five non-sharing causal encoders: frozen augmented-v12 q0 pose,
+  frozen original-v12 translation, trainable pure rotation, trainable joint
+  combined `(v, omega)`, and a trainable four-class hard router. Combined
+  motion is not constructed by adding specialist trajectories.
+- Router/expert targets use truth-derived speed/yaw-rate factors rather than
+  dataset motion class. Full eligible counts are 8,604/5,520/8,007/8,865 on
+  train and 2,698/1,971/2,815/2,996 on validation for
+  stationary/translation/rotation/combined.
+- The dedicated five-test isolation suite and all 99 Stage-3 tests pass. A
+  4,096-sample one-epoch smoke completed with finite loss/gradients, unchanged
+  frozen foundations, rigid geometry and test sealed. The failed r1 smoke is
+  retained temporarily as reproducible diagnostic evidence; r2 is the passing
+  smoke.
+- Current in-progress item: commit the reviewed source and start the formal
+  seed-0 300-epoch run from that clean commit in the registered non-overwriting
+  v13 protected directory. Test, export and online integration remain sealed.

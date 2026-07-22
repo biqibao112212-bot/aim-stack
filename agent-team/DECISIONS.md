@@ -579,3 +579,23 @@
     recovered only from the latest causal history and translates xy by at most
     0.25 m. Checkpoint selection prioritizes the worst
     dynamic-class q3 motion P95, and the test split remains sealed.
+
+90. V13 replaces v12's shared learned encoder/gates with physically separate
+    specialists while preserving the accepted 32-event causal input and frozen
+    constant-twist decoder. The augmented-v12 epoch-283 encoder/q0 head and
+    original-v12 epoch-266 encoder/translation head are frozen. Pure rotation,
+    joint combined motion and four-class routing each own a different trainable
+    TCN encoder. The combined expert jointly predicts its own velocity and yaw
+    rate; it is not an addition of translation- and rotation-expert
+    trajectories. One integrated checkpoint packages these independent
+    parameter blocks for atomic inference and provenance.
+
+91. Router semantics are defined by truth-derived motion factors, not dataset
+    session class. A sample is stationary/translation/rotation/combined only
+    when its trajectory-eligible speed and absolute yaw rate lie outside both
+    configured dead bands; ambiguous samples are excluded. Pure-rotation omega
+    supervision applies only to factor 2, combined velocity and omega only to
+    factor 3, and the router receives group-balanced four-class CE. Validation
+    must report both hard-routed final metrics and raw specialist metrics so a
+    routing failure can be distinguished from an expert regression failure.
+    Test remains sealed throughout the 300-epoch train/validation run.
