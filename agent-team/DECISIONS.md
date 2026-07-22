@@ -469,3 +469,18 @@
     held-out failure still forbids a full run. The next experiment must change
     the common encoder to a learned relative-time/relative-motion
     representation and increase train-session motion diversity.
+
+80. The user froze a new clean-physics neural A/B contract on 2026-07-22 and
+    explicitly superseded the analytic-LS-residual A/B as the active training
+    experiment. Input is the most recent 32 real-timestamp events for four
+    persistent cyclic slots from the existing qualified causal physical
+    train/validation dataset; no PnP, permutation search, analytic pose fit,
+    displacement/time derivative, exact motion state, or future label enters
+    either forward path. A estimates one neural center0/velocity/phase0/omega
+    state and uses frozen constant-twist propagation. B estimates center/phase
+    independently for each tau and exposes no velocity or omega. Both use the
+    identical fixed-slot decoded-position objective
+    `2*q0 + absolute + 2*motion_delta`; velocity and omega are reparsed from
+    final decoded positions for symmetric diagnostics only. Any future change
+    to this input, architecture, or loss contract requires user discussion
+    before implementation.

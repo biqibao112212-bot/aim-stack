@@ -1,0 +1,43 @@
+{
+  "schema_version": "stage3-causal-physical-state-ab-selection-v1",
+  "dataset_manifest_sha256": "7c167708b12d5149fbde80d515560b359830bd6acd67e788b4641f77904cb668",
+  "purpose": "fixed-slot neural explicit-state versus implicit-query held-out pilot",
+  "test": [],
+  "train": [
+    "stage3-20260719-v1-0018",
+    "stage3-20260719-v1-0032",
+    "stage3-20260719-v1-0045",
+    "stage3-20260719-v1-0047",
+    "stage3-20260719-v1-0049",
+    "stage3-20260719-v1-0114",
+    "stage3-20260719-v1-0144",
+    "stage3-20260719-v1-0163",
+    "stage3-20260719-v1-0158",
+    "stage3-20260719-v1-0177",
+    "stage3-20260719-v1-0316",
+    "stage3-20260719-v1-0351",
+    "stage3-20260719-v1-0338",
+    "stage3-20260719-v1-0345",
+    "stage3-20260719-v1-0304",
+    "stage3-20260719-v1-0251"
+  ],
+  "validation": [
+    "stage3-20260719-v1-0034",
+    "stage3-20260719-v1-0072",
+    "stage3-20260719-v1-0107",
+    "stage3-20260719-v1-0135",
+    "stage3-20260719-v1-0134",
+    "stage3-20260719-v1-0235",
+    "stage3-20260719-v1-0282",
+    "stage3-20260719-v1-0350"
+  ],
+  "coverage": {
+    "motion_class_session_quota_train": [2, 4, 4, 6],
+    "motion_class_session_quota_validation": [1, 2, 2, 3],
+    "includes": [
+      "stationary", "linear", "spin", "linear_and_spin",
+      "positive_and_negative_rotation", "low_mid_high_speed",
+      "low_mid_high_yaw_rate", "near_mid_far_distance"
+    ]
+  }
+}

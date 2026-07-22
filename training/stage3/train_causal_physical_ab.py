@@ -1,8 +1,9 @@
-"""Train paired causal clean-physics A/B models with one shared architecture.
+"""Train the frozen fixed-slot neural physical A/B experiment.
 
-A uses fixed-slot q0/future/motion supervision. B uses the same base objective
-and adds same-segment history reconstruction plus shared constant-motion
-consistency. Test is neither constructed nor opened.
+A infers one shared center/velocity/yaw/yaw-rate state and propagates it with
+the frozen rigid equation. B directly infers center/yaw for each query tau and
+has no shared velocity/yaw-rate state. Both receive identical fixed-slot clean
+histories and use exactly the same decoded-position objective.
 """
 
 from __future__ import annotations
@@ -15,18 +16,24 @@ import random
 import subprocess
 import sys
 import time
+from typing import Union
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
 from .causal_physical_dataset import CausalPhysicalShardDataset
-from .physical_loss import (
-    causal_physical_base_loss,
-    causal_physical_history_regularizers,
+from .causal_physical_state_model import (
+    ExplicitStatePhysicalPredictor,
+    ImplicitQueryPhysicalPredictor,
+    trainable_parameter_count,
 )
+from .physical_loss import causal_physical_base_loss
 from .physical_metrics import fixed_slot_physical_batch_errors, summary
-from .physical_model import RigidPoseDeltaPredictor
+from .pnp_state_targets import decoded_trajectory_state, truth_trajectory_targets
+
+
+PhysicalModel = Union[ExplicitStatePhysicalPredictor, ImplicitQueryPhysicalPredictor]
 
 
 def _sha256(path: Path) -> str:
@@ -71,6 +78,34 @@ def _load_geometry(dataset: Path) -> tuple[torch.Tensor, dict[str, object], str]
     return geometry, payload, _sha256(path)
 
 
+def _load_selection(
+    path_value: str, manifest_path: Path,
+) -> tuple[list[str] | None, list[str] | None, dict[str, object] | None]:
+    if not path_value:
+        return None, None, None
+    path = Path(path_value).resolve()
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != "stage3-causal-physical-state-ab-selection-v1":
+        raise ValueError("unsupported causal physical state A/B selection schema")
+    if str(payload.get("dataset_manifest_sha256", "")) != _sha256(manifest_path):
+        raise ValueError("selection is not bound to this causal physical dataset")
+    train = [str(value) for value in payload.get("train", ())]
+    validation = [str(value) for value in payload.get("validation", ())]
+    test = [str(value) for value in payload.get("test", ())]
+    if not train or not validation:
+        raise ValueError("selection requires non-empty train and validation sessions")
+    if test:
+        raise ValueError("causal physical state A/B selection must keep test empty")
+    if set(train) & set(validation):
+        raise ValueError("pilot train and validation sessions must be disjoint")
+    return train, validation, {
+        "path": str(path), "sha256": _sha256(path),
+        "purpose": str(payload.get("purpose", "")),
+        "train": train, "validation": validation, "test": [],
+        "coverage": payload.get("coverage", {}),
+    }
+
+
 def _git_state() -> dict[str, object]:
     repo = Path(__file__).resolve().parents[2]
     try:
@@ -103,9 +138,9 @@ def _to_device(raw: dict[str, torch.Tensor], device: torch.device) -> dict[str, 
 
 
 def _train_one(
-    label: str, model: RigidPoseDeltaPredictor, batch: dict[str, torch.Tensor],
+    label: str, model: PhysicalModel, batch: dict[str, torch.Tensor],
     optimizer: torch.optim.Optimizer, scaler: torch.amp.GradScaler,
-    device: torch.device, radius_m: float, args: argparse.Namespace,
+    device: torch.device, args: argparse.Namespace,
 ) -> dict[str, float]:
     optimizer.zero_grad(set_to_none=True)
     amp_enabled = device.type == "cuda" and args.amp != "off"
@@ -118,41 +153,17 @@ def _train_one(
         base, base_metrics = causal_physical_base_loss(
             future, batch["future_position"], batch["tau"], batch["rule_query"],
             huber_beta_m=args.huber_beta_m,
+            q0_weight=args.q0_weight,
+            absolute_weight=args.absolute_weight,
+            motion_weight=args.motion_weight,
         )
         total = base
-        history_value = torch.zeros((), device=device)
-        shared_value = torch.zeros((), device=device)
-        active_value = torch.zeros((), device=device)
-        if label == "B_history_shared_rigid":
-            history_prediction = model(
-                batch["obs"], batch["obs_mask"], batch["event_mask"],
-                batch["event_time_s"], batch["event_time_s"],
-            )
-            _, extra = causal_physical_history_regularizers(
-                future, history_prediction, batch["history_position_m"],
-                batch["obs_mask"], batch["event_mask"], batch["event_time_s"],
-                batch["tau"], batch["rule_query"],
-                geometry_rms_radius_m=radius_m,
-                huber_beta_m=args.huber_beta_m,
-                constant_history_s=args.constant_history_s,
-                constant_history_events=args.constant_history_events,
-            )
-            history_value = extra["history"]
-            shared_value = extra["shared"]
-            active_value = extra["shared_active_fraction"]
-            total = (
-                base + args.history_weight * history_value
-                + args.shared_weight * shared_value
-            )
     if float(total.detach().cpu()) <= args.minimum_update_loss:
         return {
             "objective": float(total.detach().cpu()),
             "q0": float(base_metrics["q0"].detach().cpu()),
             "absolute": float(base_metrics["absolute"].detach().cpu()),
             "motion": float(base_metrics["motion"].detach().cpu()),
-            "history": float(history_value.detach().cpu()),
-            "shared": float(shared_value.detach().cpu()),
-            "shared_active_fraction": float(active_value.detach().cpu()),
             "gradient_norm": 0.0,
         }
     scaler.scale(total).backward()
@@ -167,18 +178,15 @@ def _train_one(
         "q0": float(base_metrics["q0"].detach().cpu()),
         "absolute": float(base_metrics["absolute"].detach().cpu()),
         "motion": float(base_metrics["motion"].detach().cpu()),
-        "history": float(history_value.detach().cpu()),
-        "shared": float(shared_value.detach().cpu()),
-        "shared_active_fraction": float(active_value.detach().cpu()),
         "gradient_norm": float(gradient_norm.detach().cpu()),
     }
 
 
 def _train_epoch(
-    models: dict[str, RigidPoseDeltaPredictor], loader: DataLoader,
+    models: dict[str, PhysicalModel], loader: DataLoader,
     optimizers: dict[str, torch.optim.Optimizer],
     scalers: dict[str, torch.amp.GradScaler], device: torch.device,
-    radius_m: float, args: argparse.Namespace,
+    args: argparse.Namespace,
 ) -> dict[str, dict[str, float]]:
     for model in models.values():
         model.train()
@@ -194,7 +202,7 @@ def _train_epoch(
                 _restore_rng(shared_rng)
             values = _train_one(
                 label, model, batch, optimizers[label], scalers[label],
-                device, radius_m, args,
+                device, args,
             )
             if index == 0:
                 after_a = _capture_rng(device)
@@ -210,7 +218,7 @@ def _train_epoch(
 
 
 def _validate(
-    model: RigidPoseDeltaPredictor, loader: DataLoader,
+    model: PhysicalModel, loader: DataLoader,
     device: torch.device, args: argparse.Namespace,
 ) -> dict[str, object]:
     model.eval()
@@ -219,6 +227,8 @@ def _validate(
     rule_parts: list[np.ndarray] = []
     distance_parts: list[np.ndarray] = []
     motion_parts: list[np.ndarray] = []
+    state_parts: dict[str, list[np.ndarray]] = {}
+    state_motion_parts: list[np.ndarray] = []
     amp_enabled = device.type == "cuda" and args.amp != "off"
     amp_dtype = torch.float16 if args.amp == "float16" else torch.bfloat16
     with torch.no_grad():
@@ -238,11 +248,107 @@ def _validate(
             rule_parts.append(batch["rule_query"].detach().cpu().numpy())
             distance_parts.append(batch["distance_m"].detach().cpu().numpy())
             motion_parts.append(batch["motion_class"].detach().cpu().numpy())
+            truth_state = truth_trajectory_targets(
+                batch["future_position"][:, :4], batch["tau"][:, :4],
+                model.decoder.geometry,
+            )
+            predicted_state = decoded_trajectory_state(
+                {"position_mean": prediction[:, :4].float()},
+                batch["tau"][:, :4], model.decoder.geometry,
+            )
+            eligible = (
+                batch["rule_query"][:, :4].all(dim=1)
+                & truth_state["constant_motion"]
+            )
+            if bool(eligible.any()):
+                predicted_velocity = predicted_state["velocity"][eligible]
+                truth_velocity = truth_state["velocity"][eligible]
+                predicted_omega = predicted_state["omega"][eligible]
+                truth_omega = truth_state["omega"][eligible]
+                speed_product = (
+                    torch.linalg.vector_norm(predicted_velocity, dim=-1)
+                    * torch.linalg.vector_norm(truth_velocity, dim=-1)
+                )
+                direction = (
+                    (predicted_velocity * truth_velocity).sum(dim=-1)
+                    / speed_product.clamp_min(1e-8)
+                )
+                values = {
+                    "velocity_error_mps": torch.linalg.vector_norm(
+                        predicted_velocity - truth_velocity, dim=-1
+                    ),
+                    "omega_error_rad_s": (predicted_omega - truth_omega).abs(),
+                    "velocity_direction_cosine": direction,
+                    "predicted_speed_mps": torch.linalg.vector_norm(
+                        predicted_velocity, dim=-1
+                    ),
+                    "truth_speed_mps": torch.linalg.vector_norm(
+                        truth_velocity, dim=-1
+                    ),
+                    "predicted_omega_rad_s": predicted_omega,
+                    "truth_omega_rad_s": truth_omega,
+                }
+                for name, value in values.items():
+                    state_parts.setdefault(name, []).append(
+                        value.detach().cpu().numpy()
+                    )
+                state_motion_parts.append(
+                    batch["motion_class"][eligible].detach().cpu().numpy()
+                )
     merged = {name: np.concatenate(parts, axis=0) for name, parts in arrays.items()}
     tau = np.concatenate(tau_parts, axis=0)
     rule = np.concatenate(rule_parts, axis=0).astype(np.bool_, copy=False)
     distance = np.concatenate(distance_parts, axis=0)
     motion_class = np.concatenate(motion_parts, axis=0)
+    state_values = {
+        name: np.concatenate(parts, axis=0) for name, parts in state_parts.items()
+    }
+    state_motion = (
+        np.concatenate(state_motion_parts, axis=0)
+        if state_motion_parts else np.empty((0,), dtype=np.int64)
+    )
+
+    def state_diagnostics(mask: np.ndarray) -> dict[str, object]:
+        if not state_values or not np.any(mask):
+            return {"sample_count": 0}
+        def state_summary(values: np.ndarray) -> dict[str, float | int]:
+            return {
+                "count": int(values.size), "median": float(np.median(values)),
+                "p95": float(np.quantile(values, 0.95)),
+                "max": float(np.max(values)),
+            }
+        truth_speed = state_values["truth_speed_mps"][mask]
+        predicted_speed = state_values["predicted_speed_mps"][mask]
+        truth_omega = state_values["truth_omega_rad_s"][mask]
+        predicted_omega = state_values["predicted_omega_rad_s"][mask]
+        moving = truth_speed >= 0.05
+        rotating = np.abs(truth_omega) >= 0.5
+        return {
+            "sample_count": int(mask.sum()),
+            "velocity_error_mps": state_summary(
+                state_values["velocity_error_mps"][mask]
+            ),
+            "omega_error_rad_s": state_summary(
+                state_values["omega_error_rad_s"][mask]
+            ),
+            "moving_direction_cosine_median": (
+                float(np.median(state_values["velocity_direction_cosine"][mask][moving]))
+                if np.any(moving) else None
+            ),
+            "moving_speed_ratio_median": (
+                float(np.median(predicted_speed[moving] / truth_speed[moving]))
+                if np.any(moving) else None
+            ),
+            "rotating_sign_accuracy": (
+                float(np.mean(np.sign(predicted_omega[rotating]) == np.sign(truth_omega[rotating])))
+                if np.any(rotating) else None
+            ),
+            "rotating_abs_omega_ratio_median": (
+                float(np.median(
+                    np.abs(predicted_omega[rotating]) / np.abs(truth_omega[rotating])
+                )) if np.any(rotating) else None
+            ),
+        }
 
     queries: list[dict[str, object]] = []
     for query in range(tau.shape[1]):
@@ -272,6 +378,7 @@ def _validate(
         }
 
     motion_labels = {0: "stationary", 1: "linear", 2: "spin", 3: "linear_and_spin"}
+    all_state = np.ones(state_motion.shape, dtype=np.bool_)
     return {
         "sample_count": int(tau.shape[0]),
         "slot_policy": "fixed-causal-slots; no permutation search",
@@ -279,6 +386,14 @@ def _validate(
         "rigid_residual": summary(merged["rigid_residual_m"].reshape(-1)),
         "queries": queries,
         "rule_query_fraction": float(rule.mean()),
+        "trajectory_state_diagnostics": {
+            "overall": state_diagnostics(all_state),
+            "motion_class": {
+                label: state_diagnostics(state_motion == index)
+                for index, label in motion_labels.items()
+            },
+            "policy": "reparsed identically from both arms' decoded q0..q3 positions",
+        },
         "strata": {
             "motion_class": {
                 label: stratum(motion_class == index)
@@ -305,7 +420,7 @@ def _selection_tuple(metrics: dict[str, object]) -> tuple[float, ...]:
 
 
 def _checkpoint(
-    path: Path, model: RigidPoseDeltaPredictor, label: str, epoch: int,
+    path: Path, model: PhysicalModel, label: str, epoch: int,
     metrics: dict[str, object], provenance: dict[str, object], role: str,
     optimizer: torch.optim.Optimizer | None = None,
     scheduler: torch.optim.lr_scheduler.LRScheduler | None = None,
@@ -337,21 +452,31 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("causal physical A/B requires a qualified dataset")
     if bool(manifest.get("test_accessed", True)):
         raise ValueError("causal physical A/B refuses a test-accessed dataset")
+    identity = manifest.get("identity_contract", {})
+    if identity.get("policy") != "causal-cyclic-fixed-slots-v1":
+        raise ValueError("causal physical A/B requires persistent cyclic slots")
+    if bool(identity.get("permutation_search", True)):
+        raise ValueError("causal physical A/B forbids permutation association")
     output = Path(args.output).resolve()
     if output.exists():
         raise FileExistsError(f"refusing to overwrite training output: {output}")
     output.mkdir(parents=True)
     geometry, geometry_payload, geometry_sha256 = _load_geometry(dataset)
-    radius_m = float(torch.sqrt(torch.mean(torch.sum(geometry[:, :2].square(), dim=1))))
+    train_sessions, validation_sessions, selection_record = _load_selection(
+        args.selection, manifest_path
+    )
+    if args.validation_on_train and selection_record is not None:
+        raise ValueError("validation-on-train cannot use a held-out pilot selection")
 
     train_ds = CausalPhysicalShardDataset(
         dataset, "train", seed=args.seed, shuffle=not args.validation_on_train,
-        sample_limit=args.train_sample_limit,
+        sample_limit=args.train_sample_limit, session_ids=train_sessions,
     )
     validation_split = "train" if args.validation_on_train else "validation"
     validation_ds = CausalPhysicalShardDataset(
         dataset, validation_split, seed=args.seed, shuffle=False,
         sample_limit=args.validation_sample_limit,
+        session_ids=(train_sessions if args.validation_on_train else validation_sessions),
     )
     loader_options = {
         "batch_size": args.batch_size, "num_workers": 0,
@@ -360,23 +485,36 @@ def train(args: argparse.Namespace) -> Path:
     train_loader = DataLoader(train_ds, **loader_options)
     validation_loader = DataLoader(validation_ds, **loader_options)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    model_a = RigidPoseDeltaPredictor(
-        geometry, input_features=5, channels=args.channels, dropout=args.dropout,
-        position_mean=torch.from_numpy(train_ds.mean),
-        position_std=torch.from_numpy(train_ds.std),
+    common = {
+        "geometry": geometry,
+        "input_features": 5,
+        "channels": args.channels,
+        "dropout": args.dropout,
+        "history_events": args.history_events,
+        "position_mean": torch.from_numpy(train_ds.mean),
+        "position_std": torch.from_numpy(train_ds.std),
+    }
+    model_a = ExplicitStatePhysicalPredictor(
+        **common,
     )
-    model_b = RigidPoseDeltaPredictor(
-        geometry, input_features=5, channels=args.channels, dropout=args.dropout,
-        position_mean=torch.from_numpy(train_ds.mean),
-        position_std=torch.from_numpy(train_ds.std),
+    model_b = ImplicitQueryPhysicalPredictor(
+        **common,
     )
-    model_b.load_state_dict(model_a.state_dict())
-    initial_sha256 = _state_dict_sha256(model_a.state_dict())
-    if initial_sha256 != _state_dict_sha256(model_b.state_dict()):
-        raise RuntimeError("paired A/B models do not share the full initialization")
+    model_b.encoder.load_state_dict(model_a.encoder.state_dict())
+    encoder_sha256 = _state_dict_sha256(model_a.encoder.state_dict())
+    if encoder_sha256 != _state_dict_sha256(model_b.encoder.state_dict()):
+        raise RuntimeError("paired A/B models do not share encoder initialization")
+    parameter_counts = {
+        "A_explicit_state": trainable_parameter_count(model_a),
+        "B_implicit_query": trainable_parameter_count(model_b),
+    }
+    parameter_gap = abs(parameter_counts["A_explicit_state"] - parameter_counts["B_implicit_query"])
+    parameter_gap /= max(parameter_counts.values())
+    if parameter_gap >= 0.01:
+        raise RuntimeError("paired A/B trainable parameter gap must stay below one percent")
     models = {
-        "A_future_rigid": model_a.to(device),
-        "B_history_shared_rigid": model_b.to(device),
+        "A_explicit_state": model_a.to(device),
+        "B_implicit_query": model_b.to(device),
     }
     optimizers = {
         label: torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -394,24 +532,44 @@ def train(args: argparse.Namespace) -> Path:
     }
     source_names = (
         "train_causal_physical_ab.py", "causal_physical_dataset.py",
-        "physical_model.py", "physical_loss.py", "physical_metrics.py",
+        "causal_physical_state_model.py", "physical_model.py",
+        "physical_loss.py", "physical_metrics.py", "pnp_state_targets.py",
     )
     source_root = Path(__file__).resolve().parent
     provenance: dict[str, object] = {
-        "schema_version": "stage3-causal-physical-ab-run-v1",
+        "schema_version": "stage3-causal-physical-state-ab-run-v1",
         "dataset": str(dataset), "dataset_manifest_sha256": _sha256(manifest_path),
         "geometry_template_sha256": geometry_sha256,
         "geometry_hash": geometry_payload.get("geometry_hash"),
         "test_accessed": False, "validation_split": validation_split,
+        "session_selection": selection_record,
         "slot_policy": "fixed causal cyclic slots; no permutation search",
         "input_allowlist": ["normalized exact xyz", "cyclic slot sin/cos", "event mask", "real event time", "tau", "train-only normalization"],
         "forbidden_predictor_inputs": ["center", "velocity", "yaw", "yaw_rate", "motion_class", "rule_query", "future truth"],
-        "paired_initial_state_sha256": initial_sha256,
-        "objectives": {
-            "A_future_rigid": "2*q0 + absolute + motion_delta",
-            "B_history_shared_rigid": "A + history_weight*history + shared_weight*constant_motion",
+        "paired_contract": {
+            "shared_encoder_initial_sha256": encoder_sha256,
+            "trainable_parameters": parameter_counts,
+            "relative_parameter_gap": parameter_gap,
+            "same_batches_rng_optimizer_scheduler_amp": True,
         },
-        "q0_anchor": "causal last-4 fixed-slot rigid-pose least squares plus learned residual; no future label",
+        "objectives": {
+            "A_explicit_state": "common decoded-position objective",
+            "B_implicit_query": "common decoded-position objective",
+            "formula": (
+                f"{args.q0_weight}*q0 + {args.absolute_weight}*absolute "
+                f"+ {args.motion_weight}*motion_delta"
+            ),
+        },
+        "architecture_contract": {
+            "A": "neural center0/velocity/phase0/omega then frozen constant twist",
+            "B": "neural per-query center/phase; no velocity or omega output",
+            "analytic_state_recovery": False,
+            "history_events": args.history_events,
+            "evaluation_only_state_reparse": (
+                "closed-form velocity/yaw-rate diagnostics are applied equally "
+                "to decoded A/B and truth positions; never forward inputs or losses"
+            ),
+        },
         "config": vars(args),
         "source_sha256": {name: _sha256(source_root / name) for name in source_names},
         "environment": {
@@ -431,6 +589,7 @@ def train(args: argparse.Namespace) -> Path:
     history_path = output / "stage3-causal-physical-ab-history.json"
     _write_json(history_path, history)
     best = {label: _selection_tuple(value) for label, value in validation.items()}
+    best_epoch = {label: 0 for label in models}
     best_paths = {
         label: output / f"stage3-causal-physical-{label}-seed{args.seed}-best.pt"
         for label in models
@@ -444,7 +603,7 @@ def train(args: argparse.Namespace) -> Path:
     for epoch in range(1, args.epochs + 1):
         train_ds.set_epoch(epoch)
         train_metrics = _train_epoch(
-            models, train_loader, optimizers, scalers, device, radius_m, args
+            models, train_loader, optimizers, scalers, device, args
         )
         for scheduler in schedulers.values():
             scheduler.step()
@@ -465,6 +624,7 @@ def train(args: argparse.Namespace) -> Path:
             selection = _selection_tuple(validation[label])
             if selection < best[label]:
                 best[label] = selection
+                best_epoch[label] = epoch
                 stale[label] = 0
                 _checkpoint(
                     best_paths[label], model, label, epoch, validation[label], provenance,
@@ -488,7 +648,11 @@ def train(args: argparse.Namespace) -> Path:
         **provenance, "status": "complete", "stop_reason": stop_reason,
         "epochs_completed": epochs_completed,
         "best": {
-            label: {"path": path.name, "sha256": _sha256(path), "selection_tuple": best[label]}
+            label: {
+                "path": path.name, "sha256": _sha256(path),
+                "selection_tuple": best[label], "epoch": best_epoch[label],
+                "trained_checkpoint": best_epoch[label] > 0,
+            }
             for label, path in best_paths.items()
         },
     }
@@ -508,11 +672,11 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--dropout", type=float, default=0.05)
     parser.add_argument("--channels", type=int, default=96)
+    parser.add_argument("--history-events", type=int, default=32)
     parser.add_argument("--huber-beta-m", type=float, default=0.005)
-    parser.add_argument("--history-weight", type=float, default=0.5)
-    parser.add_argument("--shared-weight", type=float, default=0.25)
-    parser.add_argument("--constant-history-s", type=float, default=0.2)
-    parser.add_argument("--constant-history-events", type=int, default=4)
+    parser.add_argument("--q0-weight", type=float, default=2.0)
+    parser.add_argument("--absolute-weight", type=float, default=1.0)
+    parser.add_argument("--motion-weight", type=float, default=2.0)
     parser.add_argument("--grad-clip", type=float, default=1.0)
     parser.add_argument(
         "--minimum-update-loss", type=float, default=1e-10,
@@ -523,12 +687,13 @@ def main() -> None:
     parser.add_argument("--train-sample-limit", type=int, default=0)
     parser.add_argument("--validation-sample-limit", type=int, default=0)
     parser.add_argument("--validation-on-train", action="store_true")
+    parser.add_argument("--selection", default="")
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)
     args = parser.parse_args()
     positive = (
         args.epochs, args.patience, args.batch_size, args.lr, args.weight_decay,
-        args.channels, args.huber_beta_m, args.history_weight, args.shared_weight,
-        args.constant_history_s, args.grad_clip,
+        args.channels, args.huber_beta_m, args.q0_weight,
+        args.absolute_weight, args.motion_weight, args.grad_clip,
     )
     if any(value <= 0 for value in positive):
         parser.error("causal physical A/B arguments must be positive")
@@ -538,8 +703,8 @@ def main() -> None:
         parser.error("sample limits cannot be negative")
     if args.minimum_update_loss < 0:
         parser.error("minimum-update-loss cannot be negative")
-    if args.constant_history_events < 2:
-        parser.error("constant-history-events must be at least two")
+    if not 8 <= args.history_events <= 200:
+        parser.error("history-events must be within [8,200]")
     if args.validation_on_train and (
         args.train_sample_limit <= 0 or args.validation_sample_limit <= 0
     ):

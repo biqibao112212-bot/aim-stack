@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import numpy as np
 import torch
@@ -26,6 +26,7 @@ class CausalPhysicalShardDataset(IterableDataset):
     def __init__(
         self, dataset_dir: str | Path, split: str, *, seed: int,
         shuffle: bool = False, sample_limit: int = 0,
+        session_ids: Iterable[str] | None = None,
     ) -> None:
         super().__init__()
         self.dataset_dir = Path(dataset_dir).resolve()
@@ -35,6 +36,10 @@ class CausalPhysicalShardDataset(IterableDataset):
         self.seed = int(seed)
         self.shuffle = bool(shuffle)
         self.sample_limit = int(sample_limit)
+        self.session_ids = (
+            None if session_ids is None
+            else frozenset(str(value) for value in session_ids)
+        )
         self.epoch = 0
         manifest_path = self.dataset_dir / "dataset_manifest.json"
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -47,6 +52,13 @@ class CausalPhysicalShardDataset(IterableDataset):
         self.shards = [
             item for item in self.manifest["shards"] if item["split"] == split
         ]
+        if self.session_ids is not None:
+            self.shards = [
+                item for item in self.shards
+                if self.session_ids.intersection(
+                    str(value) for value in item.get("session_ids", ())
+                )
+            ]
         if not self.shards:
             raise ValueError(f"causal physical dataset has no {split} shards")
         normalization_path = self.dataset_dir / str(self.manifest["normalization"])
@@ -59,6 +71,15 @@ class CausalPhysicalShardDataset(IterableDataset):
             raise ValueError("invalid causal physical normalization")
         declared = sum(int(item["sample_count"]) for item in self.shards)
         self._length = min(declared, sample_limit) if sample_limit > 0 else declared
+        found_sessions = {
+            str(value) for item in self.shards for value in item.get("session_ids", ())
+            if self.session_ids is not None and str(value) in self.session_ids
+        }
+        if self.session_ids is not None and found_sessions != set(self.session_ids):
+            raise ValueError(
+                f"causal physical sessions missing from {split}: "
+                f"{sorted(set(self.session_ids) - found_sessions)}"
+            )
         for item in self.shards:
             path = self.dataset_dir / str(item["path"])
             if _sha256(path) != str(item["sha256"]):
@@ -153,4 +174,3 @@ class CausalPhysicalShardDataset(IterableDataset):
                         float(arrays["distance_m"][index]), dtype=torch.float32
                     ),
                 }
-

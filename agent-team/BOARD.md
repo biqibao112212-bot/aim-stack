@@ -332,3 +332,18 @@
 - [ ] Jointly design the PnP-history adapter/noise layer around the frozen
   physical propagation. Test/export/online integration remain frozen until
   that separate layer has its own acceptance contract.
+
+### 2026-07-22 fixed-slot neural physical state A/B (in progress)
+
+- Frozen scope: existing clean fixed-slot physical train/validation only;
+  test, PnP, export and online integration remain sealed.
+- Implemented distinct neural arms: explicit shared state A versus implicit
+  per-query pose B. Both use the same per-slot history encoder class, frozen
+  geometry decoder and `2*q0 + absolute + 2*motion_delta` objective.
+- Removed the unapproved unordered-PnP switching workaround before starting
+  this experiment. No analytic LS or hand-derived velocity exists in the new
+  forward paths.
+- Unit/regression status: 77 Stage-3 tests pass; protected dirty-tree smoke
+  runs prove paired training, checkpointing and common state diagnostics execute.
+- Current step: finish read-only P0 review, commit a clean source revision,
+  then run the frozen 16-train/8-validation held-out convergence pilot.

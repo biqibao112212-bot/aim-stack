@@ -90,6 +90,8 @@ def _masked_huber(
 def causal_physical_base_loss(
     prediction: dict[str, torch.Tensor], target: torch.Tensor, tau: torch.Tensor,
     rule_query: torch.Tensor, *, huber_beta_m: float = 0.005,
+    q0_weight: float = 2.0, absolute_weight: float = 1.0,
+    motion_weight: float = 1.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """A objective: fixed-slot q0, future position, and motion delta."""
     position = prediction["position_mean"]
@@ -111,7 +113,9 @@ def causal_physical_base_loss(
     motion = _masked_huber(
         predicted_delta, target_delta, active[:, 1:], huber_beta_m
     )
-    total = 2.0 * q0 + absolute + motion
+    if min(q0_weight, absolute_weight, motion_weight) <= 0:
+        raise ValueError("causal physical loss weights must be positive")
+    total = q0_weight * q0 + absolute_weight * absolute + motion_weight * motion
     return total, {"q0": q0, "absolute": absolute, "motion": motion}
 
 
