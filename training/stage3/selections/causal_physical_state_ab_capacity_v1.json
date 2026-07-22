@@ -1,0 +1,13 @@
+{
+  "schema_version": "stage3-causal-physical-state-ab-selection-v1",
+  "dataset_manifest_sha256": "7c167708b12d5149fbde80d515560b359830bd6acd67e788b4641f77904cb668",
+  "purpose": "train-sourced combined-motion neural capacity gate",
+  "validation_source_split": "train",
+  "test": [],
+  "train": ["stage3-20260719-v1-0304"],
+  "validation": ["stage3-20260719-v1-0304"],
+  "coverage": {
+    "motion_class": "linear_and_spin",
+    "diagnostic_only": true
+  }
+}

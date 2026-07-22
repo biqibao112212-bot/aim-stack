@@ -180,3 +180,19 @@ def test_selection_is_hash_bound_disjoint_and_test_sealed(tmp_path) -> None:
     selection.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="test empty"):
         _load_selection(str(selection), manifest)
+
+
+def test_capacity_selection_reuses_train_without_opening_test(tmp_path) -> None:
+    manifest = tmp_path / "dataset_manifest.json"
+    manifest.write_text("{}", encoding="utf-8")
+    selection = tmp_path / "selection.json"
+    payload = {
+        "schema_version": "stage3-causal-physical-state-ab-selection-v1",
+        "dataset_manifest_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
+        "purpose": "capacity", "validation_source_split": "train",
+        "train": ["combined"], "validation": ["combined"], "test": [],
+    }
+    selection.write_text(json.dumps(payload), encoding="utf-8")
+    train, validation, record = _load_selection(str(selection), manifest)
+    assert train == validation == ["combined"]
+    assert record is not None and record["validation_source_split"] == "train"

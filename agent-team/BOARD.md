@@ -345,5 +345,6 @@
   forward paths.
 - Unit/regression status: 77 Stage-3 tests pass; protected dirty-tree smoke
   runs prove paired training, checkpointing and common state diagnostics execute.
-- Current step: finish read-only P0 review, commit a clean source revision,
-  then run the frozen 16-train/8-validation held-out convergence pilot.
+- Current step: run the pre-registered train-sourced combined-motion capacity
+  gate, then launch the frozen 16-train/8-validation held-out convergence pilot
+  only if both neural arms demonstrate learnability.

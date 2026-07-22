@@ -92,16 +92,24 @@ def _load_selection(
     train = [str(value) for value in payload.get("train", ())]
     validation = [str(value) for value in payload.get("validation", ())]
     test = [str(value) for value in payload.get("test", ())]
+    validation_source_split = str(
+        payload.get("validation_source_split", "validation")
+    )
+    if validation_source_split not in {"train", "validation"}:
+        raise ValueError("selection validation source must be train or validation")
     if not train or not validation:
         raise ValueError("selection requires non-empty train and validation sessions")
     if test:
         raise ValueError("causal physical state A/B selection must keep test empty")
-    if set(train) & set(validation):
+    if validation_source_split == "validation" and set(train) & set(validation):
         raise ValueError("pilot train and validation sessions must be disjoint")
+    if validation_source_split == "train" and train != validation:
+        raise ValueError("capacity validation must reuse the exact train sessions")
     return train, validation, {
         "path": str(path), "sha256": _sha256(path),
         "purpose": str(payload.get("purpose", "")),
         "train": train, "validation": validation, "test": [],
+        "validation_source_split": validation_source_split,
         "coverage": payload.get("coverage", {}),
     }
 
@@ -472,11 +480,18 @@ def train(args: argparse.Namespace) -> Path:
         dataset, "train", seed=args.seed, shuffle=not args.validation_on_train,
         sample_limit=args.train_sample_limit, session_ids=train_sessions,
     )
-    validation_split = "train" if args.validation_on_train else "validation"
+    validation_split = (
+        "train" if args.validation_on_train
+        or selection_record is not None
+        and selection_record["validation_source_split"] == "train"
+        else "validation"
+    )
     validation_ds = CausalPhysicalShardDataset(
         dataset, validation_split, seed=args.seed, shuffle=False,
         sample_limit=args.validation_sample_limit,
-        session_ids=(train_sessions if args.validation_on_train else validation_sessions),
+        session_ids=(
+            train_sessions if validation_split == "train" else validation_sessions
+        ),
     )
     loader_options = {
         "batch_size": args.batch_size, "num_workers": 0,
