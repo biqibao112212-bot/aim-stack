@@ -498,3 +498,66 @@
     process, the held-out pilot remains blocked and no change to representation,
     initialization, objective, training schedule, or checkpoint selection is
     authorized until a joint failure analysis chooses it explicitly.
+
+82. The 2026-07-22 joint code/data/loss/literature audit supersedes only the
+    interpretation of decision 81, not its freeze. The run proves that the
+    registered training and selection procedure failed; it does not prove that
+    a causal TCN cannot infer constant rigid motion. The implemented TCN has a
+    125-event receptive field for 32 inputs, the state bounds cover the selected
+    session, and the fixed decoder enforces the accepted planar constant-twist
+    geometry to sub-micrometre residual. Conversely, the dataset certifies only
+    the latest four history events as one constant-motion interval, the run made
+    about 155 optimizer updates before an untrained epoch-0 static prior exhausted
+    patience, and the weighted motion term supplies roughly one tenth of the q0
+    last-head gradient at initialization. These are unresolved data-contract and
+    optimization confounders. No held-out pilot, test access, model-family change,
+    loss/input change, export or online integration is authorized by this audit;
+    the next bounded diagnostic must be chosen with the user and must separate
+    last-four versus 32-event history, gradient scaling, initialization and
+    fixed-update training before revisiting architectural feasibility.
+
+83. The user rejected the proposed minimal diagnostic and requested direct
+    repair followed by a full train/validation run. The new active contract
+    therefore fixes all four audited confounders together: the dataset must
+    certify constant motion across every one of the 32 consumed events; final
+    heads use a small random initialization so the encoder receives first-step
+    gradient; epoch zero is initial evidence only and cannot become the trained
+    best checkpoint; default clipping and early stopping are disabled. The
+    prior r2 experiment remains immutable failure evidence.
+
+84. Both arms now receive one common training-only, meter-equivalent state
+    objective reparsed from their decoded q0--q3 positions. It supervises
+    center0, velocity over a 0.5 s reference horizon, unit phase scaled by the
+    geometry radius, yaw rate over the same horizon, and temporal
+    constant-twist consistency. Future truth constructs detached labels only;
+    exact state, finite differences and future data remain forbidden forward
+    inputs. The fixed geometry decoder continues to enforce per-query rigidity.
+
+85. The qualified non-overwriting 32-event derivative is
+    `stage3-causal-physical-v1-20260722-r4`, manifest SHA-256
+    `8121dc8096952052ca9f9bfe3f5ed951c103a05a1ef7be4d65e2b40c731e113e`.
+    It contains 32,904 train and 11,189 validation samples across 278 admitted
+    sessions, records four zero-sample short sessions, verifies every shard,
+    and keeps test sealed. The failed partial r3 build is retained as
+    reproducible failure evidence and is not a training input. An official
+    full run must start from a clean repository commit so its provenance is
+    not downgraded to exploratory evidence.
+
+86. Formal training performs a row-level preflight in addition to manifest and
+    shard hash verification. Every consumed row must contain 32 complete,
+    strictly increasing fixed-slot events and fit constant translation/yaw
+    within `1e-4 m/rad`. Overall and every present motion class must retain at
+    least 85% q0--q3 trajectory supervision. The r4 audit passes at 94.20%
+    train and 93.66% validation overall; the lowest class coverage is 89.51%,
+    and maximum history residuals are `6.45e-6 m` and `1.36e-5 rad`.
+    Checkpoint selection is restricted to this same trajectory-eligible subset
+    so ignored future-transition rows cannot control the selected model. Full
+    training also requires all four registered motion classes and rejects any
+    history interval that could alias the allowed 15 rad/s yaw-rate range.
+
+87. The user explicitly authorized committing the completed repairs and
+    starting formal training for 300 epochs. The registered run is seed 0 on
+    the complete qualified r4 train/validation splits, with early stopping and
+    gradient clipping disabled. It must use a new protected output directory,
+    retain stdout/stderr logs, and keep test, export and online integration
+    sealed.

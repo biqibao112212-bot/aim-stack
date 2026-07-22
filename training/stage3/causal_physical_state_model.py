@@ -191,7 +191,7 @@ class ExplicitStatePhysicalPredictor(_StateBase):
             nn.Linear(channels, 192), nn.SiLU(),
             nn.Linear(192, 192), nn.SiLU(), nn.Linear(192, 8),
         )
-        nn.init.zeros_(self.state_head[-1].weight)
+        nn.init.normal_(self.state_head[-1].weight, mean=0.0, std=1e-3)
         nn.init.zeros_(self.state_head[-1].bias)
 
     def forward(
@@ -255,7 +255,7 @@ class ImplicitQueryPhysicalPredictor(_StateBase):
             nn.Linear(channels + 3, 192), nn.SiLU(),
             nn.Linear(192, 192), nn.SiLU(), nn.Linear(192, 4),
         )
-        nn.init.zeros_(self.query_head[-1].weight)
+        nn.init.normal_(self.query_head[-1].weight, mean=0.0, std=1e-3)
         nn.init.zeros_(self.query_head[-1].bias)
 
     def forward(

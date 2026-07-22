@@ -28,9 +28,13 @@ from .causal_physical_state_model import (
     ImplicitQueryPhysicalPredictor,
     trainable_parameter_count,
 )
-from .physical_loss import causal_physical_base_loss
+from .physical_loss import causal_physical_state_loss
 from .physical_metrics import fixed_slot_physical_batch_errors, summary
-from .pnp_state_targets import decoded_trajectory_state, truth_trajectory_targets
+from .pnp_state_targets import (
+    _query_pose_from_fixed_truth,
+    decoded_trajectory_state,
+    truth_trajectory_targets,
+)
 
 
 PhysicalModel = Union[ExplicitStatePhysicalPredictor, ImplicitQueryPhysicalPredictor]
@@ -114,6 +118,137 @@ def _load_selection(
     }
 
 
+def _validate_history_contract(
+    manifest: dict[str, object], history_events: int,
+) -> None:
+    identity = manifest.get("identity_contract", {})
+    if not isinstance(identity, dict):
+        raise ValueError("causal physical dataset identity contract is missing")
+    fit_events = int(identity.get("constant_motion_fit_events", 0))
+    minimum_events = int(identity.get("minimum_events_before_prediction", 0))
+    if fit_events < history_events or minimum_events < history_events:
+        raise ValueError(
+            "dataset must certify constant motion across every consumed history "
+            f"event: fit={fit_events}, minimum={minimum_events}, "
+            f"model_history={history_events}"
+        )
+
+
+def _audit_dataset_contract(
+    dataset: CausalPhysicalShardDataset, geometry: torch.Tensor,
+    history_events: int, minimum_coverage: float,
+    required_motion_classes: set[int] | None = None,
+) -> dict[str, object]:
+    """Recheck row-level history and supervision eligibility before training."""
+    total = 0
+    eligible_total = 0
+    class_counts: dict[int, list[int]] = {}
+    maximum_center_residual_m = 0.0
+    maximum_yaw_residual_rad = 0.0
+    loader = DataLoader(dataset, batch_size=1024, num_workers=0)
+    with torch.no_grad():
+        for batch in loader:
+            event_mask = batch["event_mask"][:, -history_events:]
+            armor_mask = batch["obs_mask"][:, -history_events:]
+            if not bool(event_mask.all()) or not bool(armor_mask.all()):
+                raise ValueError(
+                    "every consumed history event must contain all four fixed slots"
+                )
+            history_time = batch["event_time_s"][:, -history_events:].float()
+            history_dt = history_time[:, 1:] - history_time[:, :-1]
+            if not bool((history_dt > 0).all()):
+                raise ValueError("consumed history timestamps must be strictly increasing")
+            if float(history_dt.max()) * 15.0 >= torch.pi:
+                raise ValueError(
+                    "history sampling interval can alias the allowed yaw-rate range"
+                )
+            history_position = batch["history_position_m"][:, -history_events:]
+            history_center, history_phase = _query_pose_from_fixed_truth(
+                history_position, geometry,
+            )
+            mean_time = history_time.mean(dim=1, keepdim=True)
+            centered_time = history_time - mean_time
+            denominator = centered_time.square().sum(dim=1).clamp_min(1e-8)
+            mean_center = history_center.mean(dim=1, keepdim=True)
+            velocity = (
+                centered_time[:, :, None] * (history_center - mean_center)
+            ).sum(dim=1) / denominator[:, None]
+            fitted_center = mean_center + centered_time[:, :, None] * velocity[:, None]
+            center_residual = torch.linalg.vector_norm(
+                history_center - fitted_center, dim=-1
+            ).amax(dim=1)
+            phase_delta = torch.atan2(
+                history_phase[:, :-1, 0] * history_phase[:, 1:, 1]
+                - history_phase[:, :-1, 1] * history_phase[:, 1:, 0],
+                history_phase[:, :-1, 0] * history_phase[:, 1:, 0]
+                + history_phase[:, :-1, 1] * history_phase[:, 1:, 1],
+            )
+            unwrapped_phase = torch.cat((
+                torch.zeros_like(phase_delta[:, :1]), phase_delta.cumsum(dim=1),
+            ), dim=1)
+            mean_phase = unwrapped_phase.mean(dim=1, keepdim=True)
+            omega = (
+                centered_time * (unwrapped_phase - mean_phase)
+            ).sum(dim=1) / denominator
+            fitted_phase = mean_phase + centered_time * omega[:, None]
+            yaw_residual = (unwrapped_phase - fitted_phase).abs().amax(dim=1)
+            maximum_center_residual_m = max(
+                maximum_center_residual_m, float(center_residual.max())
+            )
+            maximum_yaw_residual_rad = max(
+                maximum_yaw_residual_rad, float(yaw_residual.max())
+            )
+            if bool((center_residual > 1e-4).any()) or bool((yaw_residual > 1e-4).any()):
+                raise ValueError(
+                    "consumed history violates the constant-twist residual contract"
+                )
+
+            truth = truth_trajectory_targets(
+                batch["future_position"][:, :4], batch["tau"][:, :4],
+                geometry, rule_queries=4,
+            )
+            eligible = batch["rule_query"][:, :4].all(dim=1) & truth["constant_motion"]
+            total += int(eligible.numel())
+            eligible_total += int(eligible.sum())
+            for motion_class in batch["motion_class"].unique():
+                index = int(motion_class)
+                mask = batch["motion_class"] == motion_class
+                values = class_counts.setdefault(index, [0, 0])
+                values[0] += int(mask.sum())
+                values[1] += int((mask & eligible).sum())
+    if total != len(dataset) or total <= 0:
+        raise ValueError("dataset audit sample count does not match the manifest")
+    coverage = eligible_total / total
+    class_coverage = {
+        str(index): {
+            "sample_count": values[0], "eligible_count": values[1],
+            "coverage": values[1] / values[0],
+        }
+        for index, values in sorted(class_counts.items())
+    }
+    if (
+        required_motion_classes is not None
+        and set(class_counts) != required_motion_classes
+    ):
+        raise ValueError(
+            "formal full training requires every registered motion class"
+        )
+    if coverage < minimum_coverage or any(
+        float(values["coverage"]) < minimum_coverage
+        for values in class_coverage.values()
+    ):
+        raise ValueError(
+            "trajectory supervision coverage is below the configured minimum"
+        )
+    return {
+        "sample_count": total, "eligible_count": eligible_total,
+        "coverage": coverage, "motion_class": class_coverage,
+        "minimum_consumed_events": history_events,
+        "maximum_center_fit_residual_m": maximum_center_residual_m,
+        "maximum_yaw_fit_residual_rad": maximum_yaw_residual_rad,
+    }
+
+
 def _git_state() -> dict[str, object]:
     repo = Path(__file__).resolve().parents[2]
     try:
@@ -158,34 +293,29 @@ def _train_one(
             batch["obs"], batch["obs_mask"], batch["event_mask"],
             batch["event_time_s"], batch["tau"],
         )
-        base, base_metrics = causal_physical_base_loss(
+        total, state_metrics = causal_physical_state_loss(
             future, batch["future_position"], batch["tau"], batch["rule_query"],
-            huber_beta_m=args.huber_beta_m,
-            q0_weight=args.q0_weight,
-            absolute_weight=args.absolute_weight,
-            motion_weight=args.motion_weight,
+            model.decoder.geometry, huber_beta_m=args.huber_beta_m,
+            reference_horizon_s=args.reference_horizon_s,
         )
-        total = base
     if float(total.detach().cpu()) <= args.minimum_update_loss:
         return {
             "objective": float(total.detach().cpu()),
-            "q0": float(base_metrics["q0"].detach().cpu()),
-            "absolute": float(base_metrics["absolute"].detach().cpu()),
-            "motion": float(base_metrics["motion"].detach().cpu()),
+            **{name: float(value.detach().cpu()) for name, value in state_metrics.items()},
             "gradient_norm": 0.0,
         }
     scaler.scale(total).backward()
     scaler.unscale_(optimizer)
-    gradient_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+    gradient_norm = torch.nn.utils.clip_grad_norm_(
+        model.parameters(), args.grad_clip if args.grad_clip > 0 else float("inf")
+    )
     if not torch.isfinite(gradient_norm):
         raise FloatingPointError(f"non-finite gradient norm for {label}")
     scaler.step(optimizer)
     scaler.update()
     return {
         "objective": float(total.detach().cpu()),
-        "q0": float(base_metrics["q0"].detach().cpu()),
-        "absolute": float(base_metrics["absolute"].detach().cpu()),
-        "motion": float(base_metrics["motion"].detach().cpu()),
+        **{name: float(value.detach().cpu()) for name, value in state_metrics.items()},
         "gradient_norm": float(gradient_norm.detach().cpu()),
     }
 
@@ -237,6 +367,7 @@ def _validate(
     motion_parts: list[np.ndarray] = []
     state_parts: dict[str, list[np.ndarray]] = {}
     state_motion_parts: list[np.ndarray] = []
+    eligibility_parts: list[np.ndarray] = []
     amp_enabled = device.type == "cuda" and args.amp != "off"
     amp_dtype = torch.float16 if args.amp == "float16" else torch.bfloat16
     with torch.no_grad():
@@ -268,6 +399,7 @@ def _validate(
                 batch["rule_query"][:, :4].all(dim=1)
                 & truth_state["constant_motion"]
             )
+            eligibility_parts.append(eligible.detach().cpu().numpy())
             if bool(eligible.any()):
                 predicted_velocity = predicted_state["velocity"][eligible]
                 truth_velocity = truth_state["velocity"][eligible]
@@ -314,6 +446,9 @@ def _validate(
     state_motion = (
         np.concatenate(state_motion_parts, axis=0)
         if state_motion_parts else np.empty((0,), dtype=np.int64)
+    )
+    trajectory_eligible = np.concatenate(eligibility_parts, axis=0).astype(
+        np.bool_, copy=False
     )
 
     def state_diagnostics(mask: np.ndarray) -> dict[str, object]:
@@ -374,6 +509,14 @@ def _validate(
                 "absolute": summary(merged["absolute_pg_m"][~active, query]),
                 "motion_delta": summary(merged["motion_delta_m"][~active, query]),
             },
+            "trajectory_eligible": {
+                "absolute": summary(
+                    merged["absolute_pg_m"][trajectory_eligible, query]
+                ),
+                "motion_delta": summary(
+                    merged["motion_delta_m"][trajectory_eligible, query]
+                ),
+            },
         })
 
     def stratum(mask: np.ndarray) -> dict[str, object]:
@@ -391,6 +534,13 @@ def _validate(
         "sample_count": int(tau.shape[0]),
         "slot_policy": "fixed-causal-slots; no permutation search",
         "state_q0": summary(merged["state_q0_m"]),
+        "trajectory_eligible_state_q0": summary(
+            merged["state_q0_m"][trajectory_eligible]
+        ),
+        "trajectory_supervision": {
+            "eligible_count": int(trajectory_eligible.sum()),
+            "coverage": float(trajectory_eligible.mean()),
+        },
         "rigid_residual": summary(merged["rigid_residual_m"].reshape(-1)),
         "queries": queries,
         "rule_query_fraction": float(rule.mean()),
@@ -420,10 +570,10 @@ def _selection_tuple(metrics: dict[str, object]) -> tuple[float, ...]:
     queries = metrics["queries"]  # type: ignore[assignment]
     headline = queries[1:4]
     return (
-        max(float(item["rule"]["motion_delta"]["p95_m"]) for item in headline),
-        float(metrics["state_q0"]["p95_m"]),  # type: ignore[index]
-        max(float(item["rule"]["absolute"]["p95_m"]) for item in headline),
-        max(float(item["rule"]["motion_delta"]["median_m"]) for item in headline),
+        max(float(item["trajectory_eligible"]["motion_delta"]["p95_m"]) for item in headline),
+        float(metrics["trajectory_eligible_state_q0"]["p95_m"]),  # type: ignore[index]
+        max(float(item["trajectory_eligible"]["absolute"]["p95_m"]) for item in headline),
+        max(float(item["trajectory_eligible"]["motion_delta"]["median_m"]) for item in headline),
     )
 
 
@@ -451,6 +601,12 @@ def _checkpoint(
 
 def train(args: argparse.Namespace) -> Path:
     _seed(args.seed)
+    git_state = _git_state()
+    if bool(git_state["worktree_dirty"]) and not args.allow_dirty_worktree:
+        raise ValueError(
+            "official causal physical training requires a clean worktree; "
+            "use --allow-dirty-worktree only for explicitly exploratory runs"
+        )
     dataset = Path(args.dataset).resolve()
     manifest_path = dataset / "dataset_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -465,10 +621,10 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("causal physical A/B requires persistent cyclic slots")
     if bool(identity.get("permutation_search", True)):
         raise ValueError("causal physical A/B forbids permutation association")
+    _validate_history_contract(manifest, args.history_events)
     output = Path(args.output).resolve()
     if output.exists():
         raise FileExistsError(f"refusing to overwrite training output: {output}")
-    output.mkdir(parents=True)
     geometry, geometry_payload, geometry_sha256 = _load_geometry(dataset)
     train_sessions, validation_sessions, selection_record = _load_selection(
         args.selection, manifest_path
@@ -493,6 +649,20 @@ def train(args: argparse.Namespace) -> Path:
             train_sessions if validation_split == "train" else validation_sessions
         ),
     )
+    dataset_qualification = {
+        "train": _audit_dataset_contract(
+            train_ds, geometry, args.history_events,
+            args.minimum_supervision_coverage,
+            {0, 1, 2, 3} if selection_record is None else None,
+        ),
+        "validation": _audit_dataset_contract(
+            validation_ds, geometry, args.history_events,
+            args.minimum_supervision_coverage,
+            {0, 1, 2, 3} if selection_record is None else None,
+        ),
+        "minimum_required_coverage": args.minimum_supervision_coverage,
+    }
+    output.mkdir(parents=True)
     loader_options = {
         "batch_size": args.batch_size, "num_workers": 0,
         "pin_memory": torch.cuda.is_available(),
@@ -557,6 +727,7 @@ def train(args: argparse.Namespace) -> Path:
         "geometry_template_sha256": geometry_sha256,
         "geometry_hash": geometry_payload.get("geometry_hash"),
         "test_accessed": False, "validation_split": validation_split,
+        "dataset_qualification": dataset_qualification,
         "session_selection": selection_record,
         "slot_policy": "fixed causal cyclic slots; no permutation search",
         "input_allowlist": ["normalized exact xyz", "cyclic slot sin/cos", "event mask", "real event time", "tau", "train-only normalization"],
@@ -571,9 +742,12 @@ def train(args: argparse.Namespace) -> Path:
             "A_explicit_state": "common decoded-position objective",
             "B_implicit_query": "common decoded-position objective",
             "formula": (
-                f"{args.q0_weight}*q0 + {args.absolute_weight}*absolute "
-                f"+ {args.motion_weight}*motion_delta"
+                "center0_m + reference_horizon*velocity_mps + "
+                "geometry_radius*phase0 + geometry_radius*reference_horizon*omega + "
+                "constant-twist center/phase consistency"
             ),
+            "reference_horizon_s": args.reference_horizon_s,
+            "label_policy": "future truth is loss-only; state reparsed identically from both arms",
         },
         "architecture_contract": {
             "A": "neural center0/velocity/phase0/omega then frozen constant twist",
@@ -592,7 +766,7 @@ def train(args: argparse.Namespace) -> Path:
             "cuda_runtime": torch.version.cuda, "device": str(device), "amp": args.amp,
             "device_name": torch.cuda.get_device_name(device) if device.type == "cuda" else "cpu",
         },
-        **_git_state(),
+        **git_state,
     }
     _write_json(output / "run_manifest.json", provenance)
 
@@ -603,14 +777,20 @@ def train(args: argparse.Namespace) -> Path:
     }]
     history_path = output / "stage3-causal-physical-ab-history.json"
     _write_json(history_path, history)
-    best = {label: _selection_tuple(value) for label, value in validation.items()}
-    best_epoch = {label: 0 for label in models}
+    initial_selection = {
+        label: _selection_tuple(value) for label, value in validation.items()
+    }
+    best = {label: (float("inf"),) * 4 for label in models}
+    best_epoch = {label: -1 for label in models}
     best_paths = {
         label: output / f"stage3-causal-physical-{label}-seed{args.seed}-best.pt"
         for label in models
     }
     for label, model in models.items():
-        _checkpoint(best_paths[label], model, label, 0, validation[label], provenance, "best")
+        _checkpoint(
+            output / f"stage3-causal-physical-{label}-seed{args.seed}-initial.pt",
+            model, label, 0, validation[label], provenance, "initial",
+        )
     stale = {label: 0 for label in models}
     stop_reason = "epoch_limit"
     started = time.monotonic()
@@ -637,7 +817,8 @@ def train(args: argparse.Namespace) -> Path:
         print(json.dumps(record, sort_keys=True), flush=True)
         for label, model in models.items():
             selection = _selection_tuple(validation[label])
-            if selection < best[label]:
+            improved = selection < best[label]
+            if improved:
                 best[label] = selection
                 best_epoch[label] = epoch
                 stale[label] = 0
@@ -645,9 +826,14 @@ def train(args: argparse.Namespace) -> Path:
                     best_paths[label], model, label, epoch, validation[label], provenance,
                     "best", optimizers[label], schedulers[label], scalers[label],
                 )
-            else:
+            elif epoch > args.early_stopping_warmup:
                 stale[label] += 1
-        if all(value >= args.patience for value in stale.values()):
+            else:
+                stale[label] = 0
+        if (
+            args.patience > 0 and epoch > args.early_stopping_warmup
+            and all(value >= args.patience for value in stale.values())
+        ):
             stop_reason = "both_models_early_stopping"
             break
         if args.max_wall_minutes > 0 and time.monotonic() - started >= args.max_wall_minutes * 60:
@@ -661,6 +847,7 @@ def train(args: argparse.Namespace) -> Path:
         )
     final = {
         **provenance, "status": "complete", "stop_reason": stop_reason,
+        "initial_selection_tuple": initial_selection,
         "epochs_completed": epochs_completed,
         "best": {
             label: {
@@ -681,7 +868,11 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=30)
-    parser.add_argument("--patience", type=int, default=8)
+    parser.add_argument(
+        "--patience", type=int, default=0,
+        help="epochs without improvement after warmup; zero disables early stopping",
+    )
+    parser.add_argument("--early-stopping-warmup", type=int, default=40)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--weight-decay", type=float, default=1e-4)
@@ -689,10 +880,9 @@ def main() -> None:
     parser.add_argument("--channels", type=int, default=96)
     parser.add_argument("--history-events", type=int, default=32)
     parser.add_argument("--huber-beta-m", type=float, default=0.005)
-    parser.add_argument("--q0-weight", type=float, default=2.0)
-    parser.add_argument("--absolute-weight", type=float, default=1.0)
-    parser.add_argument("--motion-weight", type=float, default=2.0)
-    parser.add_argument("--grad-clip", type=float, default=1.0)
+    parser.add_argument("--reference-horizon-s", type=float, default=0.5)
+    parser.add_argument("--minimum-supervision-coverage", type=float, default=0.85)
+    parser.add_argument("--grad-clip", type=float, default=0.0)
     parser.add_argument(
         "--minimum-update-loss", type=float, default=1e-10,
         help="skip numerically exact batches so Adam cannot push a perfect zero-motion prior away",
@@ -704,24 +894,33 @@ def main() -> None:
     parser.add_argument("--validation-on-train", action="store_true")
     parser.add_argument("--selection", default="")
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)
+    parser.add_argument(
+        "--allow-dirty-worktree", action="store_true",
+        help="permit an explicitly exploratory, non-release training run",
+    )
     args = parser.parse_args()
     positive = (
-        args.epochs, args.patience, args.batch_size, args.lr,
-        args.channels, args.huber_beta_m, args.q0_weight,
-        args.absolute_weight, args.motion_weight, args.grad_clip,
+        args.epochs, args.batch_size, args.lr,
+        args.channels, args.huber_beta_m, args.reference_horizon_s,
     )
     if any(value <= 0 for value in positive):
         parser.error("causal physical A/B arguments must be positive")
     if args.weight_decay < 0:
-        parser.error("weight decay cannot be negative")
+        parser.error("weight-decay cannot be negative")
+    if args.patience < 0 or args.early_stopping_warmup < 0:
+        parser.error("patience and early-stopping-warmup cannot be negative")
     if args.channels % 4:
         parser.error("channels must be divisible by four")
     if args.train_sample_limit < 0 or args.validation_sample_limit < 0:
         parser.error("sample limits cannot be negative")
     if args.minimum_update_loss < 0:
         parser.error("minimum-update-loss cannot be negative")
+    if args.grad_clip < 0:
+        parser.error("grad-clip cannot be negative")
     if not 8 <= args.history_events <= 200:
         parser.error("history-events must be within [8,200]")
+    if not 0 < args.minimum_supervision_coverage <= 1:
+        parser.error("minimum-supervision-coverage must be within (0,1]")
     if args.validation_on_train and (
         args.train_sample_limit <= 0 or args.validation_sample_limit <= 0
     ):

@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from .physical_metrics import q0_permutation
+from .pnp_state_targets import decoded_trajectory_state, truth_trajectory_targets
 
 
 def physical_loss(
@@ -117,6 +118,100 @@ def causal_physical_base_loss(
         raise ValueError("causal physical loss weights must be positive")
     total = q0_weight * q0 + absolute_weight * absolute + motion_weight * motion
     return total, {"q0": q0, "absolute": absolute, "motion": motion}
+
+
+def causal_physical_state_loss(
+    prediction: dict[str, torch.Tensor], target: torch.Tensor, tau: torch.Tensor,
+    rule_query: torch.Tensor, geometry: torch.Tensor, *,
+    huber_beta_m: float = 0.005, reference_horizon_s: float = 0.5,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Common, physically scaled state supervision for both neural arms.
+
+    Future truth is used only to construct training labels.  Both arms are
+    decoded to positions and passed through the same state extractor, so the
+    explicit arm receives no latent-only shortcut and inference still consumes
+    only observation history, real timestamps, and query ``tau``.
+    """
+    position = prediction["position_mean"]
+    if position.shape != target.shape or position.shape[2:] != (4, 3):
+        raise ValueError("causal physical position/target must be [B,Q,4,3]")
+    if tau.shape != rule_query.shape or tau.shape[:2] != position.shape[:2]:
+        raise ValueError("tau and rule_query must match [B,Q]")
+    if position.shape[1] < 4:
+        raise ValueError("state supervision requires q0 through q3")
+    if huber_beta_m <= 0 or reference_horizon_s <= 0:
+        raise ValueError("state loss scales must be positive")
+
+    state_tau = tau[:, :4]
+    state_target = target[:, :4]
+    truth = truth_trajectory_targets(
+        state_target, state_tau, geometry, rule_queries=4,
+    )
+    active = rule_query[:, :4].to(torch.bool).all(dim=1) & truth["constant_motion"]
+    predicted = decoded_trajectory_state(
+        {"position_mean": position[:, :4]}, state_tau, geometry,
+        rule_queries=4,
+    )
+    if not bool(active.any()):
+        zero = position.sum() * 0.0
+        return zero, {
+            "center0": zero.detach(), "velocity": zero.detach(),
+            "phase0": zero.detach(), "omega": zero.detach(),
+            "active_fraction": active.float().mean().detach(),
+        }
+
+    def zero_huber(value_m: torch.Tensor) -> torch.Tensor:
+        return F.smooth_l1_loss(
+            value_m, torch.zeros_like(value_m),
+            beta=huber_beta_m, reduction="mean",
+        )
+
+    geometry_radius_m = torch.sqrt(
+        geometry[:, :2].float().square().sum(dim=-1).mean()
+    )
+    center0 = zero_huber(predicted["center0"][active] - truth["center0"][active])
+    velocity = zero_huber(
+        reference_horizon_s
+        * (predicted["velocity"][active] - truth["velocity"][active])
+    )
+    phase0 = zero_huber(
+        geometry_radius_m
+        * (predicted["phase0"][active] - truth["phase0"][active])
+    )
+    omega = zero_huber(
+        geometry_radius_m * reference_horizon_s
+        * (predicted["omega"][active] - truth["omega"][active])
+    )
+    rule_tau = state_tau[active].float()
+    fitted_center = (
+        predicted["center0"][active, None]
+        + rule_tau[:, :, None] * predicted["velocity"][active, None]
+    )
+    angle = rule_tau * predicted["omega"][active, None]
+    cosine, sine = torch.cos(angle), torch.sin(angle)
+    initial_phase = predicted["phase0"][active]
+    fitted_phase = torch.stack((
+        initial_phase[:, None, 0] * cosine - initial_phase[:, None, 1] * sine,
+        initial_phase[:, None, 1] * cosine + initial_phase[:, None, 0] * sine,
+    ), dim=-1)
+    center_consistency = zero_huber(
+        predicted["query_center"][active, :4] - fitted_center
+    )
+    phase_consistency = zero_huber(
+        geometry_radius_m
+        * (predicted["query_phase"][active, :4] - fitted_phase)
+    )
+    total = (
+        center0 + velocity + phase0 + omega
+        + center_consistency + phase_consistency
+    )
+    return total, {
+        "center0": center0, "velocity": velocity,
+        "phase0": phase0, "omega": omega,
+        "center_consistency": center_consistency,
+        "phase_consistency": phase_consistency,
+        "active_fraction": active.float().mean(),
+    }
 
 
 def causal_physical_history_regularizers(

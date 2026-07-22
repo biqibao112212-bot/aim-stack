@@ -350,10 +350,66 @@
   Test remained sealed. A selected the untrained epoch-0 checkpoint and B
   selected epoch 1. Their 0.5 s motion median/P95 errors are respectively
   `1.42535/1.44519 m` and `1.42548/1.44412 m`; A/B velocity-error medians are
-  `2.84747/2.84569 m/s`. This is a hard learnability failure, not a threshold
-  near miss.
+  `2.84747/2.84569 m/s`. This is a failed training/selection run, not a
+  threshold near miss; the later joint audit does not accept it as proof of a
+  TCN expressivity limit.
 - The frozen 16-train/8-validation held-out pilot has therefore not started.
   No architecture, loss, input, schedule, or selection rule will be changed
   until the failure is jointly diagnosed with the user.
 - Protected evidence is retained under
   `models/engines/stage3-training/20260722-v10-causal-neural-state-ab-capacity-seed0-r2`.
+
+### 2026-07-22 neural state full-training repair (implemented; clean-commit gate)
+
+- The current five-block, two-convolution causal TCN has a 125-event receptive
+  field, covers the configured 32 events, receives real anchor-relative times,
+  and can represent the bounded session state. The hard decoder correctly
+  preserves the four-slot geometry; its validation rigid residual P95 is about
+  `5.4e-7 m`. No test access, future-label leakage, mask pollution, coordinate
+  swap or time-unit error was found.
+- The dataset guarantees constant velocity/yaw rate only from the most recent
+  four observation events to `t0`, while the encoder consumes 32 events. The
+  selected 319-sample session has a median 25 valid events over `0.2395 s`, so
+  the active input contract can include earlier motion regimes not certified by
+  the constant-motion gate.
+- The planned 120-epoch capacity run performed only about five optimizer steps
+  per epoch and stopped at epoch 31 because the untrained epoch-0 static prior
+  participated in lexicographic motion-P95 selection. Its training objective
+  was still decreasing (`2.54` at epoch 1 to `0.94` at epoch 31); this does not
+  establish insufficient capacity.
+- The common loss is structurally simple, but not gradient-balanced. A read-only
+  autograd probe on the exact seed-0 initialization measured the weighted motion
+  term's last-head gradient norm at about `0.042`, versus `0.392` for weighted
+  q0 and `0.222` for absolute position. The zero-initialized last head also gives
+  the encoder exactly zero gradient on the first update, and later total norms
+  are repeatedly clipped at 1.
+- Current evidence therefore ranks the likely causes as: epoch-0-controlled
+  early stopping/selection, loss-gradient imbalance, 32-event versus last-four
+  motion-contract mismatch, zero-head cold start, then raw-time/absolute-frame
+  optimization bias. It does not justify changing to another network family.
+- The user rejected another minimal diagnostic and requested that the four
+  confirmed training defects be repaired before starting the full run. The
+  active implementation now requires all 32 consumed events to be certified
+  constant-motion history, uses small random final-head initialization, keeps
+  epoch zero as an initial checkpoint only, and disables clipping/early
+  stopping by default.
+- The common loss is now an interpretable sum of meter-equivalent state terms:
+  center0, velocity over a 0.5 s reference horizon, phase at geometry radius,
+  omega over the same horizon, plus decoded constant-twist consistency. Both
+  arms are reparsed from decoded positions by the same training-only extractor;
+  future truth remains label-only and absent from forward inference.
+- All 86 Stage-3 tests pass. The non-overwriting qualified derivative
+  `stage3-causal-physical-v1-20260722-r4` has manifest SHA-256
+  `8121dc8096952052ca9f9bfe3f5ed951c103a05a1ef7be4d65e2b40c731e113e`,
+  32,904 train and 11,189 validation samples, 278 admitted sessions, four
+  explicitly recorded zero-sample sessions, and `test_accessed=false`. All
+  278 shard hashes verify.
+- The training preflight now rechecks every admitted row rather than trusting
+  manifest counts alone. Train/validation q0--q3 supervision coverage is
+  `94.20%/93.66%`; the lowest present motion-class coverage is `89.51%`, above
+  the fail-closed 85% floor. Every consumed row has 32 complete events; maximum
+  fitted-history center/yaw residual is `6.45e-6 m / 1.36e-5 rad`.
+- The user authorized committing the repaired source and launching the formal
+  seed-0 full run for 300 epochs. The run uses all qualified train/validation
+  samples, patience 0, gradient clipping 0, and a new non-overwriting protected
+  output directory. Test, export and online integration remain sealed.

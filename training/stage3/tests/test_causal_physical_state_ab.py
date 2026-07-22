@@ -9,14 +9,23 @@ import sys
 import pytest
 import torch
 
+from training.stage3 import build_causal_physical_dataset as causal_builder
 from training.stage3.causal_physical_state_model import (
     ExplicitStatePhysicalPredictor,
     FixedSlotHistoryEncoder,
     ImplicitQueryPhysicalPredictor,
     trainable_parameter_count,
 )
-from training.stage3.physical_loss import causal_physical_base_loss
-from training.stage3.train_causal_physical_ab import _load_selection, _train_one
+from training.stage3.physical_loss import (
+    causal_physical_base_loss,
+    causal_physical_state_loss,
+)
+from training.stage3.train_causal_physical_ab import (
+    _audit_dataset_contract,
+    _load_selection,
+    _train_one,
+    _validate_history_contract,
+)
 
 
 GEOMETRY = torch.tensor([
@@ -61,9 +70,19 @@ def test_no_analytic_state_recovery_exists_in_frozen_model_source() -> None:
 
 def test_active_trainer_has_one_common_loss_and_no_arm_specific_branch() -> None:
     source = inspect.getsource(_train_one)
-    assert "causal_physical_base_loss" in source
+    assert "causal_physical_state_loss" in source
     assert "causal_physical_history_regularizers" not in source
     assert "if label" not in source
+
+
+def test_official_trainer_fails_closed_on_dirty_provenance() -> None:
+    source = inspect.getsource(
+        __import__(
+            "training.stage3.train_causal_physical_ab", fromlist=["train"]
+        ).train
+    )
+    assert "allow_dirty_worktree" in source
+    assert "requires a clean worktree" in source
 
 
 def test_center_is_unbounded_and_yaw_parameterization_is_always_unit() -> None:
@@ -116,8 +135,10 @@ def test_explicit_arm_uses_one_state_and_exact_constant_twist() -> None:
     assert output["velocity"].shape == (1, 3)
     assert output["omega"].shape == (1,)
     assert torch.allclose(output["query_center"], expected_center, atol=1e-7)
-    assert torch.equal(output["velocity"], torch.zeros_like(output["velocity"]))
-    assert torch.equal(output["omega"], torch.zeros_like(output["omega"]))
+    assert torch.isfinite(output["velocity"]).all()
+    assert torch.isfinite(output["omega"]).all()
+    assert torch.max(torch.abs(output["velocity"])) < model.maximum_speed_mps
+    assert torch.max(torch.abs(output["omega"])) < model.maximum_yaw_rate_rad_s
 
 
 def test_implicit_arm_has_no_velocity_or_omega_and_tau_reorders() -> None:
@@ -162,6 +183,137 @@ def test_paired_parameter_counts_are_within_one_percent() -> None:
     a, b = _models(channels=64)
     counts = trainable_parameter_count(a), trainable_parameter_count(b)
     assert abs(counts[0] - counts[1]) / max(counts) < 0.01
+
+
+def test_small_random_head_initialization_reaches_encoder_on_first_update() -> None:
+    model, _ = _models()
+    model.train()
+    obs, mask, event, timestamp, tau = _inputs(batch=2)
+    output = model(obs, mask, event, timestamp, tau)
+    target = output["position_mean"].detach().clone()
+    # A nonzero physical state target must propagate through the initially
+    # small, but nonzero, final head into the history encoder immediately.
+    target[:, 1:, :, 0] += tau[:, 1:, None]
+    active = torch.ones_like(tau, dtype=torch.bool)
+    loss, _ = causal_physical_state_loss(
+        output, target, tau, active, model.decoder.geometry,
+    )
+    loss.backward()
+    gradients = [
+        parameter.grad for parameter in model.encoder.parameters()
+        if parameter.grad is not None
+    ]
+    assert gradients
+    assert max(float(gradient.abs().max()) for gradient in gradients) > 0.0
+
+
+def test_state_loss_is_zero_for_exact_constant_twist() -> None:
+    model, _ = _models()
+    output = model(*_inputs())
+    target = output["position_mean"].detach().clone()
+    tau = _inputs()[-1]
+    active = torch.ones_like(tau, dtype=torch.bool)
+    loss, parts = causal_physical_state_loss(
+        output, target, tau, active, model.decoder.geometry,
+    )
+    assert float(loss) < 1e-9
+    assert float(parts["active_fraction"]) == 1.0
+
+
+def test_state_loss_rejects_querywise_nonconstant_motion() -> None:
+    model, _ = _models()
+    output = model(*_inputs())
+    target = output["position_mean"].detach().clone()
+    nonlinear = {"position_mean": target.clone()}
+    nonlinear["position_mean"][:, 3, :, 0] += 0.02
+    tau = _inputs()[-1]
+    active = torch.ones_like(tau, dtype=torch.bool)
+    loss, parts = causal_physical_state_loss(
+        nonlinear, target, tau, active, model.decoder.geometry,
+    )
+    assert float(loss) > 0.0
+    assert float(parts["center_consistency"]) > 0.0
+
+
+def test_history_contract_covers_every_model_input_event() -> None:
+    manifest = {
+        "identity_contract": {
+            "constant_motion_fit_events": 32,
+            "minimum_events_before_prediction": 32,
+        }
+    }
+    _validate_history_contract(manifest, 32)
+    manifest["identity_contract"]["constant_motion_fit_events"] = 4
+    with pytest.raises(ValueError, match="every consumed history event"):
+        _validate_history_contract(manifest, 32)
+
+
+def test_dataset_builder_retains_zero_sample_sessions_as_manifest_evidence() -> None:
+    shard_source = inspect.getsource(causal_builder._build_shard)
+    build_source = inspect.getsource(causal_builder.build)
+    assert '"sample_count": 0' in shard_source
+    assert '"zero_sample_sessions"' in build_source
+    assert "for item in admitted" in build_source
+
+
+def _qualification_dataset(
+    *, corrupt_history: bool = False, eligible: bool = True,
+    aliased_interval: bool = False,
+):
+    model, _ = _models()
+    history_time = torch.linspace(-1.75 if aliased_interval else -0.35, 0.0, 8)
+    tau = torch.tensor([0.0, 0.1, 0.2, 0.5, 0.6, 0.7, 0.8, 0.9])
+
+    def decode(time: torch.Tensor) -> torch.Tensor:
+        center = torch.stack((1.0 + 0.4 * time, 2.0 - 0.2 * time, 0.1 * time), -1)
+        angle = 0.7 * time
+        phase = torch.stack((torch.cos(angle), torch.sin(angle)), -1)
+        return model.decoder(center[None], phase[None])[0]
+
+    history = decode(history_time)
+    if corrupt_history:
+        history[4, :, 0] += 0.01
+    sample = {
+        "event_mask": torch.ones(8, dtype=torch.bool),
+        "obs_mask": torch.ones(8, 4, dtype=torch.bool),
+        "event_time_s": history_time,
+        "history_position_m": history,
+        "future_position": decode(tau),
+        "tau": tau,
+        "rule_query": torch.full((8,), eligible, dtype=torch.bool),
+        "motion_class": torch.tensor(3, dtype=torch.long),
+    }
+
+    class QualificationDataset(torch.utils.data.Dataset):
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, index: int):
+            return sample
+
+    return QualificationDataset(), model.decoder.geometry
+
+
+def test_row_level_dataset_qualification_checks_motion_and_coverage() -> None:
+    dataset, geometry = _qualification_dataset()
+    report = _audit_dataset_contract(dataset, geometry, 8, 0.85)
+    assert report["sample_count"] == report["eligible_count"] == 2
+    assert report["coverage"] == 1.0
+
+    corrupt, geometry = _qualification_dataset(corrupt_history=True)
+    with pytest.raises(ValueError, match="constant-twist residual"):
+        _audit_dataset_contract(corrupt, geometry, 8, 0.85)
+
+    uncovered, geometry = _qualification_dataset(eligible=False)
+    with pytest.raises(ValueError, match="coverage"):
+        _audit_dataset_contract(uncovered, geometry, 8, 0.85)
+
+    aliased, geometry = _qualification_dataset(aliased_interval=True)
+    with pytest.raises(ValueError, match="alias"):
+        _audit_dataset_contract(aliased, geometry, 8, 0.85)
+
+    with pytest.raises(ValueError, match="every registered motion class"):
+        _audit_dataset_contract(dataset, geometry, 8, 0.85, {0, 1, 2, 3})
 
 
 def test_selection_is_hash_bound_disjoint_and_test_sealed(tmp_path) -> None:

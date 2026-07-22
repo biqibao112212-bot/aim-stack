@@ -35,7 +35,7 @@ from .build_truth_history_dataset import (
 SCHEMA_VERSION = "stage3-causal-physical-v1"
 MAX_PHYSICALLY_VISIBLE = 2
 GAP_MULTIPLIER = 2.5
-PHYSICS_FIT_EVENTS = 4
+DEFAULT_CONSTANT_MOTION_HISTORY_EVENTS = 4
 
 
 def _last_causal_segment(mask: np.ndarray, time_s: np.ndarray) -> np.ndarray:
@@ -149,7 +149,8 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         )
         if np.any(timestamp_error > 2_000):
             raise ValueError("physical visibility truth lookup exceeded 2 us")
-        fit_start = int(truth_index[max(0, len(truth_index) - PHYSICS_FIT_EVENTS)])
+        fit_events = int(task["constant_motion_history_events"])
+        fit_start = int(truth_index[max(0, len(truth_index) - fit_events)])
         fit_end = int(anchor_index[0])
         left, right = sorted((fit_start, fit_end))
         interval = slice(left, right + 1)
@@ -218,7 +219,25 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             event_mask[sample, tensor_event] = True
 
     if not np.any(keep_sample):
-        raise ValueError("minimum causal history removed the entire shard")
+        return {
+            "path": None,
+            "split": task["split"],
+            "session_id": task["session_id"],
+            "sample_count": 0,
+            "source_sample_count": int(raw_position.shape[0]),
+            "dropped_short_windows": dropped_short_windows,
+            "dropped_nonconstant_history": dropped_nonconstant_history,
+            "sha256": None,
+            "bytes": 0,
+            "normalization_count": 0,
+            "normalization_sum": [0.0, 0.0, 0.0],
+            "normalization_sum_square": [0.0, 0.0, 0.0],
+            "visible_counts": visible_counts.tolist(),
+            "overflow_events": overflow_events,
+            "reset_windows": reset_windows,
+            "maximum_timestamp_error_ns": maximum_timestamp_error_ns,
+            "continuity_checked_events": continuity_checked_events,
+        }
     output = {
         "history_position_m": visible_position[keep_sample],
         "history_obs_mask": visible_mask[keep_sample],
@@ -316,6 +335,7 @@ def build(args: argparse.Namespace) -> Path:
             "truth_sha256": str(source["truth_sha256"]),
             "visibility_policy": args.visibility_policy,
             "minimum_events": args.minimum_events,
+            "constant_motion_history_events": args.constant_motion_history_events,
         })
         split_sessions[split] += 1
         found_sessions.add(session_id)
@@ -349,7 +369,10 @@ def build(args: argparse.Namespace) -> Path:
         })
         raise
     results.sort(key=lambda item: (item["split"], item["session_id"]))
-    train = [item for item in results if item["split"] == "train"]
+    admitted = [item for item in results if int(item["sample_count"]) > 0]
+    train = [item for item in admitted if item["split"] == "train"]
+    if not train or not any(item["split"] == "validation" for item in admitted):
+        raise ValueError("causal history policy removed an entire split")
     count = sum(int(item["normalization_count"]) for item in train)
     total = np.sum([item["normalization_sum"] for item in train], axis=0, dtype=np.float64)
     total_square = np.sum(
@@ -376,7 +399,11 @@ def build(args: argparse.Namespace) -> Path:
         "source_observation_manifest_sha256": _sha256(observation_manifest_path),
         "test_accessed": False,
         "splits": ["train", "validation"],
-        "session_count": len(results),
+        "session_count": len(admitted),
+        "requested_session_count": len(results),
+        "zero_sample_sessions": [
+            item["session_id"] for item in results if int(item["sample_count"]) == 0
+        ],
         "requested_sessions": sorted(requested_sessions),
         "sample_count": sum(int(item["sample_count"]) for item in results),
         "source_sample_count": sum(int(item["source_sample_count"]) for item in results),
@@ -396,7 +423,7 @@ def build(args: argparse.Namespace) -> Path:
             "discontinuity": f"gap > {GAP_MULTIPLIER} * window median positive dt",
             "reacquisition": "new segment",
             "minimum_events_before_prediction": args.minimum_events,
-            "constant_motion_fit_events": PHYSICS_FIT_EVENTS,
+            "constant_motion_fit_events": args.constant_motion_history_events,
             "constant_motion_history_to_t0": {
                 "maximum_velocity_change_mps": 1e-6,
                 "maximum_yaw_rate_change_rad_s": 1e-6,
@@ -442,7 +469,7 @@ def build(args: argparse.Namespace) -> Path:
             "sample_count": item["sample_count"],
             "bytes": item["bytes"],
             "sha256": item["sha256"],
-        } for item in results],
+        } for item in admitted],
     }
     _write_json(output / "dataset_manifest.json", manifest)
     return output
@@ -456,6 +483,14 @@ def main() -> None:
     parser.add_argument("--session-limit", type=int, default=0)
     parser.add_argument("--minimum-events", type=int, default=8)
     parser.add_argument(
+        "--constant-motion-history-events", type=int,
+        default=DEFAULT_CONSTANT_MOTION_HISTORY_EVENTS,
+        help=(
+            "number of most recent observation events that must share one "
+            "constant velocity/yaw-rate interval through t0"
+        ),
+    )
+    parser.add_argument(
         "--session-id", action="append", default=[],
         help="explicit train/validation session to include; may be repeated",
     )
@@ -463,9 +498,15 @@ def main() -> None:
         "--visibility-policy", choices=("complete", "facing-count"), default="complete"
     )
     args = parser.parse_args()
-    if args.workers < 1 or args.session_limit < 0 or args.minimum_events < 2:
+    if (
+        args.workers < 1 or args.session_limit < 0 or args.minimum_events < 2
+        or not 2 <= args.constant_motion_history_events <= 200
+        or args.minimum_events > 200
+        or args.minimum_events < args.constant_motion_history_events
+    ):
         parser.error(
-            "workers must be positive, session-limit non-negative, and minimum-events >= 2"
+            "workers must be positive, session-limit non-negative, and "
+            "2 <= constant-motion-history-events <= minimum-events <= 200"
         )
     print(build(args))
 
