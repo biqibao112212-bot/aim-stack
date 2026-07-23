@@ -655,3 +655,60 @@
     set error is auxiliary; modulo-90 error and quarter-turn/180-degree alias
     rates are mandatory, because a visually good set with the wrong canonical
     phase is not compatible with v15.
+
+98. The user explicitly superseded decisions 95--97 as the active modeling
+    contract. Four armor indices are temporary cyclic tracker handles only.
+    They encode adjacency and persistent state bookkeeping, not canonical
+    physical identities. A visible armor must not be fitted to a fixed four-
+    slot center/phase/radius/height template, and neither a fixed cyclic-shift
+    minimum nor fixed-geometry decoder is permitted in the new predictor.
+
+99. V17 first solves clean physical prediction without PnP. The qualified r4
+    train/validation truth stays immutable; a virtual hash-bound loader creates
+    predictor observations by exposing the nearest horizontal-range plate and,
+    near a range-order boundary, its second-nearest adjacent plate. Every valid
+    event has one or two visible tracks, the primary is visible, and changes are
+    restricted to 0/+1/-1 modulo four. This construction uses only same-event
+    truth to synthesize availability; hidden truth and future truth are loss/
+    evaluation labels and never predictor inputs. Test remains sealed.
+
+100. V17 is exactly C4 roll-equivariant by construction. One causal temporal
+     encoder is applied identically to each track within a specialist, circular
+     shared-weight message blocks exchange clockwise/counterclockwise context,
+     and a shared per-track query head directly decodes trajectories. Invariant
+     mean/max pooling feeds a separate router. Slot embeddings, order-specific
+     flattening and per-slot parameters are forbidden. Training applies random
+     cyclic origins and direction reversal; validation keeps a deterministic
+     local convention.
+
+101. Stationary, translation, rotation and combined are four parameter-
+     independent trajectory specialists. A sample supervises only its matching
+     raw expert; balanced four-class CE supervises the independent router. The
+     combined expert directly predicts its own four trajectories and does not
+     read, add or freeze the translation/rotation expert outputs. Validation
+     must separate oracle correct-expert error from hard-routed error and report
+     visible, clockwise/counterclockwise adjacent-hidden, opposite, one/two-
+     visible, switch/no-switch and motion-class strata.
+
+102. The v17 objective is intentionally compact: local-label direct-position
+     SmoothL1, q0-relative motion-delta SmoothL1, a low-weight pair-distance
+     drift term relative only to each prediction's own q0, and balanced router
+     CE. The rigid term contains no template, radius, height, center or phase.
+     A fixed 1,024/2,048 bounded run provided optimization diagnostics but was
+     completed before decisions 103--104 corrected query masking/selection; it
+     is not metric evidence and its weights are forbidden as a formal warm
+     start. The authorized formal run uses all
+     32,904 train and 11,189 validation rows for 300 epochs from a clean commit.
+
+103. Only source queries with `rule_query=true` may supervise or select v17.
+     The mask removes future points that have left the qualified constant-
+     motion segment; q0 must always remain eligible. Position, motion-delta,
+     self-rigid validation strata and checkpoint selection use the same mask.
+     Dataset preflight records eligible counts for every query and requires all
+     four motion classes at the selected fixed horizon.
+
+104. V17 checkpoint selection is fixed to source query index 3, whose nominal
+     horizon is 0.5 seconds. Query indices 4--7 are sample-specific random tau
+     probes and remain useful diagnostic rows, but they must never be called a
+     final/longest horizon or control best-checkpoint ordering. User-facing
+     reports name the selected horizon in seconds instead of relying on `q3`.

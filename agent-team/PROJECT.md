@@ -83,3 +83,24 @@ the status of these replay files.
   and rotating about the four-armor arithmetic centroid instead of the true
   vehicle center. The accepted physical equation is frozen; the next learned
   component is only the PnP-history observation adapter.
+
+## 2026-07-23 cyclic-track clean-physics reset
+
+- The fixed-slot center/phase/template interpretation used by v13--v16 is
+  superseded for the active predictor. The four armor indices are temporary
+  tracker-owned cyclic state handles. They carry adjacency and update state,
+  but no radius, height, canonical phase, or semantic slot identity.
+- The active v17 scope is clean physical motion only. A virtual, hash-bound
+  view of the qualified r4 train/validation truth exposes one or two adjacent
+  plates per causal event, a cyclic primary mask, and switch steps in
+  `{-1,0,+1}`. PnP, test, fixed geometry, center and phase are excluded.
+- V17 owns four independent stationary/translation/rotation/combined
+  trajectory experts and an independent four-class router. Shared per-track
+  weights plus circular message passing make every raw expert C4-equivariant;
+  invariant pooling makes the router C4-invariant. The combined expert never
+  reads or adds the translation and rotation expert outputs.
+- Each expert directly predicts all four temporary trajectories. Its loss is
+  direct local-label position, motion delta, low-weight self-q0 pair-distance
+  consistency, and balanced router CE. There is no cyclic-shift minimum and no
+  fixed geometry target. PnP recovery becomes a later, separately evaluated
+  adapter only after this clean predictor is accepted.

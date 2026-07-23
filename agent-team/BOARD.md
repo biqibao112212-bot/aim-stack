@@ -2,9 +2,32 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-23 Module A PnP pose recovery (in progress)
+## 2026-07-23 cyclic-track clean physical experts (active)
 
-- User approved the split `PnP history -> current physical pose -> rolling
+- User explicitly returned the active scope to a no-PnP physical predictor and
+  retained the specialist model: stationary, translation, rotation and a
+  genuinely independent combined expert.
+- Implemented a non-overwriting virtual observation contract over qualified r4:
+  one/two adjacent visible tracks, cyclic primary and 0/+1/-1 switch history;
+  no slot feature, center, phase, radius, height or geometry template enters
+  inference.
+- Implemented C4-equivariant shared-track temporal encoding, circular message
+  passing, four independent direct trajectory decoders and a C4-invariant
+  four-class router. Added local-label position/motion/self-rigid loss and role-
+  split validation for visible and adjacent-hidden tracks.
+- Gate status: 124 Stage-3 tests pass. The 100-epoch 1,024/2,048 smoke proved
+  optimization capacity but was invalidated as metric evidence when preflight
+  found missing `rule_query` masking and an incorrect random-q7 selection; it
+  remains diagnostic-only. Both blockers are fixed. A corrected one-epoch
+  end-to-end smoke verifies the 0.5 s query-3 selection, per-query eligibility,
+  all-class coverage and C4 error below `6e-8`.
+- Current step: clean commit, then protected seed-0 300-epoch full train/
+  validation. Test, PnP, export and online integration remain sealed.
+
+## 2026-07-23 Module A PnP pose recovery (superseded by clean-physics reset)
+
+- Historical v16 evidence is retained, but this is no longer the active run.
+- User had approved the split `PnP history -> current physical pose -> rolling
   32-event clean history -> frozen v15` and authorized v16 training.
 - V16 A0 is q0-only current-pose recovery. It uses the qualified v4
   train/validation splits, accepts only rows whose latest PnP event is at q0,
