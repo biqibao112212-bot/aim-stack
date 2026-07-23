@@ -2,6 +2,24 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
+## 2026-07-23 Module A PnP pose recovery (in progress)
+
+- User approved the split `PnP history -> current physical pose -> rolling
+  32-event clean history -> frozen v15` and authorized v16 training.
+- V16 A0 is q0-only current-pose recovery. It uses the qualified v4
+  train/validation splits, accepts only rows whose latest PnP event is at q0,
+  ignores the unqualified quality channels, and keeps test sealed.
+- The permutation-invariant causal encoder consumes relative per-frame shape,
+  relative centroid history, PnP yaw, masks/count and real time. The only
+  learned outputs are current center and full canonical unit phase; frozen FP32
+  geometry decodes the four fixed relative slots.
+- The objective is center plus geometry-radius-scaled full-phase SmoothL1.
+  Fixed-slot error and full-phase alias rate are primary gates; unordered-set
+  error is auxiliary and cannot hide a 90-degree slot slip.
+- Frozen v15 is hash-recorded but is not loaded, optimized, or used for
+  checkpoint selection. The current step is smoke/full regression, clean
+  commit, then the protected seed-0 full train/validation run.
+
 ## 2026-07-21 PnP state-adapter A/B (in progress)
 
 - Goal: quantify whether a single explicit constant-rigid-motion state helps

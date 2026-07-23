@@ -630,3 +630,28 @@
     prevents registered q3 regression, then improves the worse of translation
     and combined recall. The v14 source checkpoint is retained as an explicit
     safe fallback and test remains sealed.
+
+95. Module A is separated from the frozen motion system. On every exposure it
+    consumes only the causal unordered PnP history up to that exposure and
+    restores one current physical center and full canonical phase. Its frozen
+    geometry decoder emits four fixed `relative_slot`s. Online inference must
+    append each result when it is produced and may call v15 only after a
+    qualified 32-event cache exists; a later window cannot rewrite older cache
+    entries. This makes A and B independently trainable/evaluable, but does not
+    make their residual errors statistically independent.
+
+96. V16 A0 training admits only v4 rows whose latest valid PnP event is exactly
+    q0, so PnP recovery is not confounded with missing-frame extrapolation.
+    Only q0 fixed-slot truth derives the center/phase label; q1--q7 stay off the
+    training device. The predictor receives xyz/yaw, masks and causal real
+    time, but not the zero-filled reprojection channel, broken candidate-
+    fraction channel, future labels, motion state, tracked identity, motion
+    class or test. Frozen v15 is provenance-only and supplies no gradient.
+
+97. V16 uses a two-term, meter-equivalent objective: current-center SmoothL1
+    plus geometry-radius-scaled full unit-phase SmoothL1. Frozen geometry makes
+    additional rigidity losses redundant. Checkpoint selection prioritizes
+    fixed-slot q0 P95, center P95, full-phase P95 and fixed-slot P99. Unordered
+    set error is auxiliary; modulo-90 error and quarter-turn/180-degree alias
+    rates are mandatory, because a visually good set with the wrong canonical
+    phase is not compatible with v15.
