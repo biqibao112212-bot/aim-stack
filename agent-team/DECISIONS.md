@@ -610,3 +610,23 @@
     evidence between rotation and combined classes while preserving the hard
     four-route API. Training-only planar rigid augmentation is permitted;
     validation, test and PnP noise remain untouched.
+
+93. V15 does not replace the v14 four-class router with another four-class
+    retrain. The exact completed v14 epoch-53 last checkpoint is frozen as a
+    hierarchical coarse system. Its moving probability decides moving versus
+    non-moving, and its stationary/rotation conditional decision is retained.
+    Only moving samples enter a new translation-versus-combined binary
+    refinement model. This preserves all specialists and the already reliable
+    coarse decisions while assigning the one unresolved boundary its own
+    capacity and balanced objective.
+
+94. The v15 refinement receives the 32 causal armor histories only after each
+    event's common visible-slot translation is removed and the relative rigid
+    shape is scaled by the fixed geometry radius. Cyclic slot encoding remains
+    available. No temporal finite difference, expert prediction, future truth,
+    exact motion state, PnP noise, or class label enters inference. Training
+    uses equal-weight group-mean BCE for qualified translation and combined
+    rows; all v14 parameters are frozen and hash-verified. Selection first
+    prevents registered q3 regression, then improves the worse of translation
+    and combined recall. The v14 source checkpoint is retained as an explicit
+    safe fallback and test remains sealed.

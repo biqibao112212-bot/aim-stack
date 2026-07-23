@@ -484,3 +484,25 @@
 - Current in-progress item: commit the reviewed source and launch the formal
   seed-0 maximum-120-epoch run from that clean commit in a new protected v14
   directory. Test, export and online integration remain sealed.
+
+### 2026-07-23 moving-only translation/combined refinement (v15 launch authorized)
+
+- V14 stopped normally by early stopping after epoch 53 with test sealed and
+  its frozen foundation unchanged. The last checkpoint is selected as the v15
+  source so the accepted moving gate is retained; the complete v14 checkpoint
+  remains a safe fallback.
+- The remaining routing problem is now hierarchical. Frozen v14 decides
+  moving/non-moving and stationary/rotation. A new independent binary model is
+  consulted only for moving rows and decides translation versus combined.
+- Its 32-event inference input is per-event center-free rigid shape plus the
+  existing cyclic slot encoding. There is no temporal finite-difference input,
+  future truth input, PnP noise, or expert-output leakage.
+- All 2,132,628 source parameters are frozen and hash-verified. Only 184,065
+  refinement parameters are optimized with group-balanced moving-only BCE.
+- All 106 Stage-3 tests pass. A one-epoch 512-train/full-validation smoke
+  reproduced the v14 baseline, completed with finite loss and gradients,
+  verified the frozen base unchanged, and kept `test_accessed=false`.
+- Current in-progress item: commit the reviewed v15 source and start the formal
+  seed-0 maximum-60-epoch run from that clean commit. Protected model output and
+  runtime stdout/stderr must be non-overwriting; test, export and online
+  integration remain sealed.
