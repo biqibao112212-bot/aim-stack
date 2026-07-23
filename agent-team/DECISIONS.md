@@ -599,3 +599,14 @@
     must report both hard-routed final metrics and raw specialist metrics so a
     routing failure can be distinguished from an expert regression failure.
     Test remains sealed throughout the 300-epoch train/validation run.
+
+92. V14 isolates the trained v13 router without changing expert or inference
+    architecture. The exact v13 epoch-297 integrated checkpoint is the source;
+    every non-router parameter is frozen and hash-verified. Because the v13
+    train router CE is already near zero while validation macro recall plateaus
+    near 94%, merely extending its original objective is rejected. The retained
+    four logits instead receive group-balanced four-class, moving-factor and
+    rotating-factor classification losses. This shares physical rotation
+    evidence between rotation and combined classes while preserving the hard
+    four-route API. Training-only planar rigid augmentation is permitted;
+    validation, test and PnP noise remain untouched.

@@ -464,3 +464,23 @@
 - Current in-progress item: commit the reviewed source and start the formal
   seed-0 300-epoch run from that clean commit in the registered non-overwriting
   v13 protected directory. Test, export and online integration remain sealed.
+
+### 2026-07-23 router-only factor-aware fine-tuning (v14 launch authorized)
+
+- V13 completed all 300 epochs at clean commit `f7aa56c8c317f002dc3b698e87af76e57338d348`
+  with test sealed and unchanged frozen foundations. Epoch 297 is registered as
+  best. Raw specialists are retained, while the hard router remains the final
+  bottleneck: translation/combined recall is 91.68%/85.61% and 423 of 2,996
+  combined samples route to translation.
+- V14 loads that exact best checkpoint and freezes every parameter except the
+  existing `router_encoder` and `router_head`. The four-class interface and
+  hard expert mapping do not change.
+- The router-only objective adds group-balanced moving and rotating factor BCE
+  to group-balanced four-class CE. A qualified planar rigid transform is used
+  on training only; validation is untouched and no PnP noise is introduced.
+- Three dedicated tests and all 102 Stage-3 tests pass. A one-epoch 512-train /
+  full-validation smoke exactly reproduced the v13 baseline q3 P95, kept the
+  non-router hash unchanged and retained `test_accessed=false`.
+- Current in-progress item: commit the reviewed source and launch the formal
+  seed-0 maximum-120-epoch run from that clean commit in a new protected v14
+  directory. Test, export and online integration remain sealed.
