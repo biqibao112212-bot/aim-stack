@@ -571,6 +571,7 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("--initialize-from is reserved for anchor-edge-v2")
     model = model.to(device)
     initial_state_sha256 = _state_dict_sha256(model.state_dict())
+    frozen_foundation_initial_sha256: str | None = None
     if args.architecture == "anchor-edge-v2":
         prefixes = model.new_parameter_prefixes()
         foundation_parameters = [
@@ -583,18 +584,31 @@ def train(args: argparse.Namespace) -> Path:
         ]
         if not foundation_parameters or not new_parameters:
             raise RuntimeError("anchor-edge optimizer parameter split is empty")
-        optimizer = torch.optim.AdamW([
-            {
-                "params": foundation_parameters,
-                "lr": args.lr * args.foundation_lr_scale,
-                "group_name": "v18_foundation",
-            },
-            {
+        if args.foundation_lr_scale == 0:
+            for parameter in foundation_parameters:
+                parameter.requires_grad_(False)
+            frozen_foundation_initial_sha256 = _state_dict_sha256({
+                name: value for name, value in model.state_dict().items()
+                if not name.startswith(prefixes)
+            })
+            optimizer = torch.optim.AdamW([{
                 "params": new_parameters,
                 "lr": args.lr,
                 "group_name": "anchor_edge_v2",
-            },
-        ], weight_decay=args.weight_decay)
+            }], weight_decay=args.weight_decay)
+        else:
+            optimizer = torch.optim.AdamW([
+                {
+                    "params": foundation_parameters,
+                    "lr": args.lr * args.foundation_lr_scale,
+                    "group_name": "v18_foundation",
+                },
+                {
+                    "params": new_parameters,
+                    "lr": args.lr,
+                    "group_name": "anchor_edge_v2",
+                },
+            ], weight_decay=args.weight_decay)
     else:
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=args.lr, weight_decay=args.weight_decay
@@ -657,6 +671,10 @@ def train(args: argparse.Namespace) -> Path:
             "hidden_absolute_output": "deterministic anchor plus relative edge",
             "edge_support": "both endpoints causally seen, co-visibility optional",
             "foundation": foundation,
+            "foundation_training": (
+                "frozen" if args.foundation_lr_scale == 0
+                else f"fine-tuned at {args.foundation_lr_scale}x learning rate"
+            ),
         })
     objective_contract: dict[str, object] = {
         "formula": (
@@ -709,6 +727,7 @@ def train(args: argparse.Namespace) -> Path:
         "config": vars(args),
         "parameter_count": sum(parameter.numel() for parameter in model.parameters()),
         "initial_state_sha256": initial_state_sha256,
+        "frozen_foundation_initial_sha256": frozen_foundation_initial_sha256,
         "source_sha256": {
             name: _sha256(source_root / name) for name in source_names
         },
@@ -899,6 +918,19 @@ def train(args: argparse.Namespace) -> Path:
             stop_reason = "wall_time_limit"
             break
 
+    frozen_foundation_verified_unchanged: bool | None = None
+    if anchor_edge and args.foundation_lr_scale == 0:
+        prefixes = model.new_parameter_prefixes()
+        frozen_foundation_final_sha256 = _state_dict_sha256({
+            name: value for name, value in model.state_dict().items()
+            if not name.startswith(prefixes)
+        })
+        frozen_foundation_verified_unchanged = (
+            frozen_foundation_final_sha256
+            == frozen_foundation_initial_sha256
+        )
+        if not frozen_foundation_verified_unchanged:
+            raise RuntimeError("frozen v18 foundation changed during training")
     if last_path.exists():
         raise FileExistsError(f"refusing to overwrite final checkpoint: {last_path}")
     _checkpoint(
@@ -925,6 +957,9 @@ def train(args: argparse.Namespace) -> Path:
         "latest_checkpoint": {
             "path": latest_path.name, "sha256": _sha256(latest_path)
         },
+        "frozen_foundation_verified_unchanged": (
+            frozen_foundation_verified_unchanged
+        ),
     }
     _write_json(manifest_path, final)
     return output
@@ -970,7 +1005,7 @@ def main() -> None:
     positive = (
         args.epochs, args.batch_size, args.audit_batch_size, args.lr,
         args.channels, args.huber_beta_m, args.recent_age_s,
-        args.validation_interval, args.grad_clip, args.foundation_lr_scale,
+        args.validation_interval, args.grad_clip,
     )
     if any(value <= 0 for value in positive):
         parser.error("cyclic-state training arguments must be positive")
@@ -984,8 +1019,8 @@ def main() -> None:
         parser.error("secondary-gap-ratio must be within [0,1]")
     if args.weight_decay < 0 or args.sigma_weight < 0 or args.edge_weight < 0:
         parser.error("optimizer/loss weights cannot be negative")
-    if args.foundation_lr_scale > 1:
-        parser.error("foundation-lr-scale must be within (0,1]")
+    if not 0 <= args.foundation_lr_scale <= 1:
+        parser.error("foundation-lr-scale must be within [0,1]")
     if args.train_sample_limit < 0 or args.validation_sample_limit < 0:
         parser.error("sample limits cannot be negative")
     print(train(args))

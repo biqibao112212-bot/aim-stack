@@ -760,9 +760,12 @@
      center/phase/radius/height template or persistent physical slot mapping.
 
 110. V19 initializes only from the sealed clean v18 epoch-180 best checkpoint.
-     New asynchronous edge and edge-uncertainty heads use the full learning
-     rate; inherited parameters use 0.1x so accepted visible/rotation behavior
-     is not discarded. Supervision is group-balanced across rotation/combined,
+     Only new asynchronous edge and edge-uncertainty heads are trainable; every
+     inherited parameter is frozen and hash-verified so accepted visible and
+     pair-supported behavior cannot drift. The asynchronous residual applies
+     only when both endpoints were seen but the pair was never co-visible;
+     pair-seen edges
+     remain the v18 foundation output. Supervision is group-balanced across rotation/combined,
      co-visible/asynchronous support and recent/stale age. Checkpoint selection
      uses the worse rotation/combined anchor-composed P95, then all supported
      relevant-edge P95. Validation must additionally report per-motion visible

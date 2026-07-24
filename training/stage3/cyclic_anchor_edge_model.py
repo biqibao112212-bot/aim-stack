@@ -84,9 +84,29 @@ class CyclicAnchorEdgeRestorer(CyclicStateRestorer):
             pooled[:, None].expand(-1, state.shape[1], -1),
         ), dim=-1)
 
+        seen = result["seen"].to(torch.bool)
+        edge0_supported = seen & torch.roll(seen, shifts=-1, dims=1)
+        edge0_async_supported = edge0_supported & ~result["pair_seen"]
+        edge_age_s = torch.maximum(
+            result["age_s"], torch.roll(result["age_s"], shifts=-1, dims=1)
+        )
+        edge_age_s = torch.where(
+            edge0_supported,
+            edge_age_s,
+            torch.full_like(edge_age_s, float("inf")),
+        )
+
         foundation_edge_normalized = result["edge0_m"] / self.position_std
-        restored_edge_normalized = (
+        asynchronous_edge_normalized = (
             foundation_edge_normalized + self.async_edge_head(edge_context)
+        )
+        # The v18 co-visible edge is already accurate.  The new residual has a
+        # single responsibility: fill an edge whose endpoints were observed
+        # only asynchronously.  It must never overwrite pair-supported memory.
+        restored_edge_normalized = torch.where(
+            edge0_async_supported.unsqueeze(-1),
+            asynchronous_edge_normalized,
+            foundation_edge_normalized,
         )
         # If both endpoints are observed at q0, preserve their exact measured
         # difference even while the new residual head is training.
@@ -96,17 +116,6 @@ class CyclicAnchorEdgeRestorer(CyclicStateRestorer):
             restored_edge_normalized,
         )
         edge0_m = self.position_std * edge0_normalized
-
-        seen = result["seen"].to(torch.bool)
-        edge0_supported = seen & torch.roll(seen, shifts=-1, dims=1)
-        edge_age_s = torch.maximum(
-            result["age_s"], torch.roll(result["age_s"], shifts=-1, dims=1)
-        )
-        edge_age_s = torch.where(
-            edge0_supported,
-            edge_age_s,
-            torch.full_like(edge_age_s, float("inf")),
-        )
 
         direct_q0_m = result["q0_m"]
         direct_q0_normalized = (
@@ -202,7 +211,7 @@ class CyclicAnchorEdgeRestorer(CyclicStateRestorer):
             "edge0_m": edge0_m,
             "edge0_valid": edge0_supported,
             "edge0_supported": edge0_supported,
-            "edge0_async_supported": edge0_supported & ~result["pair_seen"],
+            "edge0_async_supported": edge0_async_supported,
             "edge0_sigma_m": edge_sigma_m,
             "edge_age_s": edge_age_s,
         })
@@ -214,6 +223,7 @@ class CyclicAnchorEdgeRestorer(CyclicStateRestorer):
             "family": self.model_family,
             "hidden_position_parameterization": "current anchor plus directed edge",
             "asynchronous_endpoint_edge_support": True,
+            "asynchronous_residual_changes_pair_seen_edge": False,
             "direct_hidden_absolute_head_is_deployment_output": False,
             "current_visible_anchor": "current primary q0 state",
         })

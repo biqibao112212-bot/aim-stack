@@ -595,16 +595,19 @@
   co-visibility is no longer required. There is still no center, phase, fixed
   radius/height, geometry template or physical slot identity.
 - The exact v18 epoch-180 best checkpoint is the required foundation. New
-  asynchronous edge/sigma heads train at the configured learning rate while
-  the v18 foundation fine-tunes at 0.1x. The objective has only visible q0,
+  asynchronous edge/sigma heads train while the entire v18 foundation is
+  frozen and hash-verified unchanged. The objective has only visible q0,
   supported-edge/anchor-composed q0, and uncertainty terms, balanced by motion,
-  support kind and recent/stale age. Motion class remains absent from forward
-  inputs.
-- Eight dedicated v19 tests and all 142 Stage-3 tests pass. A 20-epoch
-  8,192-train/4,096-validation smoke reduced combined warm-adjacent P95 from
-  35.81 cm at initialization to 14.37 cm, rotation to 6.47 cm, and combined
-  self-warm/paired P95 to 18.69/11.01 cm. Exact q0 identity and C4 audits remain
-  below 1e-6 m; interrupted-run resume and test sealing were also verified.
+  support kind and recent/stale age. The asynchronous residual is gated off for
+  every pair-seen edge, so it cannot overwrite accepted v18 co-visible memory.
+  Motion class remains absent from forward inputs.
+- Nine dedicated v19 tests and all 143 Stage-3 tests pass. A frozen-foundation
+  20-epoch 8,192-train/4,096-validation smoke reduced combined warm-adjacent
+  P95 from 35.81 cm to a 14.42 cm best (15.30 cm at epoch 20) and rotation to
+  6.40 cm. Pair-supported combined/rotation P95 stayed bit-exact at 9.04/5.96
+  cm, translation propagated-visible P95 stayed 3.82 cm, and the frozen hash
+  was verified unchanged. Exact q0 identity and C4 audits remain below 1e-6 m;
+  interrupted-run resume and test sealing were also verified.
 - Current in-progress item: commit the reviewed v19 source and launch a new
   non-overwriting seed-0 full train/validation run from the clean commit.
   Future motion propagation, router, PnP, export and test remain sealed.

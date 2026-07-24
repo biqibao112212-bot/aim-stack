@@ -108,6 +108,26 @@ def test_asynchronously_seen_neighbors_are_anchor_composed() -> None:
     )
 
 
+def test_async_residual_cannot_overwrite_pair_seen_edge() -> None:
+    model = _model().eval()
+    with torch.no_grad():
+        model.async_edge_head[-1].bias.fill_(10.0)
+    batch = _async_batch(batch=1)
+    # Establish historical co-visibility for edge 0 -> 1 only.
+    batch["obs_mask"][0, 2, 1] = True
+    batch["obs"][0, 2, 1] = torch.tensor((2.1, 0.2, 0.09))
+    output = _forward(model, batch)
+    assert bool(output["pair_seen"][0, 0])
+    assert not bool(output["edge0_async_supported"][0, 0])
+    assert torch.equal(
+        output["edge0_m"][0, 0], output["edge0_foundation_m"][0, 0]
+    )
+    assert bool(output["edge0_async_supported"][0, 3])
+    assert not torch.equal(
+        output["edge0_m"][0, 3], output["edge0_foundation_m"][0, 3]
+    )
+
+
 def test_all_current_visible_tracks_remain_exact_measurements() -> None:
     model = _model().eval()
     batch = _async_batch(batch=1)
