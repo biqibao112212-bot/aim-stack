@@ -12,6 +12,8 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
+from .cyclic_anchor_edge_loss import cyclic_anchor_edge_loss
+from .cyclic_anchor_edge_model import CyclicAnchorEdgeRestorer
 from .cyclic_state_loss import cyclic_state_loss
 from .cyclic_state_model import CyclicStateRestorer, current_track_support
 from .cyclic_track_dataset import CyclicTrackPhysicalDataset
@@ -119,7 +121,8 @@ def _validate(
             "error", "sigma", "motion", "visible", "warm", "cold",
             "self_warm", "edge_warm", "adjacent", "clockwise",
             "counterclockwise", "age", "edge_error", "pair_seen",
-            "relevant_edge", "q0_observed",
+            "edge_supported", "anchor_composed", "relevant_edge",
+            "q0_observed",
         )
     }
     equivariance: dict[str, float] | None = None
@@ -158,6 +161,12 @@ def _validate(
                 "age": output["age_s"].float(),
                 "edge_error": edge_error,
                 "pair_seen": output["pair_seen"],
+                "edge_supported": output.get(
+                    "edge0_supported", output["pair_seen"]
+                ),
+                "anchor_composed": output.get(
+                    "anchor_composed", torch.zeros_like(output["pair_seen"])
+                ),
                 "relevant_edge": output["relevant_edge"],
             }
             for name, value in values.items():
@@ -191,6 +200,8 @@ def _validate(
     age = merged["age"]
     edge_error = merged["edge_error"]
     pair_seen = merged["pair_seen"].astype(np.bool_)
+    edge_supported = merged["edge_supported"].astype(np.bool_)
+    anchor_composed = merged["anchor_composed"].astype(np.bool_)
     relevant_edge = merged["relevant_edge"].astype(np.bool_)
     dynamic = (motion == 2) | (motion == 3)
     selected = warm & adjacent & dynamic[:, None]
@@ -202,6 +213,9 @@ def _validate(
         warm_adjacent = group[:, None] & warm & adjacent
         by_motion[name] = {
             "current_visible": _summary(error[group[:, None] & visible]),
+            "visible_propagated_to_q0": _summary(
+                error[group[:, None] & visible & ~q0_observed]
+            ),
             "warm_adjacent": (
                 _summary(error[warm_adjacent]) if route in (2, 3)
                 else {"count": int(warm_adjacent.sum()), "excluded_by_contract": True}
@@ -244,6 +258,9 @@ def _validate(
             np.abs(sigma[selected] - error[selected])
         ),
         "dynamic_relevant_edge": _summary(
+            edge_error[edge_supported & relevant_edge & dynamic[:, None]]
+        ),
+        "dynamic_pair_seen_edge": _summary(
             edge_error[pair_seen & relevant_edge & dynamic[:, None]]
         ),
         "by_motion": by_motion,
@@ -254,6 +271,9 @@ def _validate(
             "warm_hidden_count": int(warm.sum()),
             "self_warm_adjacent_count": int(self_warm.sum()),
             "edge_warm_adjacent_count": int(edge_warm.sum()),
+            "anchor_composed_count": int(anchor_composed.sum()),
+            "supported_edge_count": int(edge_supported.sum()),
+            "asynchronous_edge_count": int((edge_supported & ~pair_seen).sum()),
             "dynamic_warm_adjacent_count": int(selected.sum()),
             "cold_count": int(cold.sum()),
             "cold_position_excluded_from_final_metrics": True,
@@ -353,12 +373,23 @@ def _train_epoch(
                 batch["event_mask"], batch["event_time_s"],
                 batch["switch_step"],
             )
-            total, loss_parts = cyclic_state_loss(
-                output, batch["future_position"][:, 0], batch["motion_class"],
-                huber_beta_m=args.huber_beta_m,
-                sigma_weight=args.sigma_weight,
-                edge_weight=args.edge_weight,
-            )
+            if args.architecture == "anchor-edge-v2":
+                total, loss_parts = cyclic_anchor_edge_loss(
+                    output, batch["future_position"][:, 0],
+                    batch["motion_class"],
+                    huber_beta_m=args.huber_beta_m,
+                    sigma_weight=args.sigma_weight,
+                    edge_weight=args.edge_weight,
+                    recent_age_s=args.recent_age_s,
+                )
+            else:
+                total, loss_parts = cyclic_state_loss(
+                    output, batch["future_position"][:, 0],
+                    batch["motion_class"],
+                    huber_beta_m=args.huber_beta_m,
+                    sigma_weight=args.sigma_weight,
+                    edge_weight=args.edge_weight,
+                )
         if not torch.isfinite(total):
             raise FloatingPointError("non-finite cyclic-state objective")
         scaler.scale(total).backward()
@@ -402,7 +433,7 @@ def _checkpoint(
         "model": model.state_dict(),
         "model_class": model.__class__.__name__,
         "model_config": model.config(),
-        "label": "cyclic_q0_state_restorer",
+        "label": model.model_family,
         "epoch": epoch,
         "checkpoint_role": role,
         "validation": metrics,
@@ -421,6 +452,70 @@ def _checkpoint(
     if scaler is not None:
         payload["scaler"] = scaler.state_dict()
     torch.save(payload, path)
+
+
+def _load_anchor_foundation(
+    model: CyclicAnchorEdgeRestorer,
+    checkpoint_path: Path,
+    args: argparse.Namespace,
+    dataset_manifest_sha256: str,
+) -> dict[str, object]:
+    checkpoint_path = checkpoint_path.resolve()
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(f"foundation checkpoint missing: {checkpoint_path}")
+    manifest_path = checkpoint_path.parent / "run_manifest.json"
+    if not manifest_path.is_file():
+        raise ValueError("foundation checkpoint requires its final run_manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    best = manifest.get("best", {})
+    checkpoint_sha256 = _sha256(checkpoint_path)
+    if (
+        manifest.get("status") != "complete"
+        or manifest.get("stop_reason") != "epoch_limit"
+        or bool(manifest.get("test_accessed", True))
+        or bool(manifest.get("worktree_dirty", True))
+        or not isinstance(best, dict)
+        or best.get("path") != checkpoint_path.name
+        or best.get("sha256") != checkpoint_sha256
+    ):
+        raise ValueError("foundation must be the sealed clean best checkpoint")
+    if manifest.get("dataset_manifest_sha256") != dataset_manifest_sha256:
+        raise ValueError("foundation dataset manifest differs from this run")
+
+    payload = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+    config = payload.get("model_config", {})
+    provenance = payload.get("provenance", {})
+    if (
+        payload.get("model_class") != "CyclicStateRestorer"
+        or not isinstance(config, dict)
+        or config.get("family") != "cyclic-equivariant-q0-state-restorer-v1"
+        or int(config.get("channels", -1)) != args.channels
+        or int(config.get("history_events", -1)) != args.history_events
+        or float(config.get("dropout", -1.0)) != args.dropout
+        or not isinstance(provenance, dict)
+        or bool(provenance.get("test_accessed", True))
+    ):
+        raise ValueError("foundation architecture/provenance is incompatible")
+    incompatible = model.load_state_dict(payload["model"], strict=False)
+    expected_missing = {
+        name for name in model.state_dict()
+        if name.startswith(model.new_parameter_prefixes())
+    }
+    if set(incompatible.missing_keys) != expected_missing or incompatible.unexpected_keys:
+        raise ValueError(
+            "foundation state mismatch: "
+            f"missing={incompatible.missing_keys}, "
+            f"unexpected={incompatible.unexpected_keys}"
+        )
+    return {
+        "path": str(checkpoint_path),
+        "sha256": checkpoint_sha256,
+        "epoch": int(payload.get("epoch", -1)),
+        "source_git_commit": manifest.get("git_commit"),
+        "source_model_family": config.get("family"),
+        "source_best_selection_tuple": best.get("selection_tuple"),
+        "test_accessed": False,
+    }
 
 
 def train(args: argparse.Namespace) -> Path:
@@ -456,15 +551,54 @@ def train(args: argparse.Namespace) -> Path:
     train_ds.set_epoch(0)
     output.mkdir(parents=True, exist_ok=args.resume)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    model = CyclicStateRestorer(
+    model_type = (
+        CyclicAnchorEdgeRestorer
+        if args.architecture == "anchor-edge-v2" else CyclicStateRestorer
+    )
+    model = model_type(
         torch.from_numpy(train_ds.mean), torch.from_numpy(train_ds.std),
         channels=args.channels, dropout=args.dropout,
         history_events=args.history_events,
-    ).to(device)
-    initial_state_sha256 = _state_dict_sha256(model.state_dict())
-    optimizer = torch.optim.AdamW(
-        model.parameters(), lr=args.lr, weight_decay=args.weight_decay
     )
+    foundation: dict[str, object] | None = None
+    if args.architecture == "anchor-edge-v2":
+        if not args.initialize_from:
+            raise ValueError("anchor-edge-v2 requires --initialize-from")
+        foundation = _load_anchor_foundation(
+            model, Path(args.initialize_from), args, train_ds.manifest_sha256
+        )
+    elif args.initialize_from:
+        raise ValueError("--initialize-from is reserved for anchor-edge-v2")
+    model = model.to(device)
+    initial_state_sha256 = _state_dict_sha256(model.state_dict())
+    if args.architecture == "anchor-edge-v2":
+        prefixes = model.new_parameter_prefixes()
+        foundation_parameters = [
+            parameter for name, parameter in model.named_parameters()
+            if not name.startswith(prefixes)
+        ]
+        new_parameters = [
+            parameter for name, parameter in model.named_parameters()
+            if name.startswith(prefixes)
+        ]
+        if not foundation_parameters or not new_parameters:
+            raise RuntimeError("anchor-edge optimizer parameter split is empty")
+        optimizer = torch.optim.AdamW([
+            {
+                "params": foundation_parameters,
+                "lr": args.lr * args.foundation_lr_scale,
+                "group_name": "v18_foundation",
+            },
+            {
+                "params": new_parameters,
+                "lr": args.lr,
+                "group_name": "anchor_edge_v2",
+            },
+        ], weight_decay=args.weight_decay)
+    else:
+        optimizer = torch.optim.AdamW(
+            model.parameters(), lr=args.lr, weight_decay=args.weight_decay
+        )
     warmup = torch.optim.lr_scheduler.LinearLR(
         optimizer, start_factor=0.2, end_factor=1.0,
         total_iters=args.warmup_epochs,
@@ -488,13 +622,66 @@ def train(args: argparse.Namespace) -> Path:
     train_loader = DataLoader(train_ds, **loader_options)
     validation_loader = DataLoader(validation_ds, **loader_options)
     source_root = Path(__file__).resolve().parent
-    source_names = (
+    source_names = [
         "train_cyclic_state_restorer.py", "cyclic_state_model.py",
         "cyclic_state_loss.py", "cyclic_track_dataset.py",
         "cyclic_track_model.py", "model.py",
+    ]
+    anchor_edge = args.architecture == "anchor-edge-v2"
+    artifact_name = (
+        "cyclic-anchor-edge-restorer" if anchor_edge
+        else "cyclic-state-restorer"
     )
+    if anchor_edge:
+        source_names.extend((
+            "cyclic_anchor_edge_model.py", "cyclic_anchor_edge_loss.py",
+        ))
+    architecture_contract: dict[str, object] = {
+        "purpose": "q0 current state recovery only",
+        "track_labels": "temporary cyclic state handles only",
+        "current_visible_update": "all one or two current visible tracks",
+        "q0_observed_identity_bypass": True,
+        "stale_visible_update": "learned propagation from last event to q0",
+        "warm_hidden_update": (
+            "current primary anchor plus directed asynchronously supported edge"
+            if anchor_edge else "causal previously observed tracks"
+        ),
+        "cold_update": "invalid with zero confidence",
+        "equivariance": "C4 roll-equivariant",
+        "future_prediction": False,
+        "fixed_geometry": False,
+        "motion_class_is_predictor_input": False,
+    }
+    if anchor_edge:
+        architecture_contract.update({
+            "hidden_absolute_output": "deterministic anchor plus relative edge",
+            "edge_support": "both endpoints causally seen, co-visibility optional",
+            "foundation": foundation,
+        })
+    objective_contract: dict[str, object] = {
+        "formula": (
+            "motion/support/age-balanced stale-visible and anchor-composed q0 "
+            f"SmoothL1 + {args.edge_weight}*asynchronously-supported directed-"
+            "edge SmoothL1 + "
+            f"{args.sigma_weight}*detached-error sigma calibration"
+            if anchor_edge else
+            "group-balanced stale-visible all-class and rotation/combined "
+            "self/edge-warm q0 SmoothL1 + "
+            f"{args.edge_weight}*observed-adjacent-edge SmoothL1 + "
+            f"{args.sigma_weight}*detached-error sigma calibration"
+        ),
+        "current_visible": (
+            "exact identity only when observed at q0; otherwise propagated"
+        ),
+        "cold_position": "excluded",
+        "stationary_translation_hidden_position": "excluded",
+        "future_truth_role": "q0 label and validation only",
+    }
     provenance: dict[str, object] = {
-        "schema_version": "stage3-cyclic-state-restorer-run-v1",
+        "schema_version": (
+            "stage3-cyclic-anchor-edge-restorer-run-v2"
+            if anchor_edge else "stage3-cyclic-state-restorer-run-v1"
+        ),
         "status": "training",
         "dataset": str(dataset_path),
         "dataset_manifest_sha256": train_ds.manifest_sha256,
@@ -510,32 +697,12 @@ def train(args: argparse.Namespace) -> Path:
             "center", "phase", "fixed radius", "fixed height",
             "geometry template", "query tau",
         ],
-        "architecture_contract": {
-            "purpose": "q0 current state recovery only",
-            "track_labels": "temporary cyclic state handles only",
-            "current_visible_update": "all one or two current visible tracks",
-            "q0_observed_identity_bypass": True,
-            "stale_visible_update": "learned propagation from last event to q0",
-            "warm_hidden_update": "causal previously observed tracks",
-            "cold_update": "invalid with zero confidence",
-            "equivariance": "C4 roll-equivariant",
-            "future_prediction": False,
-        },
-        "objective_contract": {
-            "formula": (
-                "group-balanced stale-visible all-class and rotation/combined "
-                "self/edge-warm q0 SmoothL1 + "
-                f"{args.edge_weight}*observed-adjacent-edge SmoothL1 + "
-                f"{args.sigma_weight}*detached-error sigma calibration"
-            ),
-            "current_visible": (
-                "exact identity only when observed at q0; otherwise propagated"
-            ),
-            "cold_position": "excluded",
-            "stationary_translation_hidden_position": "excluded",
-            "future_truth_role": "q0 label and validation only",
-        },
+        "architecture_contract": architecture_contract,
+        "objective_contract": objective_contract,
         "selection_contract": (
+            "worst rotation/combined warm-adjacent q0 P95, dynamic supported "
+            "edge P95, then combined, rotation, sigma calibration and visible P95"
+            if anchor_edge else
             "worst rotation/combined warm-adjacent q0 P95, dynamic observed "
             "edge P95, then combined, rotation, sigma calibration and visible P95"
         ),
@@ -559,9 +726,9 @@ def train(args: argparse.Namespace) -> Path:
         **git_state,
     }
     manifest_path = output / "run_manifest.json"
-    history_path = output / "stage3-cyclic-state-restorer-history.json"
-    initial_path = output / f"stage3-cyclic-state-restorer-seed{args.seed}-initial.pt"
-    last_path = output / f"stage3-cyclic-state-restorer-seed{args.seed}-last.pt"
+    history_path = output / f"stage3-{artifact_name}-history.json"
+    initial_path = output / f"stage3-{artifact_name}-seed{args.seed}-initial.pt"
+    last_path = output / f"stage3-{artifact_name}-seed{args.seed}-last.pt"
 
     start_epoch = 1
     history: list[dict[str, object]]
@@ -578,6 +745,7 @@ def train(args: argparse.Namespace) -> Path:
         if existing.get("git_commit") != provenance.get("git_commit"):
             raise ValueError("resume requires the original committed source")
         locked_config_keys = (
+            "architecture", "initialize_from", "foundation_lr_scale",
             "seed", "epochs", "batch_size", "lr", "warmup_epochs",
             "weight_decay", "dropout", "channels", "history_events",
             "secondary_gap_ratio", "huber_beta_m", "sigma_weight",
@@ -638,7 +806,7 @@ def train(args: argparse.Namespace) -> Path:
             best = tuple(record["selection_tuple"])
             best_epoch = int(record["epoch"])
             best_path = output / (
-                f"stage3-cyclic-state-restorer-seed{args.seed}-"
+                f"stage3-{artifact_name}-seed{args.seed}-"
                 f"epoch{best_epoch:03d}.pt"
             )
             if not best_path.exists():
@@ -674,6 +842,10 @@ def train(args: argparse.Namespace) -> Path:
             "epoch": epoch,
             "train": train_metrics,
             "lr": optimizer.param_groups[0]["lr"],
+            "learning_rates": {
+                str(group.get("group_name", index)): group["lr"]
+                for index, group in enumerate(optimizer.param_groups)
+            },
         }
         if validate_now:
             validation = _validate(model, validation_loader, device, args)
@@ -681,7 +853,7 @@ def train(args: argparse.Namespace) -> Path:
             record["validation"] = validation
             record["selection_tuple"] = selection
             epoch_path = output / (
-                f"stage3-cyclic-state-restorer-seed{args.seed}-epoch{epoch:03d}.pt"
+                f"stage3-{artifact_name}-seed{args.seed}-epoch{epoch:03d}.pt"
             )
             if epoch_path.exists():
                 raise FileExistsError(f"refusing to overwrite checkpoint: {epoch_path}")
@@ -762,6 +934,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dataset", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument(
+        "--architecture", choices=("direct-v1", "anchor-edge-v2"),
+        default="direct-v1",
+    )
+    parser.add_argument("--initialize-from", default="")
+    parser.add_argument("--foundation-lr-scale", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, default=180)
     parser.add_argument("--batch-size", type=int, default=128)
@@ -792,7 +970,7 @@ def main() -> None:
     positive = (
         args.epochs, args.batch_size, args.audit_batch_size, args.lr,
         args.channels, args.huber_beta_m, args.recent_age_s,
-        args.validation_interval, args.grad_clip,
+        args.validation_interval, args.grad_clip, args.foundation_lr_scale,
     )
     if any(value <= 0 for value in positive):
         parser.error("cyclic-state training arguments must be positive")
@@ -806,6 +984,8 @@ def main() -> None:
         parser.error("secondary-gap-ratio must be within [0,1]")
     if args.weight_decay < 0 or args.sigma_weight < 0 or args.edge_weight < 0:
         parser.error("optimizer/loss weights cannot be negative")
+    if args.foundation_lr_scale > 1:
+        parser.error("foundation-lr-scale must be within (0,1]")
     if args.train_sample_limit < 0 or args.validation_sample_limit < 0:
         parser.error("sample limits cannot be negative")
     print(train(args))

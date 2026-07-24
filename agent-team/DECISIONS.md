@@ -740,3 +740,32 @@
      tau, router, PnP and motion class are forbidden forward inputs. Formal
      training uses 180 epochs, five-epoch warmup then cosine decay, immutable
      validation checkpoints, full train/validation and sealed test.
+
+108. V18-S completed at epoch 180 and is retained as immutable evidence rather
+     than extended. Its combined warm-adjacent P95 plateaued at 29.84 cm while
+     rotation reached 6.17 cm. At epoch 175, combined recent/stale P95 was
+     17.42/49.93 cm and pair-supported/self-warm P95 was 23.98/54.28 cm. This
+     identifies stale absolute hidden-state propagation as the next structural
+     bottleneck; more v18 epochs or a second unconstrained absolute-position
+     expert are rejected.
+
+109. V19 parameterizes every dynamic warm adjacent q0 state as a current
+     visible primary anchor plus a directed relative edge. The clockwise target
+     is `anchor + edge(primary -> primary+1)` and the counterclockwise target is
+     `anchor - edge(primary-1 -> primary)`. Both endpoint handles being causally
+     seen is sufficient support, even if they were never simultaneously
+     visible. Current one/two-visible observations remain exact at q0 or are
+     propagated from their latest causal event. Cold and non-adjacent hidden
+     handles remain invalid. This is dynamic relative-state learning, not a
+     center/phase/radius/height template or persistent physical slot mapping.
+
+110. V19 initializes only from the sealed clean v18 epoch-180 best checkpoint.
+     New asynchronous edge and edge-uncertainty heads use the full learning
+     rate; inherited parameters use 0.1x so accepted visible/rotation behavior
+     is not discarded. Supervision is group-balanced across rotation/combined,
+     co-visible/asynchronous support and recent/stale age. Checkpoint selection
+     uses the worse rotation/combined anchor-composed P95, then all supported
+     relevant-edge P95. Validation must additionally report per-motion visible
+     propagation, pair-seen versus asynchronous edges, and self/pair/recent/
+     stale warm subsets. Test, PnP and future truth remain unavailable to the
+     predictor.

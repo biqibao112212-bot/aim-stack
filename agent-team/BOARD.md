@@ -579,3 +579,32 @@
 - Current in-progress item: commit the reviewed v18-S source and start the
   formal seed-0 180-epoch full train/validation run from that clean commit.
   Router, future propagation experts, PnP, export and test remain sealed.
+
+### 2026-07-24 anchor-relative cyclic q0 restorer (v19 launch authorized)
+
+- V18-S completed all 180 epochs at clean commit
+  `9b4498aa0c8450952237569109c05103cc1b8af9`, with
+  `stop_reason=epoch_limit`, test sealed and epoch 180 selected as best. It
+  reached 6.17 cm rotation warm-adjacent P95 and 29.84 cm combined
+  warm-adjacent P95. The combined tail is concentrated in stale/self-warm
+  tracks rather than visible or recent pair-supported tracks.
+- V19 keeps every current visible q0 update from v18 but replaces hidden
+  absolute-position regression with an exact construction from the current
+  primary q0 anchor plus a directed relative edge. An edge is supported when
+  both temporary endpoint handles have been causally seen; simultaneous
+  co-visibility is no longer required. There is still no center, phase, fixed
+  radius/height, geometry template or physical slot identity.
+- The exact v18 epoch-180 best checkpoint is the required foundation. New
+  asynchronous edge/sigma heads train at the configured learning rate while
+  the v18 foundation fine-tunes at 0.1x. The objective has only visible q0,
+  supported-edge/anchor-composed q0, and uncertainty terms, balanced by motion,
+  support kind and recent/stale age. Motion class remains absent from forward
+  inputs.
+- Eight dedicated v19 tests and all 142 Stage-3 tests pass. A 20-epoch
+  8,192-train/4,096-validation smoke reduced combined warm-adjacent P95 from
+  35.81 cm at initialization to 14.37 cm, rotation to 6.47 cm, and combined
+  self-warm/paired P95 to 18.69/11.01 cm. Exact q0 identity and C4 audits remain
+  below 1e-6 m; interrupted-run resume and test sealing were also verified.
+- Current in-progress item: commit the reviewed v19 source and launch a new
+  non-overwriting seed-0 full train/validation run from the clean commit.
+  Future motion propagation, router, PnP, export and test remain sealed.
