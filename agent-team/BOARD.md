@@ -547,3 +547,35 @@
   seed-0 maximum-60-epoch run from that clean commit. Protected model output and
   runtime stdout/stderr must be non-overwriting; test, export and online
   integration remain sealed.
+
+### 2026-07-24 cyclic q0 state restorer (v18-S launch authorized)
+
+- V17 has reached epoch 300 and remains immutable baseline evidence. Its
+  latest validation still mixes unobservable cold hidden geometry with future
+  propagation: stationary/translation adjacent-hidden tracks are cold in
+  100%/96.8% of the validation support, while free per-track future heads retain
+  decimetre motion and rigid-drift tails.
+- The user clarified the S-layer task. Every currently observed one or two
+  tracks is updated. Observations exactly at q0 are identity-passed; an
+  observation before q0 is propagated to q0. Stationary/translation hidden
+  tracks and every cold track are excluded from deterministic position loss
+  and final position metrics. Rotation/combined additionally supervise only
+  causally warm adjacent-hidden tracks.
+- The new state restorer is separate from future motion experts and router. It
+  uses one shared per-track causal encoder, sample-specific directed adjacent
+  edge memory, shared cyclic message passing, no slot embedding and no fixed
+  center/phase/radius/height/template. Motion class is loss/evaluation metadata
+  only and is absent from forward inputs.
+- Checkpoint selection uses rotation/combined warm-adjacent q0 P95 plus dynamic
+  observed-edge P95. Cold contributes counts/coverage only. Validation also
+  separates exact q0 observations from stale visible tracks propagated to q0.
+- Ten dedicated S-layer tests and all 134 Stage-3 tests pass. A bounded
+  4,096/4,096 one-epoch smoke completed with finite loss/gradients, exact q0
+  identity to 4.77e-7 m, C4 audit, immutable checkpoint files and test sealed.
+- A separate three-epoch 4,096/4,096 smoke was terminated after immutable
+  epoch 1, then resumed from its hash- and provenance-verified checkpoint to
+  epochs 2--3. Optimizer, scheduler, scaler and RNG state restored; epoch files
+  were not overwritten and the final manifest remained test-sealed.
+- Current in-progress item: commit the reviewed v18-S source and start the
+  formal seed-0 180-epoch full train/validation run from that clean commit.
+  Router, future propagation experts, PnP, export and test remain sealed.

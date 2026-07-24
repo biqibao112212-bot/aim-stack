@@ -712,3 +712,31 @@
      probes and remain useful diagnostic rows, but they must never be called a
      final/longest horizon or control best-checkpoint ordering. User-facing
      reports name the selected horizon in seconds instead of relying on `q3`.
+
+105. V18 separates current-state recovery from future motion propagation. The
+     first formal component is S, a q0-only cyclic state restorer. Every one or
+     two currently observed armor tracks receives an observation update. A
+     clean observation is an exact identity bypass only when its causal event
+     time is q0; a latest observation before q0 must be propagated to q0.
+     Previously observed hidden tracks continue causally, while a never-seen
+     track remains invalid. `primary` defines local cyclic order and does not
+     select the only updated track or any physical template.
+
+106. S-layer deterministic supervision follows observability and task need.
+     Stationary and translation samples supervise/evaluate current visible
+     tracks only. Rotation and combined samples additionally supervise warm
+     adjacent-hidden tracks. A warm track must have appeared inside the exact
+     history consumed by the model; cold targets never affect objective,
+     gradient, checkpoint selection or final position metrics. Cold is reported
+     only as count/coverage/confidence. Evaluation masks are derived from causal
+     visibility, never model confidence.
+
+107. V18-S remains exactly C4 roll-equivariant and contains no slot embedding,
+     center, phase, fixed radius, fixed height or geometry template. A shared
+     per-track encoder is augmented by shared directed adjacent-edge temporal
+     memory and circular messages. The loss is group-balanced q0 SmoothL1 for
+     stale visible tracks and rotation/combined self/edge-warm adjacent tracks,
+     plus low-weight observed-edge and uncertainty-calibration terms. Future
+     tau, router, PnP and motion class are forbidden forward inputs. Formal
+     training uses 180 epochs, five-epoch warmup then cosine decay, immutable
+     validation checkpoints, full train/validation and sealed test.
