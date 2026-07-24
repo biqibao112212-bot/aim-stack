@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import shutil
 import sys
 import time
 
@@ -468,8 +469,59 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("official cyclic-track training requires a clean worktree")
     dataset_path = Path(args.dataset).resolve()
     output = Path(args.output).resolve()
-    if output.exists():
+    resume = bool(args.resume)
+    existing_manifest: dict[str, object] | None = None
+    existing_history: list[dict[str, object]] | None = None
+    resume_payload: dict[str, object] | None = None
+    resume_epoch = 0
+    if output.exists() and not resume:
         raise FileExistsError(f"refusing to overwrite cyclic-track output: {output}")
+    if resume:
+        if not output.exists():
+            raise FileNotFoundError(f"resume output does not exist: {output}")
+        manifest_path = output / "run_manifest.json"
+        history_path = output / "stage3-cyclic-track-experts-history.json"
+        if not manifest_path.exists() or not history_path.exists():
+            raise ValueError("resume output is missing manifest or history")
+        existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        existing_history = json.loads(history_path.read_text(encoding="utf-8"))
+        if existing_manifest.get("schema_version") != "stage3-cyclic-track-experts-run-v1":
+            raise ValueError("resume manifest schema mismatch")
+        if existing_manifest.get("status") != "training":
+            raise ValueError("only an interrupted training run may be resumed")
+        if bool(existing_manifest.get("test_accessed", True)):
+            raise ValueError("refusing to resume a test-accessed run")
+        if not existing_history:
+            raise ValueError("resume history is empty")
+        resume_path = (
+            Path(args.resume_checkpoint)
+            if args.resume_checkpoint else
+            output / f"stage3-cyclic-track-experts-seed{args.seed}-best.pt"
+        )
+        if not resume_path.is_absolute():
+            resume_path = output / resume_path
+        resume_path = resume_path.resolve()
+        if not resume_path.exists():
+            raise FileNotFoundError(f"resume checkpoint does not exist: {resume_path}")
+        resume_payload = torch.load(
+            resume_path, map_location="cpu", weights_only=False
+        )
+        resume_epoch = int(resume_payload.get("epoch", -1))
+        if resume_epoch < 1 or resume_epoch >= args.epochs:
+            raise ValueError(
+                f"resume checkpoint epoch {resume_epoch} is outside [1,{args.epochs - 1}]"
+            )
+        if not isinstance(resume_payload.get("validation"), dict):
+            raise ValueError("resume checkpoint is missing validation metrics")
+        if not any(int(item.get("epoch", -1)) == resume_epoch for item in existing_history):
+            raise ValueError("resume checkpoint epoch is absent from history")
+        backup_path = output / (
+            "stage3-cyclic-track-experts-history-"
+            f"pre-resume-epoch{existing_history[-1].get('epoch', 'unknown')}.json"
+        )
+        if backup_path.exists():
+            raise FileExistsError(f"resume backup already exists: {backup_path}")
+        shutil.copy2(history_path, backup_path)
     train_ds = CyclicTrackPhysicalDataset(
         dataset_path, "train", seed=args.seed, shuffle=True,
         sample_limit=args.train_sample_limit,
@@ -487,7 +539,7 @@ def train(args: argparse.Namespace) -> Path:
         "validation": _audit_dataset(validation_ds, args.audit_batch_size),
     }
     train_ds.set_epoch(0)
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     model = CyclicTrackExpertSystem(
         torch.from_numpy(train_ds.mean), torch.from_numpy(train_ds.std),
@@ -504,6 +556,14 @@ def train(args: argparse.Namespace) -> Path:
     scaler = torch.amp.GradScaler(
         "cuda", enabled=device.type == "cuda" and args.amp == "float16"
     )
+    if resume_payload is not None:
+        model.load_state_dict(resume_payload["model"], strict=True)
+        if "optimizer" not in resume_payload or "scheduler" not in resume_payload:
+            raise ValueError("resume checkpoint is missing optimizer/scheduler state")
+        optimizer.load_state_dict(resume_payload["optimizer"])
+        scheduler.load_state_dict(resume_payload["scheduler"])
+        if "scaler" in resume_payload:
+            scaler.load_state_dict(resume_payload["scaler"])
     loader_options = {
         "batch_size": args.batch_size, "num_workers": 0,
         "pin_memory": device.type == "cuda",
@@ -567,26 +627,57 @@ def train(args: argparse.Namespace) -> Path:
         },
         **git_state,
     }
+    if existing_manifest is not None:
+        provenance["resumed_from"] = {
+            "manifest_git_commit": existing_manifest.get("git_commit"),
+            "manifest_sha256": _sha256(output / "run_manifest.json"),
+            "checkpoint": resume_path.name if resume_payload is not None else None,
+            "checkpoint_epoch": resume_epoch,
+            "history_backup": backup_path.name,
+        }
+        provenance["initial_state_sha256"] = existing_manifest.get(
+            "initial_state_sha256", initial_state_sha256
+        )
     _write_json(output / "run_manifest.json", provenance)
 
-    validation = _validate(model, validation_loader, device, args)
-    history: list[dict[str, object]] = [{
-        "epoch": 0, "validation": validation,
-        "selection_tuple": _selection_tuple(validation),
-    }]
+    if resume_payload is not None:
+        validation = resume_payload["validation"]
+        assert existing_history is not None
+        history = [
+            item for item in existing_history
+            if int(item.get("epoch", -1)) <= resume_epoch
+        ]
+        _write_json(
+            output / "stage3-cyclic-track-experts-history.json", history
+        )
+    else:
+        validation = _validate(model, validation_loader, device, args)
+        history = [{
+            "epoch": 0, "validation": validation,
+            "selection_tuple": _selection_tuple(validation),
+        }]
     history_path = output / "stage3-cyclic-track-experts-history.json"
     _write_json(history_path, history)
     initial_path = output / f"stage3-cyclic-track-experts-seed{args.seed}-initial.pt"
-    _checkpoint(initial_path, model, 0, validation, provenance, "initial")
-    best = _selection_tuple(validation)
-    best_epoch = 0
+    if not resume:
+        _checkpoint(initial_path, model, 0, validation, provenance, "initial")
+    selection_history = [
+        item for item in history if item.get("selection_tuple") is not None
+    ]
+    best_record = min(
+        selection_history,
+        key=lambda item: tuple(item["selection_tuple"]),
+    )
+    best = tuple(best_record["selection_tuple"])
+    best_epoch = int(best_record["epoch"])
     best_path = output / f"stage3-cyclic-track-experts-seed{args.seed}-best.pt"
-    _checkpoint(best_path, model, 0, validation, provenance, "best")
+    if not resume:
+        _checkpoint(best_path, model, 0, validation, provenance, "best")
     milestones = {20, 50, 100, 150, 200, 250, args.epochs}
     started = time.monotonic()
-    epochs_completed = 0
+    epochs_completed = resume_epoch if resume else 0
     stop_reason = "epoch_limit"
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range((resume_epoch + 1) if resume else 1, args.epochs + 1):
         train_ds.set_epoch(epoch)
         train_metrics = _train_epoch(
             model, train_loader, optimizer, scaler, device, args
@@ -685,6 +776,8 @@ def main() -> None:
     parser.add_argument("--validation-sample-limit", type=int, default=0)
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)
     parser.add_argument("--allow-dirty-worktree", action="store_true")
+    parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--resume-checkpoint", default="")
     args = parser.parse_args()
     positive = (
         args.epochs, args.batch_size, args.audit_batch_size, args.lr,
