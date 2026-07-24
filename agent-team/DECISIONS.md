@@ -772,3 +772,41 @@
      propagation, pair-seen versus asynchronous edges, and self/pair/recent/
      stale warm subsets. Test, PnP and future truth remain unavailable to the
      predictor.
+
+111. V20 freezes the accepted V19-r2 epoch-110 checkpoint as the entire S
+     layer. S alone owns q0. Every future expert must satisfy
+     `p(0) = q0_S` exactly and may optimize only q0-relative future motion.
+     Truth-q0 decoding is evaluation-only and is rejected in model train mode.
+     No future expert may repair S, access motion class in forward, consume
+     future truth, or introduce center/phase/radius/height/slot semantics.
+
+112. V20 uses one deterministic stationary path and three parameter-independent
+     trainable runs. Translation predicts a common 3-D velocity. Rotation
+     predicts primary planar velocity and yaw rate. Combined independently
+     predicts primary total 3-D velocity, primary planar acceleration and yaw
+     rate. For track-relative planar offset `r_i`, combined constructs
+     `w_i=w_a+omega*J*r_i` and `a_i=a_a-omega^2*r_i`, then applies the stable
+     closed-form constant-yaw integral. This parameterization has no center-
+     translation gauge, preserves unequal track heights and pair distances,
+     and is not a sum of the translation and rotation networks.
+
+113. V20 supervision follows the S task mask. Translation uses current visible
+     tracks only. Rotation and combined add causally anchor-composed warm
+     adjacent tracks. The primary future-delta SmoothL1 and omega auxiliary
+     labels use the same mask. An omega edge is valid only when both endpoints
+     are eligible; cold and opposite future truth cannot affect objective,
+     gradient, validation or selection. Confidence never controls eligibility.
+     The expert bounds are 7 m/s, 100 m/s^2 and 20 rad/s, which cover the
+     qualified train/validation dynamic tails without clipping at the observed
+     maxima.
+
+114. Every v20 formal run is its own crash-consistent transaction stream.
+     Checkpoints are written through a unique pending file and atomically
+     renamed before history and manifest commit. The manifest defines the last
+     committed epoch. Resume validates status, test sealing, configuration,
+     source/dataset/foundation hashes, history, best/latest hashes, embedded
+     provenance, optimizer/scheduler/scaler and CPU/CUDA RNG. An ahead-only
+     history is truncated to the committed prefix; one valid next orphan
+     checkpoint may be adopted without overwrite and is recorded in the resume
+     chain. Formal runs require clean committed source and distinct protected
+     model/runtime paths.

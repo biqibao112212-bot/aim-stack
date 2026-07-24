@@ -611,3 +611,28 @@
 - Current in-progress item: commit the reviewed v19 source and launch a new
   non-overwriting seed-0 full train/validation run from the clean commit.
   Future motion propagation, router, PnP, export and test remain sealed.
+
+### 2026-07-24 center-free future motion experts (v20 preflight)
+
+- V19-r2 completed and epoch 110 is frozen as the sole q0 foundation. The v20
+  future layer contains three fully independent trainable experts:
+  translation (120 epochs), rotation (180 epochs), and combined (240 epochs).
+  Stationary is a deterministic zero-motion path.
+- The accepted combined decoder uses primary total 3-D velocity, primary
+  planar acceleration and yaw rate. This removes the unobservable split
+  between center translation and anchor tangent velocity while remaining
+  exactly equivalent to constant translating-center yaw motion. It contains no
+  center, phase, radius, height template or physical slot identity.
+- Omega auxiliary labels now use only task-eligible adjacent edges. Cold and
+  opposite future truth cannot change loss or gradient. Qualified-tail bounds
+  are 7 m/s and 20 rad/s, above the audited 5.95 m/s and 14.96 rad/s maxima.
+- Twelve dedicated tests and the complete Stage-3 suite pass. Three independent
+  GPU smokes completed with finite gradients, exact frozen V19 hashes, sealed
+  test, C4 error below 2e-6 m and rigid drift below 1e-6 m. Normal wall-stop
+  resume, history-ahead recovery and atomic orphan-checkpoint adoption were
+  exercised in separate runtime diagnostics.
+- Current in-progress item: obtain final independent GO review, commit the
+  exact source and launch the three protected formal runs with distinct model,
+  runtime and log directories. GPU parallelism is limited by the single 8 GB
+  device and must not displace unrelated user workloads. Router, PnP, export
+  and test remain sealed.

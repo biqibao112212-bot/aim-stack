@@ -104,3 +104,24 @@ the status of these replay files.
   consistency, and balanced router CE. There is no cyclic-shift minimum and no
   fixed geometry target. PnP recovery becomes a later, separately evaluated
   adapter only after this clean predictor is accepted.
+
+## 2026-07-24 frozen-S future-motion layer
+
+- V19 epoch 110 is the only accepted S-layer foundation. It remains frozen and
+  owns current q0 reconstruction; the new future layer may only predict motion
+  relative to that q0.
+- The future layer has three independent trainable runs: translation, rotation,
+  and combined. Stationary is deterministic zero motion. No run consumes the
+  output or parameters of another expert, and router/PnP/test remain outside
+  this stage.
+- The decoders are center-free continuous rigid operators. Translation predicts
+  one common velocity. Rotation predicts primary tangential velocity and yaw
+  rate. Combined predicts primary total velocity, planar acceleration and yaw
+  rate, the identifiable center-free form of constant center translation plus
+  constant yaw.
+- A 256-sample-per-class validation truth-parameter audit reconstructed
+  eligible trajectories at micrometre scale: P95 2.55e-6/1.68e-6/6.02e-6 m
+  for translation/rotation/combined. This is representational evidence only;
+  it does not use future truth at inference or establish learned accuracy.
+- Formal runs require clean committed source, immutable per-validation
+  checkpoints, sealed test, frozen V19 hashes, and crash-consistent resume.
