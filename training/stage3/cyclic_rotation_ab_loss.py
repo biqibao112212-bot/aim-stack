@@ -44,7 +44,10 @@ def cyclic_rotation_ab_loss(
     max_omega_rad_s: float = 20.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     """Optimize future trajectory; rotation direction is never a loss target."""
-    if architecture not in {"parametric_v2", "direct_trajectory"}:
+    if architecture not in {
+        "parametric_v2", "direct_trajectory",
+        "parametric_relational_v3", "direct_relational_trajectory",
+    }:
         raise ValueError(f"unsupported rotation A/B architecture: {architecture}")
     if min(
         huber_beta_m, max_omega_rad_s,
@@ -118,7 +121,7 @@ def cyclic_rotation_ab_loss(
 
     omega_magnitude = predicted_delta.sum() * 0.0
     omega_support_fraction = direction_valid.float().mean().detach()
-    if architecture == "parametric_v2":
+    if architecture in {"parametric_v2", "parametric_relational_v3"}:
         predicted_magnitude = prediction.get("omega_magnitude_rad_s")
         if predicted_magnitude is None:
             raise ValueError("parametric_v2 requires omega magnitude output")
@@ -141,7 +144,7 @@ def cyclic_rotation_ab_loss(
         + rigid_weight * rigid
         + omega_magnitude_weight * omega_magnitude
     )
-    return total, {
+    parts = {
         "objective": total,
         "trajectory": trajectory,
         "tail": tail,
@@ -151,3 +154,11 @@ def cyclic_rotation_ab_loss(
         "omega_support_fraction": omega_support_fraction,
         "direction_coverage": direction_valid.float().mean().detach(),
     }
+    if "relational_edge_support" in prediction:
+        parts["relational_edge_coverage"] = prediction[
+            "relational_edge_support"
+        ].float().mean().detach()
+        parts["relational_curve_coverage"] = prediction[
+            "relational_curve_support"
+        ].float().mean().detach()
+    return total, parts

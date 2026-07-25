@@ -273,6 +273,8 @@ def _validate(
     direction_source_parts: list[np.ndarray] = []
     direction_truth_parts: list[np.ndarray] = []
     direction_truth_support_parts: list[np.ndarray] = []
+    relational_edge_support_parts: list[np.ndarray] = []
+    relational_curve_support_parts: list[np.ndarray] = []
     velocity_error_parts: list[np.ndarray] = []
     velocity_ratio_parts: list[np.ndarray] = []
     velocity_cosine_parts: list[np.ndarray] = []
@@ -341,6 +343,13 @@ def _validate(
                     direction_source_parts.append(output["direction_source"].cpu().numpy())
                     direction_truth_parts.append(torch.sign(truth_omega).cpu().numpy())
                     direction_truth_support_parts.append(support.cpu().numpy())
+            if "relational_edge_support" in output:
+                relational_edge_support_parts.append(
+                    output["relational_edge_support"].cpu().numpy()
+                )
+                relational_curve_support_parts.append(
+                    output["relational_curve_support"].cpu().numpy()
+                )
             if args.expert == "translation":
                 row = torch.arange(target.shape[0], device=device)
                 primary = state["primary_index"]
@@ -465,6 +474,21 @@ def _validate(
         accuracy = result["deterministic_direction"]["accuracy"]
         if accuracy is None or float(accuracy) < args.minimum_direction_accuracy:
             raise ValueError("deterministic direction validation accuracy is below gate")
+    if relational_edge_support_parts:
+        relational_edge_support = np.concatenate(
+            relational_edge_support_parts,
+        ).astype(np.bool_)
+        relational_curve_support = np.concatenate(
+            relational_curve_support_parts,
+        ).astype(np.bool_)
+        result["relational_evidence"] = {
+            "direction_information": "forbidden; unsigned invariants only",
+            "edge_sample_coverage": float(np.mean(relational_edge_support)),
+            "curve_sample_coverage": float(np.mean(relational_curve_support)),
+            "union_sample_coverage": float(np.mean(
+                relational_edge_support | relational_curve_support
+            )),
+        }
     if velocity_error_parts:
         result["translation_velocity"] = {
             "error_mps": _summary(np.concatenate(velocity_error_parts)),
@@ -692,6 +716,9 @@ def train(args: argparse.Namespace) -> Path:
     _seed(args.seed)
     git_state = _git_state()
     v21_rotation = args.rotation_architecture != "legacy"
+    relational_rotation = args.rotation_architecture in {
+        "parametric_relational_v3", "direct_relational_trajectory",
+    }
     if bool(git_state["worktree_dirty"]) and not args.allow_dirty_worktree:
         raise ValueError("official future expert training requires a clean worktree")
     output = Path(args.output).resolve()
@@ -739,20 +766,26 @@ def train(args: argparse.Namespace) -> Path:
     frozen_initial_sha = state_dict_sha256(adapter.foundation.state_dict())
     position_mean = torch.from_numpy(train_ds.mean)
     position_std = torch.from_numpy(train_ds.std)
-    if args.rotation_architecture == "parametric_v2":
+    if args.rotation_architecture in {
+        "parametric_v2", "parametric_relational_v3",
+    }:
         model = ParametricRotationFutureExpertV2(
             position_mean, position_std,
             channels=args.channels, dropout=args.dropout,
             history_events=args.history_events,
             max_speed_mps=args.max_speed_mps,
             max_omega_rad_s=args.max_omega_rad_s,
+            relational_evidence=relational_rotation,
         ).to(device)
-    elif args.rotation_architecture == "direct_trajectory":
+    elif args.rotation_architecture in {
+        "direct_trajectory", "direct_relational_trajectory",
+    }:
         model = DirectRotationTrajectoryExpert(
             position_mean, position_std,
             channels=args.channels, dropout=args.dropout,
             history_events=args.history_events,
             max_tau_s=args.max_tau_s,
+            relational_evidence=relational_rotation,
         ).to(device)
     else:
         model = CyclicFutureMotionExpert(
@@ -800,7 +833,9 @@ def train(args: argparse.Namespace) -> Path:
             "rigid_weight": args.rigid_weight,
             "omega_magnitude_weight": (
                 args.omega_magnitude_weight
-                if args.rotation_architecture == "parametric_v2" else 0.0
+                if args.rotation_architecture in {
+                    "parametric_v2", "parametric_relational_v3",
+                } else 0.0
             ),
             "rotation_direction_loss_weight": 0.0,
             "rotation_direction": "deterministic causal history geometry",
@@ -817,7 +852,10 @@ def train(args: argparse.Namespace) -> Path:
     )
     provenance: dict[str, object] = {
         "schema_version": (
-            "stage3-cyclic-rotation-ab-run-v1" if v21_rotation
+            (
+                "stage3-cyclic-relational-rotation-ab-run-v2"
+                if relational_rotation else "stage3-cyclic-rotation-ab-run-v1"
+            ) if v21_rotation
             else "stage3-cyclic-future-expert-run-v1"
         ),
         "expert": args.expert,
@@ -847,6 +885,10 @@ def train(args: argparse.Namespace) -> Path:
             "causal normalized visible xyz", "visibility/primary/event masks",
             "causal real event time", "switch step", "future query tau",
             "frozen V19 q0/edge validity, age, sigma and cyclic role state",
+            *(
+                ["causal unsigned adjacent-edge and single-track curvature invariants"]
+                if relational_rotation else []
+            ),
         ],
         "forbidden_predictor_inputs": [
             "future truth", "motion class", "rule_query", "truth velocity",
@@ -864,6 +906,11 @@ def train(args: argparse.Namespace) -> Path:
                 "deterministic and causal; online owner locks once valid"
                 if v21_rotation else "learned legacy output"
             ),
+            **({
+                "relational_evidence": (
+                    "pre-compression unsigned edge/curve invariants; no direction sign"
+                ),
+            } if relational_rotation else {}),
         },
         "objective_contract": objective_contract,
         "selection_contract": (
@@ -1232,7 +1279,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--expert", choices=DYNAMIC_EXPERTS, required=True)
     parser.add_argument(
         "--rotation-architecture",
-        choices=("legacy", "parametric_v2", "direct_trajectory"),
+        choices=(
+            "legacy", "parametric_v2", "direct_trajectory",
+            "parametric_relational_v3", "direct_relational_trajectory",
+        ),
         default="legacy",
     )
     parser.add_argument("--seed", type=int, default=0)

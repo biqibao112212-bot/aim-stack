@@ -8,6 +8,7 @@ from training.stage3.cyclic_rotation_ab_loss import cyclic_rotation_ab_loss
 from training.stage3.cyclic_rotation_ab_model import (
     DirectRotationTrajectoryExpert,
     ParametricRotationFutureExpertV2,
+    UnsignedRelationalMotionEncoder,
     deterministic_rotation_direction,
 )
 
@@ -105,6 +106,14 @@ def test_both_arms_use_same_nonlearned_direction_and_exact_q0() -> None:
             torch.zeros(3), torch.ones(3), channels=8,
             dropout=0.0, history_events=8,
         ),
+        ParametricRotationFutureExpertV2(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
+        ),
+        DirectRotationTrajectoryExpert(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
+        ),
     )
     for model in models:
         output = _forward(model.eval(), inputs, state)
@@ -129,6 +138,14 @@ def test_rotation_ab_models_are_c4_equivariant() -> None:
         DirectRotationTrajectoryExpert(
             torch.zeros(3), torch.ones(3), channels=8,
             dropout=0.0, history_events=8,
+        ),
+        ParametricRotationFutureExpertV2(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
+        ),
+        DirectRotationTrajectoryExpert(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
         ),
     )
     for model in models:
@@ -165,6 +182,14 @@ def test_rotation_ab_loss_has_no_direction_term() -> None:
             torch.zeros(3), torch.ones(3), channels=8,
             dropout=0.0, history_events=8,
         )),
+        ("parametric_relational_v3", ParametricRotationFutureExpertV2(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
+        )),
+        ("direct_relational_trajectory", DirectRotationTrajectoryExpert(
+            torch.zeros(3), torch.ones(3), channels=8,
+            dropout=0.0, history_events=8, relational_evidence=True,
+        )),
     ):
         prediction = _forward(model.eval(), inputs, state)
         truth = prediction["position_m"].detach().clone()
@@ -191,6 +216,67 @@ def test_direct_rigid_projection_gradients_are_finite() -> None:
         prediction, state, truth, inputs["tau"],
         torch.ones(truth.shape[:2], dtype=torch.bool),
         architecture="direct_trajectory",
+    )
+    total.backward()
+    gradients = [
+        parameter.grad for parameter in model.parameters()
+        if parameter.grad is not None
+    ]
+    assert gradients
+    assert all(torch.isfinite(gradient).all() for gradient in gradients)
+
+
+def test_unsigned_relational_evidence_does_not_encode_direction() -> None:
+    positive, _ = _case(1.0)
+    negative, _ = _case(-1.0)
+    encoder = UnsignedRelationalMotionEncoder(
+        channels=8, dropout=0.0, history_events=8,
+    ).eval()
+    positive_relation, positive_edge, positive_curve = encoder(
+        positive["obs"], positive["obs_mask"], positive["event_mask"],
+        positive["event_time_s"], torch.zeros(3), torch.ones(3),
+    )
+    negative_relation, negative_edge, negative_curve = encoder(
+        negative["obs"], negative["obs_mask"], negative["event_mask"],
+        negative["event_time_s"], torch.zeros(3), torch.ones(3),
+    )
+    assert not bool(positive_edge.any())
+    assert bool(positive_curve.all())
+    assert torch.equal(positive_edge, negative_edge)
+    assert torch.equal(positive_curve, negative_curve)
+    assert torch.allclose(positive_relation, negative_relation, atol=1e-6)
+
+
+def test_relational_evidence_ignores_masked_coordinates() -> None:
+    inputs, _ = _case(1.0)
+    encoder = UnsignedRelationalMotionEncoder(
+        channels=8, dropout=0.0, history_events=8,
+    ).eval()
+    reference = encoder(
+        inputs["obs"], inputs["obs_mask"], inputs["event_mask"],
+        inputs["event_time_s"], torch.zeros(3), torch.ones(3),
+    )[0]
+    changed = inputs["obs"].clone()
+    changed[~inputs["obs_mask"]] = 1e6
+    actual = encoder(
+        changed, inputs["obs_mask"], inputs["event_mask"],
+        inputs["event_time_s"], torch.zeros(3), torch.ones(3),
+    )[0]
+    assert torch.allclose(reference, actual, atol=1e-6)
+
+
+def test_direct_relational_rigid_projection_gradients_are_finite() -> None:
+    inputs, state = _case(1.0)
+    model = DirectRotationTrajectoryExpert(
+        torch.zeros(3), torch.ones(3), channels=8,
+        dropout=0.0, history_events=8, relational_evidence=True,
+    )
+    prediction = _forward(model, inputs, state)
+    truth = prediction["position_m"].detach() + 0.01
+    total, _ = cyclic_rotation_ab_loss(
+        prediction, state, truth, inputs["tau"],
+        torch.ones(truth.shape[:2], dtype=torch.bool),
+        architecture="direct_relational_trajectory",
     )
     total.backward()
     gradients = [

@@ -660,3 +660,26 @@
 - Current in-progress item: complete independent diff review, commit the exact
   clean V21 source, then launch non-overwriting seed-0 A/B formal runs. PnP,
   router, export and test remain sealed.
+
+### 2026-07-25 unsigned relational rotation evidence (v22)
+
+- V21 completed both 180-epoch arms. Direct B is better at 0.5 seconds, but its
+  current-visible/warm-adjacent P95 remains 17.17/18.03 cm. Both arms plateaued,
+  so further epochs are not justified.
+- A read-only causal audit proved that the last 32 events already contain an
+  essentially exact motion signal: adjacent-edge yaw-rate P95 error is 0.00018
+  rad/s on 83.2% of validation. A truth-q0 physical diagnostic gives 0.0145 mm
+  trajectory P95; with the accepted frozen S output it gives 3.46/7.68 cm
+  current/warm P95. The production model's extra error is therefore in F.
+- The shared V21 encoder temporally compresses each track before cyclic tracks
+  exchange messages, so it cannot directly preserve synchronized edge motion.
+  V22 adds a pre-compression relational stream with direction-free edge and
+  curve invariants. Direction remains deterministic, external and loss-free.
+- A2/B2 have 194,595/196,110 trainable parameters, a 0.8% difference. Nine
+  dedicated tests and all 164 Stage-3 tests pass. Parallel one-epoch 2,048/
+  2,048 smokes completed with finite gradients, empty stderr, C4 below 2e-6 m,
+  rigid drift below 1e-6 m, direction accuracy 100%, edge evidence coverage
+  82.9%, curve coverage 100% and union coverage 100%.
+- Current in-progress item: commit the exact clean source and launch distinct
+  30-epoch seed-0 A2/B2 controlled runs. PnP, router, export and test remain
+  sealed.

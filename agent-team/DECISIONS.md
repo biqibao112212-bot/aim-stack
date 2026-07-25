@@ -837,3 +837,22 @@
      coverage and rejection are mandatory validation results and are gated;
      a low-coverage model cannot improve its reported P95 by silently refusing
      difficult histories.
+
+116. V22 treats the V21 rotation plateau as a pre-compression relational
+     evidence failure, not an optimization-budget failure. On the same last 32
+     causal events, a read-only adjacent-edge diagnostic recovers yaw-rate with
+     0.00018 rad/s P95 error on 83.2% of validation samples, while V21-A has
+     1.77 rad/s P95 error. With truth q0 the diagnostic's 0.5-second trajectory
+     P95 is 0.0145 mm; with the frozen V19 S output it is 3.46 cm for current
+     visible tracks and 7.68 cm for warm adjacent tracks. V22 therefore adds a
+     shared pre-compression relational stream to both A and B. It encodes only
+     unsigned scalar invariants of consecutive adjacent edges and single-track
+     curvature: vector norms, cosine, absolute sine/angle and causal time gaps.
+     Signed direction is structurally absent, remains owned by the deterministic
+     direction state and keeps zero loss weight. The legacy per-track stream,
+     frozen S, task mask, trajectory objectives, rigid projection and test seal
+     remain unchanged. V22-A retains a nonnegative magnitude/primary-velocity
+     parametric decoder; V22-B remains a direct trajectory decoder without an
+     omega output. The first controlled comparison is limited to 30 epochs and
+     must report relation coverage and the same q3 role metrics before any
+     larger budget is authorized.

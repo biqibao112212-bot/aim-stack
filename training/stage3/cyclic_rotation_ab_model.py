@@ -153,6 +153,169 @@ def deterministic_rotation_direction(
     return sign.detach(), valid.detach(), source.detach()
 
 
+def _masked_mean_max(
+    value: torch.Tensor,
+    mask: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pool causal relation tokens without inventing evidence for empty rows."""
+    if value.shape[:-1] != mask.shape:
+        raise ValueError("relation value/mask shapes do not match")
+    flat_value = value.reshape(value.shape[0], -1, value.shape[-1])
+    flat_mask = mask.reshape(mask.shape[0], -1)
+    weight = flat_mask.to(value.dtype).unsqueeze(-1)
+    count = weight.sum(dim=1).clamp_min(1.0)
+    mean = (flat_value * weight).sum(dim=1) / count
+    maximum = torch.where(
+        flat_mask.unsqueeze(-1), flat_value,
+        torch.full_like(flat_value, -torch.inf),
+    ).amax(dim=1)
+    any_valid = flat_mask.any(dim=1)
+    maximum = torch.where(any_valid.unsqueeze(-1), maximum, torch.zeros_like(maximum))
+    return mean, maximum, any_valid
+
+
+class UnsignedRelationalMotionEncoder(nn.Module):
+    """Encode rotation magnitude evidence before per-track temporal collapse.
+
+    The edge stream compares the same directed adjacent edge at consecutive
+    causal events.  The curve stream compares two consecutive displacements of
+    one temporary track.  Both streams expose only unsigned scalar invariants:
+    norms, cosine, absolute sine/angle and time gaps.  Consequently this module
+    cannot classify clockwise versus counterclockwise rotation and never
+    replaces the separate deterministic direction state.
+    """
+
+    feature_count = 7
+
+    def __init__(
+        self,
+        channels: int,
+        dropout: float,
+        history_events: int,
+        *,
+        maximum_gap_s: float = 0.1,
+    ) -> None:
+        super().__init__()
+        if maximum_gap_s <= 0:
+            raise ValueError("maximum relation gap must be positive")
+        self.channels = int(channels)
+        self.history_events = int(history_events)
+        self.maximum_gap_s = float(maximum_gap_s)
+        token = lambda: nn.Sequential(
+            nn.Linear(self.feature_count, channels),
+            nn.LayerNorm(channels), nn.SiLU(), nn.Dropout(dropout),
+            nn.Linear(channels, channels), nn.SiLU(),
+        )
+        self.edge_token = token()
+        self.curve_token = token()
+        self.fuse = nn.Sequential(
+            nn.Linear(4 * channels + 2, 2 * channels),
+            nn.LayerNorm(2 * channels), nn.SiLU(), nn.Dropout(dropout),
+            nn.Linear(2 * channels, channels), nn.SiLU(),
+        )
+
+    @staticmethod
+    def _unsigned_pair_features(
+        left: torch.Tensor,
+        right: torch.Tensor,
+        left_gap: torch.Tensor,
+        right_gap: torch.Tensor,
+        scale: torch.Tensor,
+        gap_scale: float,
+    ) -> torch.Tensor:
+        left_norm = torch.linalg.vector_norm(left, dim=-1).clamp_min(1e-8)
+        right_norm = torch.linalg.vector_norm(right, dim=-1).clamp_min(1e-8)
+        denominator = left_norm * right_norm
+        cosine = ((left * right).sum(dim=-1) / denominator).clamp(-1.0, 1.0)
+        sine_abs = (_cross_xy(left, right).abs() / denominator).clamp(0.0, 1.0)
+        angle_abs = torch.atan2(sine_abs, cosine).clamp(0.0, torch.pi)
+        return torch.stack((
+            left_norm / scale,
+            right_norm / scale,
+            cosine,
+            sine_abs,
+            angle_abs / torch.pi,
+            left_gap / gap_scale,
+            right_gap / gap_scale,
+        ), dim=-1)
+
+    def forward(
+        self,
+        obs: torch.Tensor,
+        obs_mask: torch.Tensor,
+        event_mask: torch.Tensor,
+        event_time_s: torch.Tensor,
+        position_mean: torch.Tensor,
+        position_std: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if obs.ndim != 4 or obs.shape[2:] != (4, 3):
+            raise ValueError("obs must have shape [B,T,4,3]")
+        obs = obs[:, -self.history_events:]
+        obs_mask = obs_mask[:, -self.history_events:].to(torch.bool)
+        event_mask = event_mask[:, -self.history_events:].to(torch.bool)
+        event_time_s = event_time_s[:, -self.history_events:]
+        visible = obs_mask & event_mask.unsqueeze(-1)
+        physical = obs * position_std.view(1, 1, 1, 3)
+        physical = physical + position_mean.view(1, 1, 1, 3)
+        physical = torch.where(
+            visible.unsqueeze(-1), physical, torch.zeros_like(physical),
+        )
+        xy = physical[..., :2]
+        scale = position_std[:2].mean().clamp_min(1e-6)
+
+        gap = event_time_s[:, 1:] - event_time_s[:, :-1]
+        consecutive = (
+            event_mask[:, 1:] & event_mask[:, :-1]
+            & (gap > 0) & (gap <= self.maximum_gap_s)
+        )
+        edge = torch.roll(xy, shifts=-1, dims=2) - xy
+        edge_visible = visible & torch.roll(visible, shifts=-1, dims=2)
+        edge_valid = edge_visible[:, 1:] & edge_visible[:, :-1]
+        edge_valid = edge_valid & consecutive[:, :, None]
+        edge_feature = self._unsigned_pair_features(
+            edge[:, :-1], edge[:, 1:],
+            gap[:, :, None].expand_as(edge_valid),
+            gap[:, :, None].expand_as(edge_valid),
+            scale, self.maximum_gap_s,
+        )
+        edge_feature = torch.where(
+            edge_valid.unsqueeze(-1), edge_feature,
+            torch.zeros_like(edge_feature),
+        )
+        edge_state = self.edge_token(edge_feature)
+        edge_mean, edge_max, edge_any = _masked_mean_max(edge_state, edge_valid)
+
+        first_delta = xy[:, 1:-1] - xy[:, :-2]
+        second_delta = xy[:, 2:] - xy[:, 1:-1]
+        left_gap = event_time_s[:, 1:-1] - event_time_s[:, :-2]
+        right_gap = event_time_s[:, 2:] - event_time_s[:, 1:-1]
+        curve_valid = visible[:, :-2] & visible[:, 1:-1] & visible[:, 2:]
+        curve_valid = curve_valid & (
+            (left_gap > 0) & (left_gap <= self.maximum_gap_s)
+        )[:, :, None]
+        curve_valid = curve_valid & (
+            (right_gap > 0) & (right_gap <= self.maximum_gap_s)
+        )[:, :, None]
+        curve_feature = self._unsigned_pair_features(
+            first_delta, second_delta,
+            left_gap[:, :, None].expand_as(curve_valid),
+            right_gap[:, :, None].expand_as(curve_valid),
+            scale, self.maximum_gap_s,
+        )
+        curve_feature = torch.where(
+            curve_valid.unsqueeze(-1), curve_feature,
+            torch.zeros_like(curve_feature),
+        )
+        curve_state = self.curve_token(curve_feature)
+        curve_mean, curve_max, curve_any = _masked_mean_max(curve_state, curve_valid)
+        support = torch.stack((edge_any, curve_any), dim=-1)
+        relation = self.fuse(torch.cat((
+            edge_mean, edge_max, curve_mean, curve_max,
+            support.to(obs.dtype),
+        ), dim=-1))
+        return relation, edge_any.detach(), curve_any.detach()
+
+
 class _RotationABBase(nn.Module):
     def __init__(
         self,
@@ -162,12 +325,18 @@ class _RotationABBase(nn.Module):
         channels: int,
         dropout: float,
         history_events: int,
+        relational_evidence: bool = False,
     ) -> None:
         super().__init__()
         self.channels = int(channels)
         self.dropout = float(dropout)
         self.history_events = int(history_events)
+        self.relational_evidence = bool(relational_evidence)
         self.evidence = MotionEvidenceEncoder(channels, dropout, history_events)
+        self.relation = (
+            UnsignedRelationalMotionEncoder(channels, dropout, history_events)
+            if self.relational_evidence else None
+        )
         self.register_buffer("position_mean", position_mean.float().clone())
         self.register_buffer("position_std", position_std.float().clone())
 
@@ -180,7 +349,10 @@ class _RotationABBase(nn.Module):
         event_time_s: torch.Tensor,
         switch_step: torch.Tensor,
         s_state: dict[str, torch.Tensor],
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+        torch.Tensor, torch.Tensor, torch.Tensor,
+    ]:
         state, pooled = self.evidence(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
             switch_step, s_state, self.position_mean, self.position_std,
@@ -195,7 +367,21 @@ class _RotationABBase(nn.Module):
             s_state["current_visible"] | s_state["anchor_composed"]
         )
         future_valid = task_valid & direction_valid[:, None]
-        return state, pooled, direction, direction_source, future_valid
+        if self.relation is None:
+            relation = obs.new_zeros((obs.shape[0], 0))
+            edge_support = torch.zeros(
+                obs.shape[0], device=obs.device, dtype=torch.bool,
+            )
+            curve_support = edge_support.clone()
+        else:
+            relation, edge_support, curve_support = self.relation(
+                obs, obs_mask, event_mask, event_time_s,
+                self.position_mean, self.position_std,
+            )
+        return (
+            state, pooled, direction, direction_source, future_valid,
+            relation, edge_support, curve_support,
+        )
 
 
 class ParametricRotationFutureExpertV2(_RotationABBase):
@@ -213,15 +399,18 @@ class ParametricRotationFutureExpertV2(_RotationABBase):
         history_events: int = 32,
         max_speed_mps: float = 7.0,
         max_omega_rad_s: float = 20.0,
+        relational_evidence: bool = False,
     ) -> None:
         super().__init__(
             position_mean, position_std, channels=channels, dropout=dropout,
             history_events=history_events,
+            relational_evidence=relational_evidence,
         )
         self.max_speed_mps = float(max_speed_mps)
         self.max_omega_rad_s = float(max_omega_rad_s)
+        input_channels = 3 * channels + (channels if relational_evidence else 0)
         self.head = nn.Sequential(
-            nn.Linear(3 * channels, 2 * channels), nn.SiLU(),
+            nn.Linear(input_channels, 2 * channels), nn.SiLU(),
             nn.Dropout(dropout), nn.Linear(2 * channels, 3),
         )
         nn.init.normal_(self.head[-1].weight, mean=0.0, std=1e-3)
@@ -242,14 +431,19 @@ class ParametricRotationFutureExpertV2(_RotationABBase):
         *,
         q0_override_m: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        state, pooled, direction, direction_source, future_valid = self._common(
+        (
+            state, pooled, direction, direction_source, future_valid,
+            relation, relation_edge_support, relation_curve_support,
+        ) = self._common(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
             switch_step, s_state,
         )
         batch = obs.shape[0]
         row = torch.arange(batch, device=obs.device)
         primary_index = s_state["primary_index"].to(torch.long)
-        raw = self.head(torch.cat((state[row, primary_index], pooled), dim=-1))
+        raw = self.head(torch.cat((
+            state[row, primary_index], pooled, relation,
+        ), dim=-1))
         primary_velocity = self.max_speed_mps * torch.tanh(raw[:, :2])
         omega_magnitude = self.max_omega_rad_s * torch.sigmoid(raw[:, 2])
         omega = direction * omega_magnitude
@@ -270,16 +464,27 @@ class ParametricRotationFutureExpertV2(_RotationABBase):
             "direction_sign": direction,
             "direction_valid": direction != 0,
             "direction_source": direction_source,
+            "relational_edge_support": relation_edge_support,
+            "relational_curve_support": relation_curve_support,
         }
 
     def config(self) -> dict[str, object]:
         return {
-            "family": self.model_family,
+            "family": (
+                "cyclic-relational-center-free-rotation-magnitude-expert-v3"
+                if self.relational_evidence else self.model_family
+            ),
             "channels": self.channels,
             "dropout": self.dropout,
             "history_events": self.history_events,
             "max_speed_mps": self.max_speed_mps,
             "max_omega_rad_s": self.max_omega_rad_s,
+            **({
+                "relational_evidence": True,
+                "relational_direction_information": (
+                    "forbidden; unsigned invariants only"
+                ),
+            } if self.relational_evidence else {}),
             "direction": "deterministic causal history geometry; never learned",
             "direction_history": "all available causal observation events",
             "future_output": "center-free rigid decode from primary velocity and signed magnitude",
@@ -303,10 +508,12 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         dropout: float = 0.05,
         history_events: int = 32,
         max_tau_s: float = 0.5,
+        relational_evidence: bool = False,
     ) -> None:
         super().__init__(
             position_mean, position_std, channels=channels, dropout=dropout,
             history_events=history_events,
+            relational_evidence=relational_evidence,
         )
         self.max_tau_s = float(max_tau_s)
         if self.max_tau_s <= 0:
@@ -317,8 +524,11 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         self.query_message = nn.ModuleList(
             CyclicMessageBlock(channels, dropout) for _ in range(2)
         )
+        input_channels = (
+            3 * channels + 4 + (channels if relational_evidence else 0)
+        )
         self.head = nn.Sequential(
-            nn.Linear(3 * channels + 4, 2 * channels), nn.SiLU(),
+            nn.Linear(input_channels, 2 * channels), nn.SiLU(),
             nn.Dropout(dropout), nn.Linear(2 * channels, 2),
         )
         nn.init.normal_(self.head[-1].weight, mean=0.0, std=1e-3)
@@ -337,7 +547,10 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         *,
         q0_override_m: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
-        state, pooled, direction, direction_source, future_valid = self._common(
+        (
+            state, pooled, direction, direction_source, future_valid,
+            relation, relation_edge_support, relation_curve_support,
+        ) = self._common(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
             switch_step, s_state,
         )
@@ -378,7 +591,12 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         ), dim=-1)
         expanded_track = track_context[:, None].expand(-1, query_count, -1, -1)
         expanded_query = query[:, :, None].expand(-1, -1, tracks, -1)
-        raw_delta_xy = self.head(torch.cat((expanded_track, expanded_query), dim=-1))
+        expanded_relation = relation[:, None, None].expand(
+            -1, query_count, tracks, -1,
+        )
+        raw_delta_xy = self.head(torch.cat((
+            expanded_track, expanded_query, expanded_relation,
+        ), dim=-1))
         delta_xy = u[:, :, None, None] * raw_delta_xy
         raw_delta = torch.cat((
             delta_xy, torch.zeros_like(delta_xy[..., :1]),
@@ -397,15 +615,26 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
             "direction_sign": direction,
             "direction_valid": direction != 0,
             "direction_source": direction_source,
+            "relational_edge_support": relation_edge_support,
+            "relational_curve_support": relation_curve_support,
         }
 
     def config(self) -> dict[str, object]:
         return {
-            "family": self.model_family,
+            "family": (
+                "cyclic-relational-direct-rotation-future-delta-expert-v2"
+                if self.relational_evidence else self.model_family
+            ),
             "channels": self.channels,
             "dropout": self.dropout,
             "history_events": self.history_events,
             "max_tau_s": self.max_tau_s,
+            **({
+                "relational_evidence": True,
+                "relational_direction_information": (
+                    "forbidden; unsigned invariants only"
+                ),
+            } if self.relational_evidence else {}),
             "direction": "deterministic causal history geometry; never learned",
             "direction_history": "all available causal observation events",
             "future_output": "direct continuous q0-relative trajectory with per-query rigid projection",
