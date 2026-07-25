@@ -810,3 +810,30 @@
      checkpoint may be adopted without overwrite and is recorded in the resume
      chain. Formal runs require clean committed source and distinct protected
      model/runtime paths.
+
+115. V21 compares two rotation-only F layers behind the same frozen V19-r2
+     epoch-110 S state: an improved center-free parametric decoder and a
+     continuous direct-delta trajectory decoder. Rotation direction is shared
+     deterministic causal state, not a neural output or a loss target. It is
+     derived from short-time signed rotation of a co-visible directed adjacent
+     edge, with single-track three-observation signed curvature as fallback;
+     insufficient histories remain direction-invalid rather than guessed. Once
+     acquired in streaming inference, direction is locked for the target
+     lifetime under the accepted no-reversal motion assumption. The parametric
+     arm learns only nonnegative yaw-rate magnitude plus primary planar
+     velocity and applies the deterministic sign. The direct arm outputs only
+     query-conditioned q0-relative trajectory candidates and exposes no
+     velocity, omega, acceleration, center, radius or phase. Each query is
+     projected by a center-free 2-D Procrustes layer onto the closest proper
+     rigid transform of that sample's own valid q0 tracks; this keeps arbitrary
+     per-sample radius and height and does not integrate a motion state. Both
+     arms exclude direction-invalid,
+     cold and opposite tracks from deterministic position supervision and use
+     identical frozen-S, data, query, seed and validation contracts. Future
+     truth may supervise trajectory and parametric magnitude only; it cannot
+     determine inference-time direction. A/B truth-q0 validation freezes the
+     first-forward F delta and changes only the additive q0 anchor, so the
+     diagnostic has identical semantics for both architectures. Direction
+     coverage and rejection are mandatory validation results and are gated;
+     a low-coverage model cannot improve its reported P95 by silently refusing
+     difficult histories.

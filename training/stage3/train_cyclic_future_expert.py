@@ -28,6 +28,12 @@ from .cyclic_future_loss import (
     truth_omega_from_future,
 )
 from .cyclic_future_model import CyclicFutureMotionExpert, DYNAMIC_EXPERTS
+from .cyclic_rotation_ab_loss import cyclic_rotation_ab_loss
+from .cyclic_rotation_ab_model import (
+    DirectRotationTrajectoryExpert,
+    ParametricRotationFutureExpertV2,
+    deterministic_rotation_direction,
+)
 from .train_causal_physical_ab import _git_state, _seed, _to_device, _write_json
 
 
@@ -41,6 +47,8 @@ SOURCE_FILES = (
     "cyclic_future_foundation.py",
     "cyclic_future_model.py",
     "cyclic_future_loss.py",
+    "cyclic_rotation_ab_model.py",
+    "cyclic_rotation_ab_loss.py",
     "train_cyclic_future_expert.py",
 )
 
@@ -71,7 +79,7 @@ def _summary(values: np.ndarray) -> dict[str, float | int | None]:
 
 
 def _model_forward(
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     batch: dict[str, torch.Tensor],
     state: dict[str, torch.Tensor],
     *,
@@ -94,6 +102,54 @@ def _foundation_forward(
     )
 
 
+def _direction_dataset_audit(
+    dataset: CyclicFutureExpertDataset,
+    *,
+    batch_size: int = 128,
+) -> dict[str, object]:
+    """Audit the non-learned direction state over one complete split."""
+    loader = DataLoader(dataset, batch_size=batch_size, num_workers=0)
+    mean = torch.from_numpy(dataset.mean)
+    std = torch.from_numpy(dataset.std)
+    sample_count = valid_count = truth_support_count = qualified_count = 0
+    correct_count = edge_count = curve_count = all_invalid_batches = 0
+    with torch.no_grad():
+        for batch in loader:
+            sign, valid, source = deterministic_rotation_direction(
+                batch["obs"], batch["obs_mask"], batch["event_mask"],
+                batch["event_time_s"], mean, std,
+            )
+            truth, support = truth_omega_from_future(
+                batch["future_position"], batch["tau"], batch["rule_query"],
+                torch.ones_like(batch["current_visible_mask"], dtype=torch.bool),
+            )
+            qualified = valid & support
+            sample_count += int(sign.numel())
+            valid_count += int(valid.sum())
+            truth_support_count += int(support.sum())
+            qualified_count += int(qualified.sum())
+            correct_count += int((sign[qualified] == torch.sign(truth[qualified])).sum())
+            edge_count += int((source == 1).sum())
+            curve_count += int((source == 2).sum())
+            all_invalid_batches += int(not bool(valid.any()))
+    if sample_count == 0 or qualified_count == 0:
+        raise ValueError("deterministic direction preflight has no qualified samples")
+    return {
+        "sample_count": sample_count,
+        "valid_count": valid_count,
+        "coverage": valid_count / sample_count,
+        "truth_support_count": truth_support_count,
+        "qualified_count": qualified_count,
+        "accuracy": correct_count / qualified_count,
+        "edge_source_count": edge_count,
+        "curvature_source_count": curve_count,
+        "direction_invalid_count": sample_count - valid_count,
+        "all_invalid_batch_count": all_invalid_batches,
+        "learned": False,
+        "future_truth_role": "audit label only; never an inference input",
+    }
+
+
 def _roll_state(
     state: dict[str, torch.Tensor], shift: int,
 ) -> dict[str, torch.Tensor]:
@@ -109,7 +165,7 @@ def _roll_state(
 
 
 def _equivariance_audit(
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     adapter: FrozenV19Adapter,
     batch: dict[str, torch.Tensor],
 ) -> dict[str, float]:
@@ -130,9 +186,14 @@ def _equivariance_audit(
             output["delta_m"]
             - torch.roll(reference["delta_m"], shifts=shift, dims=2)
         ).abs().max().cpu()))
-        omega_max = max(omega_max, float((
-            output["omega_rad_s"] - reference["omega_rad_s"]
-        ).abs().max().cpu()))
+        if "omega_rad_s" in output:
+            omega_max = max(omega_max, float((
+                output["omega_rad_s"] - reference["omega_rad_s"]
+            ).abs().max().cpu()))
+        if "direction_sign" in output and not torch.equal(
+            output["direction_sign"], reference["direction_sign"],
+        ):
+            raise ValueError("deterministic rotation direction is not C4 invariant")
     return {
         "position_max_abs_m": position_max,
         "delta_max_abs_m": delta_max,
@@ -182,7 +243,7 @@ def _query_role_metrics(
 
 
 def _validate(
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     adapter: FrozenV19Adapter,
     loader: DataLoader,
     device: torch.device,
@@ -195,6 +256,7 @@ def _validate(
     truth_q0_parts: list[np.ndarray] = []
     q0_parts: list[np.ndarray] = []
     valid_parts: list[np.ndarray] = []
+    base_valid_parts: list[np.ndarray] = []
     visible_parts: list[np.ndarray] = []
     warm_parts: list[np.ndarray] = []
     clockwise_parts: list[np.ndarray] = []
@@ -206,6 +268,11 @@ def _validate(
     predicted_omega_parts: list[np.ndarray] = []
     truth_omega_parts: list[np.ndarray] = []
     omega_support_parts: list[np.ndarray] = []
+    direction_sign_parts: list[np.ndarray] = []
+    direction_valid_parts: list[np.ndarray] = []
+    direction_source_parts: list[np.ndarray] = []
+    direction_truth_parts: list[np.ndarray] = []
+    direction_truth_support_parts: list[np.ndarray] = []
     velocity_error_parts: list[np.ndarray] = []
     velocity_ratio_parts: list[np.ndarray] = []
     velocity_cosine_parts: list[np.ndarray] = []
@@ -220,10 +287,6 @@ def _validate(
             ):
                 state = _foundation_forward(adapter, batch)
                 output = _model_forward(model, batch, state)
-                truth_output = _model_forward(
-                    model, batch, state,
-                    q0_override_m=batch["future_position"][:, 0],
-                )
             target = batch["future_position"].float()
             target_delta = target - target[:, :1]
             cascade = torch.linalg.vector_norm(
@@ -233,7 +296,7 @@ def _validate(
                 output["delta_m"].float() - target_delta, dim=-1
             )
             truth_q0 = torch.linalg.vector_norm(
-                truth_output["position_m"].float() - target, dim=-1
+                target[:, :1] + output["delta_m"].float() - target, dim=-1
             )
             q0_error = torch.linalg.vector_norm(
                 state["q0_m"].float() - target[:, 0], dim=-1
@@ -243,6 +306,11 @@ def _validate(
             truth_q0_parts.append(truth_q0.cpu().numpy())
             q0_parts.append(q0_error.cpu().numpy())
             valid_parts.append(output["future_valid"].cpu().numpy())
+            base_valid_parts.append((
+                state["q0_valid"] & (
+                    state["current_visible"] | state["anchor_composed"]
+                )
+            ).cpu().numpy())
             visible_parts.append(state["current_visible"].cpu().numpy())
             warm_parts.append(state["anchor_composed"].cpu().numpy())
             clockwise_parts.append(state["clockwise"].cpu().numpy())
@@ -252,13 +320,27 @@ def _validate(
             tau_parts.append(batch["tau"].float().cpu().numpy())
             rigid_parts.append(_pair_distance_drift(output["position_m"].float()).cpu().numpy())
             if args.expert in {"rotation", "combined"}:
+                truth_track_mask = output["future_valid"]
+                if "direction_sign" in output:
+                    truth_track_mask = state["q0_valid"] & (
+                        state["current_visible"] | state["anchor_composed"]
+                    )
                 truth_omega, support = truth_omega_from_future(
                     target, batch["tau"], batch["rule_query"],
-                    output["future_valid"],
+                    truth_track_mask,
                 )
-                predicted_omega_parts.append(output["omega_rad_s"].float().cpu().numpy())
-                truth_omega_parts.append(truth_omega.cpu().numpy())
-                omega_support_parts.append(support.cpu().numpy())
+                if "omega_rad_s" in output:
+                    predicted_omega_parts.append(output["omega_rad_s"].float().cpu().numpy())
+                    truth_omega_parts.append(truth_omega.cpu().numpy())
+                    omega_support_parts.append((
+                        support & output.get("direction_valid", support)
+                    ).cpu().numpy())
+                if "direction_sign" in output:
+                    direction_sign_parts.append(output["direction_sign"].cpu().numpy())
+                    direction_valid_parts.append(output["direction_valid"].cpu().numpy())
+                    direction_source_parts.append(output["direction_source"].cpu().numpy())
+                    direction_truth_parts.append(torch.sign(truth_omega).cpu().numpy())
+                    direction_truth_support_parts.append(support.cpu().numpy())
             if args.expert == "translation":
                 row = torch.arange(target.shape[0], device=device)
                 primary = state["primary_index"]
@@ -289,6 +371,7 @@ def _validate(
     truth_q0 = np.concatenate(truth_q0_parts)
     q0_error = np.concatenate(q0_parts)
     valid = np.concatenate(valid_parts).astype(np.bool_)
+    base_valid = np.concatenate(base_valid_parts).astype(np.bool_)
     visible = np.concatenate(visible_parts).astype(np.bool_)
     warm = np.concatenate(warm_parts).astype(np.bool_)
     clockwise = np.concatenate(clockwise_parts).astype(np.bool_)
@@ -319,6 +402,8 @@ def _validate(
         "cyclic_equivariance": equivariance,
         "support": {
             "task_track_count": int(valid.sum()),
+            "base_task_track_count": int(base_valid.sum()),
+            "direction_invalid_task_track_count": int((base_valid & ~valid).sum()),
             "current_visible_count": int((valid & visible).sum()),
             "warm_adjacent_count": int((valid & warm).sum()),
         },
@@ -345,6 +430,41 @@ def _validate(
                 "sign_accuracy": None,
                 "support_count": 0,
             }
+    if direction_sign_parts:
+        direction_sign = np.concatenate(direction_sign_parts)
+        direction_valid = np.concatenate(direction_valid_parts).astype(np.bool_)
+        direction_source = np.concatenate(direction_source_parts).astype(np.int64)
+        direction_truth = np.concatenate(direction_truth_parts)
+        direction_support = np.concatenate(direction_truth_support_parts).astype(np.bool_)
+        qualified = direction_valid & direction_support
+        result["deterministic_direction"] = {
+            "learned": False,
+            "loss_weight": 0.0,
+            "coverage": float(np.mean(direction_valid)),
+            "task_track_coverage": float(valid.sum() / max(int(base_valid.sum()), 1)),
+            "current_visible_track_coverage": float(
+                (valid & visible).sum()
+                / max(int((base_valid & visible).sum()), 1)
+            ),
+            "warm_adjacent_track_coverage": float(
+                (valid & warm).sum()
+                / max(int((base_valid & warm).sum()), 1)
+            ),
+            "direction_invalid_sample_count": int((~direction_valid).sum()),
+            "accuracy": (
+                float(np.mean(direction_sign[qualified] == direction_truth[qualified]))
+                if bool(qualified.any()) else None
+            ),
+            "qualified_count": int(qualified.sum()),
+            "truth_support_count": int(direction_support.sum()),
+            "edge_source_count": int(np.sum(direction_valid & (direction_source == 1))),
+            "curvature_source_count": int(np.sum(direction_valid & (direction_source == 2))),
+        }
+        if float(np.mean(direction_valid)) < args.minimum_direction_coverage:
+            raise ValueError("deterministic direction validation coverage is below gate")
+        accuracy = result["deterministic_direction"]["accuracy"]
+        if accuracy is None or float(accuracy) < args.minimum_direction_accuracy:
+            raise ValueError("deterministic direction validation accuracy is below gate")
     if velocity_error_parts:
         result["translation_velocity"] = {
             "error_mps": _summary(np.concatenate(velocity_error_parts)),
@@ -376,6 +496,8 @@ def _selection_tuple(metrics: dict[str, object]) -> tuple[float, ...]:
         float(item["cascade_absolute"]["median_m"] or float("inf"))
         for item in candidates
     )
+    if "deterministic_direction" in metrics:
+        return cascade_p95, motion_p95, truth_p95, cascade_median
     omega_penalty = 0.0
     if "omega" in metrics:
         accuracy = metrics["omega"]["sign_accuracy"]  # type: ignore[index]
@@ -385,7 +507,7 @@ def _selection_tuple(metrics: dict[str, object]) -> tuple[float, ...]:
 
 def _checkpoint(
     path: Path,
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     epoch: int,
     metrics: dict[str, object],
     provenance: dict[str, object],
@@ -437,7 +559,8 @@ RESUME_PROVENANCE_FIELDS = (
     "git_commit", "worktree_dirty", "config", "model_config",
     "input_allowlist", "forbidden_predictor_inputs",
     "architecture_contract", "objective_contract", "selection_contract",
-    "source_sha256",
+    "truth_q0_evaluation", "direction_preflight",
+    "trainable_parameter_count", "source_sha256",
 )
 
 
@@ -447,7 +570,7 @@ def _validate_resume_checkpoint(
     expected_epoch: int,
     expected_role: str,
     provenance: dict[str, object],
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     device: torch.device,
 ) -> dict[str, object]:
     if payload.get("model_class") != model.__class__.__name__:
@@ -485,7 +608,7 @@ def _validate_resume_checkpoint(
 
 
 def _train_epoch(
-    model: CyclicFutureMotionExpert,
+    model: torch.nn.Module,
     adapter: FrozenV19Adapter,
     loader: DataLoader,
     optimizer: torch.optim.Optimizer,
@@ -507,13 +630,31 @@ def _train_epoch(
         ):
             state = _foundation_forward(adapter, batch)
             output = _model_forward(model, batch, state)
-            total, parts = cyclic_future_expert_loss(
-                args.expert, output, state, batch["future_position"],
-                batch["tau"], batch["rule_query"],
-                huber_beta_m=args.huber_beta_m,
-                omega_weight=args.omega_weight,
-                omega_sign_weight=args.omega_sign_weight,
-            )
+            if (
+                args.rotation_architecture != "legacy"
+                and not bool(output["future_valid"].any())
+            ):
+                continue
+            if args.rotation_architecture == "legacy":
+                total, parts = cyclic_future_expert_loss(
+                    args.expert, output, state, batch["future_position"],
+                    batch["tau"], batch["rule_query"],
+                    huber_beta_m=args.huber_beta_m,
+                    omega_weight=args.omega_weight,
+                    omega_sign_weight=args.omega_sign_weight,
+                )
+            else:
+                total, parts = cyclic_rotation_ab_loss(
+                    output, state, batch["future_position"],
+                    batch["tau"], batch["rule_query"],
+                    architecture=args.rotation_architecture,
+                    huber_beta_m=args.huber_beta_m,
+                    tail_weight=args.tail_weight,
+                    edge_weight=args.edge_weight,
+                    rigid_weight=args.rigid_weight,
+                    omega_magnitude_weight=args.omega_magnitude_weight,
+                    max_omega_rad_s=args.max_omega_rad_s,
+                )
         if not bool(torch.isfinite(total)):
             raise FloatingPointError("non-finite future expert loss")
         scaler.scale(total).backward()
@@ -550,6 +691,7 @@ def _lr_lambda(epoch: int, warmup: int, total: int) -> float:
 def train(args: argparse.Namespace) -> Path:
     _seed(args.seed)
     git_state = _git_state()
+    v21_rotation = args.rotation_architecture != "legacy"
     if bool(git_state["worktree_dirty"]) and not args.allow_dirty_worktree:
         raise ValueError("official future expert training requires a clean worktree")
     output = Path(args.output).resolve()
@@ -575,21 +717,52 @@ def train(args: argparse.Namespace) -> Path:
     source_test_accessed = bool(train_ds.manifest.get("test_accessed", True))
     if source_test_accessed:
         raise ValueError("future expert source dataset has accessed test")
+    direction_preflight: dict[str, object] | None = None
+    if v21_rotation:
+        direction_preflight = {
+            "train": _direction_dataset_audit(train_ds),
+            "validation": _direction_dataset_audit(validation_ds),
+            "minimum_coverage": args.minimum_direction_coverage,
+            "minimum_accuracy": args.minimum_direction_accuracy,
+        }
+        for split in ("train", "validation"):
+            audit = direction_preflight[split]
+            if float(audit["coverage"]) < args.minimum_direction_coverage:
+                raise ValueError(f"{split} deterministic direction coverage is below gate")
+            if float(audit["accuracy"]) < args.minimum_direction_accuracy:
+                raise ValueError(f"{split} deterministic direction accuracy is below gate")
     foundation, foundation_info = load_frozen_v19(
         args.foundation_checkpoint,
         expected_dataset_manifest_sha256=train_ds.manifest_sha256,
     )
     adapter = FrozenV19Adapter(foundation).to(device)
     frozen_initial_sha = state_dict_sha256(adapter.foundation.state_dict())
-    model = CyclicFutureMotionExpert(
-        args.expert,
-        torch.from_numpy(train_ds.mean), torch.from_numpy(train_ds.std),
-        channels=args.channels, dropout=args.dropout,
-        history_events=args.history_events,
-        max_speed_mps=args.max_speed_mps,
-        max_acceleration_mps2=args.max_acceleration_mps2,
-        max_omega_rad_s=args.max_omega_rad_s,
-    ).to(device)
+    position_mean = torch.from_numpy(train_ds.mean)
+    position_std = torch.from_numpy(train_ds.std)
+    if args.rotation_architecture == "parametric_v2":
+        model = ParametricRotationFutureExpertV2(
+            position_mean, position_std,
+            channels=args.channels, dropout=args.dropout,
+            history_events=args.history_events,
+            max_speed_mps=args.max_speed_mps,
+            max_omega_rad_s=args.max_omega_rad_s,
+        ).to(device)
+    elif args.rotation_architecture == "direct_trajectory":
+        model = DirectRotationTrajectoryExpert(
+            position_mean, position_std,
+            channels=args.channels, dropout=args.dropout,
+            history_events=args.history_events,
+            max_tau_s=args.max_tau_s,
+        ).to(device)
+    else:
+        model = CyclicFutureMotionExpert(
+            args.expert, position_mean, position_std,
+            channels=args.channels, dropout=args.dropout,
+            history_events=args.history_events,
+            max_speed_mps=args.max_speed_mps,
+            max_acceleration_mps2=args.max_acceleration_mps2,
+            max_omega_rad_s=args.max_omega_rad_s,
+        ).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=args.weight_decay,
     )
@@ -619,8 +792,34 @@ def train(args: argparse.Namespace) -> Path:
     config["dataset"] = str(Path(args.dataset).resolve())
     config["foundation_checkpoint"] = str(Path(args.foundation_checkpoint).resolve())
     config["output"] = str(output)
+    objective_contract = (
+        {
+            "primary": "role/query-balanced direct future delta SmoothL1",
+            "tail_weight": args.tail_weight,
+            "edge_weight": args.edge_weight,
+            "rigid_weight": args.rigid_weight,
+            "omega_magnitude_weight": (
+                args.omega_magnitude_weight
+                if args.rotation_architecture == "parametric_v2" else 0.0
+            ),
+            "rotation_direction_loss_weight": 0.0,
+            "rotation_direction": "deterministic causal history geometry",
+            "future_truth_role": "loss and validation only",
+            "confidence_controls_eligibility": False,
+        }
+        if v21_rotation else {
+            "primary": "group-balanced future delta SmoothL1",
+            "omega_magnitude_weight": args.omega_weight,
+            "omega_sign_weight": args.omega_sign_weight,
+            "future_truth_role": "loss and validation only",
+            "confidence_controls_eligibility": False,
+        }
+    )
     provenance: dict[str, object] = {
-        "schema_version": "stage3-cyclic-future-expert-run-v1",
+        "schema_version": (
+            "stage3-cyclic-rotation-ab-run-v1" if v21_rotation
+            else "stage3-cyclic-future-expert-run-v1"
+        ),
         "expert": args.expert,
         "status": "running",
         "test_accessed": False,
@@ -634,11 +833,16 @@ def train(args: argparse.Namespace) -> Path:
             "virtual_contract": train_ds.virtual_contract,
         },
         "foundation": foundation_info,
+        "direction_preflight": direction_preflight,
         "frozen_foundation_initial_state_sha256": frozen_initial_sha,
         "git_commit": git_state["git_commit"],
         "worktree_dirty": git_state["worktree_dirty"],
         "config": config,
         "model_config": model.config(),
+        "trainable_parameter_count": int(sum(
+            parameter.numel() for parameter in model.parameters()
+            if parameter.requires_grad
+        )),
         "input_allowlist": [
             "causal normalized visible xyz", "visibility/primary/event masks",
             "causal real event time", "switch step", "future query tau",
@@ -651,22 +855,28 @@ def train(args: argparse.Namespace) -> Path:
         ],
         "architecture_contract": {
             "s_layer": "frozen V19 q0 current-state restorer",
-            "future_layer": "independent center-free continuous motion expert",
+            "future_layer": model.config()["future_output"],
             "q0_head": False,
             "tau_zero_identity": True,
             "fixed_geometry": False,
             "combined_is_independent": True,
+            "rotation_direction": (
+                "deterministic and causal; online owner locks once valid"
+                if v21_rotation else "learned legacy output"
+            ),
         },
-        "objective_contract": {
-            "primary": "group-balanced future delta SmoothL1",
-            "omega_magnitude_weight": args.omega_weight,
-            "omega_sign_weight": args.omega_sign_weight,
-            "future_truth_role": "loss and validation only",
-            "confidence_controls_eligibility": False,
-        },
+        "objective_contract": objective_contract,
         "selection_contract": (
             "actual query index 3 tau: worst task-role cascade P95, motion-delta "
-            "P95, truth-q0 P95, omega-sign penalty, cascade median"
+            + (
+                "P95, truth-q0 P95, cascade median"
+                if v21_rotation else
+                "P95, truth-q0 P95, omega-sign penalty, cascade median"
+            )
+        ),
+        "truth_q0_evaluation": (
+            "fixed first-forward F delta plus truth q0 anchor"
+            if v21_rotation else "legacy q0 override forward"
         ),
         "source_sha256": source_sha,
     }
@@ -1020,6 +1230,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--foundation-checkpoint", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--expert", choices=DYNAMIC_EXPERTS, required=True)
+    parser.add_argument(
+        "--rotation-architecture",
+        choices=("legacy", "parametric_v2", "direct_trajectory"),
+        default="legacy",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--epochs", type=int, required=True)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -1033,6 +1248,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--huber-beta-m", type=float, default=0.01)
     parser.add_argument("--omega-weight", type=float, default=0.10)
     parser.add_argument("--omega-sign-weight", type=float, default=0.05)
+    parser.add_argument("--omega-magnitude-weight", type=float, default=0.05)
+    parser.add_argument("--tail-weight", type=float, default=0.20)
+    parser.add_argument("--edge-weight", type=float, default=0.15)
+    parser.add_argument("--rigid-weight", type=float, default=0.02)
     parser.add_argument("--validation-interval", type=int, default=5)
     parser.add_argument("--grad-clip", type=float, default=5.0)
     parser.add_argument("--amp", choices=("off", "float16", "bfloat16"), default="bfloat16")
@@ -1040,6 +1259,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-speed-mps", type=float, default=7.0)
     parser.add_argument("--max-acceleration-mps2", type=float, default=100.0)
     parser.add_argument("--max-omega-rad-s", type=float, default=20.0)
+    parser.add_argument("--max-tau-s", type=float, default=0.5)
+    parser.add_argument("--minimum-direction-coverage", type=float, default=0.80)
+    parser.add_argument("--minimum-direction-accuracy", type=float, default=0.999)
     parser.add_argument("--train-sample-limit", type=int, default=0)
     parser.add_argument("--validation-sample-limit", type=int, default=0)
     parser.add_argument("--max-wall-minutes", type=float, default=0.0)
@@ -1058,12 +1280,25 @@ def main(argv: list[str] | None = None) -> int:
     if min(
         args.lr, args.huber_beta_m, args.grad_clip,
         args.max_speed_mps, args.max_acceleration_mps2, args.max_omega_rad_s,
+        args.max_tau_s,
     ) <= 0:
         parser.error("optimizer, loss and motion bounds must be positive")
-    if min(args.omega_weight, args.omega_sign_weight, args.weight_decay) < 0:
+    if min(
+        args.omega_weight, args.omega_sign_weight, args.omega_magnitude_weight,
+        args.tail_weight, args.edge_weight, args.rigid_weight,
+        args.weight_decay,
+    ) < 0:
         parser.error("nonnegative weights are required")
+    if args.rotation_architecture != "legacy" and args.expert != "rotation":
+        parser.error("V21 rotation architectures require --expert rotation")
+    if args.rotation_architecture != "legacy" and args.omega_sign_weight != 0.0:
+        parser.error("V21 direction is deterministic; set --omega-sign-weight 0")
     if args.train_sample_limit < 0 or args.validation_sample_limit < 0:
         parser.error("sample limits must be nonnegative")
+    if not 0 <= args.minimum_direction_coverage <= 1:
+        parser.error("minimum-direction-coverage must be within [0,1]")
+    if not 0 <= args.minimum_direction_accuracy <= 1:
+        parser.error("minimum-direction-accuracy must be within [0,1]")
     try:
         path = train(args)
     except Exception as exc:  # pragma: no cover - surfaced to runtime stderr

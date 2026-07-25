@@ -636,3 +636,27 @@
   runtime and log directories. GPU parallelism is limited by the single 8 GB
   device and must not displace unrelated user workloads. Router, PnP, export
   and test remain sealed.
+
+### 2026-07-25 deterministic-direction rotation F A/B (v21)
+
+- V20 rotation completed 180 epochs with epoch 135 best. Its 0.5-second
+  current-visible/warm-adjacent cascade P95 is about 20.1/20.7 cm; replacing S
+  q0 with truth leaves about 20.0/18.8 cm, so future F rather than S dominates.
+- V21-A retains the center-free rigid decoder but consumes deterministic
+  direction and learns only primary planar velocity plus yaw-rate magnitude.
+  V21-B directly predicts continuous q0-relative trajectory candidates and
+  applies a per-query, per-sample center-free rigid projection. Neither arm
+  learns, classifies or applies a loss to rotation direction.
+- The causal direction detector uses visible-history adjacent-edge rotation,
+  with single-track curvature fallback and no future truth. Full clean-physics
+  audit gives 100% accuracy on direction-qualified train/validation samples;
+  coverage is 84.2%/87.3%. Unqualified early histories fail closed and the
+  online state will retain a previously acquired direction for the target
+  lifetime.
+- Six dedicated V21 tests and all 161 Stage-3 tests pass. One-epoch
+  512/512 smokes for both arms completed with finite gradients, exact frozen
+  foundation hashes, test sealed, deterministic direction loss weight zero,
+  direction accuracy 100%, q0 identity and C4 error below 2e-6 m.
+- Current in-progress item: complete independent diff review, commit the exact
+  clean V21 source, then launch non-overwriting seed-0 A/B formal runs. PnP,
+  router, export and test remain sealed.
