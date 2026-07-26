@@ -1,127 +1,75 @@
-# Aim Stack：自瞄 B 与打符消费者
+# Aim Stack：火控与云台控制研究
 
-- 上下文版本：`CTX-AIM-STACK-2026.07-v3`
+- 上下文版本：`CTX-FIRE-CONTROL-GIMBAL-2026.07-v1`
 - 仓库：`aim-stack`
-- 分支：`main`
-- 工作目录：`D:\仿真\repos\aim-stack`
-- 当前主模块：`modules/autoaim`
-- 暂停模块：`modules/energy-buff`
-- 模拟器锁：`Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
-- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.1`
-- 模拟器消费者统一入口：`SIMULATOR_CONSUMER_GUIDE.md`（v1）与 `simulator.lock.json`
+- 分支：`research/fire-control-gimbal`
+- 工作目录：`D:\仿真\active-worktrees\aim-stack-fire-control-gimbal`
+- 所属模块：`modules/autoaim`
+- 基线提交：`464605c46f496836897c1db9b8e76e2376376bf7`
+- 模拟器锁：`Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0`
+- 公共依赖入口：`SIMULATOR_CONSUMER_GUIDE.md` 与 `simulator.lock.json`
 
-本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
+## 目标与所有权
 
-所有自瞄、火控和打符分支必须继承消费者统一入口，明确 SDK 用法、三张原生地图、默认高性能模式和可视验收模式。消费者任务发现模拟器 bug 或新需求时，必须先向用户提交提案并等待明确批准；批准前不得编辑模拟器仓库、SDK、发布脚本或正式 Release。
+本分支专门研究预测结果之后的火控与云台控制，包括目标选择后的规划、
+弹道/延迟补偿、云台命令生成与执行、发射建议和安全门禁。研究应形成清晰的
+输入输出合同、可解释的控制时序、可重复测试以及分阶段验收指标。
 
-## 自瞄 B 总目标
+核心研究问题分为两个层次：
 
-构建因果神经轨迹预测器：输入最近一段经过几何校验但未做时间平滑的逐曝光可见装甲板集合，以及任意未来时刻 `tau`；输出四块装甲板未来可击打位置的概率分布或多假设结果。曝光时间戳是时间原点，模拟器真值只作标签与验收，不得作为输入。
+1. 冻结使用干净、可重复的预测器输入，只优化云台控制和火控方案。在最大允许
+   射频 20 Hz 下，测量方案能够达到的实际有效射频、命中率及二者之间的前沿。
+2. 冻结同一套已验收火控方案和全部非预测器条件，仅改变预测器输出质量，测量
+   不同误差、延迟、不确定性和失效模式对最终实际射频与命中率的影响。
 
-阶段一是固定模拟器/曝光契约；阶段二是在 tracker 前通过动态渲染 G2 修复 PnP yaw；阶段三仅在 G2 通过后进行有限、无泄漏数据采集，并训练固定的 TCN + 任意时间解码器。候选选择、云台、MPC 和火控保持冻结；模型必须提供不确定性/OOD 与安全回退。
+第一层隔离控制器自身能力，第二层量化预测器质量到最终作战指标的传递函数。
+二者不得通过同时调整预测器与火控器来混合归因。
 
-当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三正式 360-session 采集已完成；旧 `H=0.07 m` 已被经 exact-exposure 真值验证的 camera→gimbal R/T 取代。当前正式离线合同为最近最多 200 个真实观测事件及其真实时间戳的 `stage3-dataset-v3`，全量 111,527-train/36,297-validation 单 seed 训练、完整 validation 双物理基线评估和动态 ONNX parity 均已完成且未访问 test。该结果证明完整离线流程可行并在整体 validation 上超过刚体 baseline，但不构成多 seed/线上指标验收；test、TensorRT、tracker/MPC/火控和实弹接入仍冻结。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
+预测器与 tracker 在本分支中默认视为上游输入提供者。除非后续明确批准一个
+最小接口适配，本分支不得继续 Stage 3 训练、修改预测器结构或混入预测器实验。
+`modules/energy-buff` 保持暂停且不属于本分支。
 
-## 2026-07-19 PnP joint-pose A/B checkpoint
+## 边界
 
-Stage two now has a diagnostic-only fixed-tilt joint yaw+translation solver. It
-uses the existing +15 degree ordinary-armor convention, per-frame effective
-intrinsics/distortion, and both refined and raw detector corners. Its output is
-serialized only under `solved_armors[].pnp_ab`; legacy PnP, tracker input,
-candidate choice, gimbal, MPC and fire control remain unchanged.
+- 允许修改 `modules/autoaim` 内的 FireControl、planner、MPC、弹道、云台命令环、
+  发射门禁、消费者侧适配、测试和本分支文档。
+- 修改坐标、姿态、瞄准点或云台转换前，必须读取并遵守
+  `modules/autoaim/src/aim_core_from_vivsionn/AngleSolver/COORDINATE_CONTRACT.md`。
+- 不修改 `D:\仿真\repos\daedalus-simulator`、正式 Release、SDK 或发布脚本；
+  不复制模拟器源码，不手写或镜像 SHM/TCP 协议。
+- Simulator 1.0.1 / SDK 1.0.0 是固定的集成和验收依赖，不是当前研究对象。
+  在纯算法、控制器和离线单元研究阶段不要求启动模拟器；测量实际发射事件、
+  命中率和闭环云台行为时，使用该锁定版本作为统一验收环境，但不修改它。
+- 发现模拟器缺陷或新增公共接口需求时，执行
+  `SIMULATOR_CHANGE_APPROVAL_REQUIRED`，先提交证据和提案，等待明确批准。
+- 模型、ONNX、TensorRT engine、checkpoint、数据集、标注和正式 Release 均为
+  受保护资产，不得自动删除或覆盖。
 
-The approved native-range experiment was repeated at 3/5/7 m: target 3, zero
-linear speed, 30 deg/s spin, 30 s, offscreen DX12 performance mode. The retained
-observation counts are 1507/1764/1084. Joint refined reprojection RMS p50 is
-1.058/1.555/1.412 px versus legacy constrained-model 1.147/1.599/1.434 px, but
-same-derived-ID temporal increment p50 is 2.96/5.86/7.01 deg versus legacy
-2.74/6.14/6.37 deg. Therefore joint translation re-estimation is not a
-consistent yaw repair and must not replace production output.
+## 起始实现
 
-The marginalized local yaw sensitivity grows from 3.73 to 5.33 to 6.58
-deg/px (p50) at 3/5/7 m. This directly supports a distance/pose conditioning
-limit: a one-pixel corner-residual perturbation can correspond to several
-degrees of yaw even after translation is optimized. This was the pre-stage-three
-checkpoint; stage three was subsequently authorized on 2026-07-20. No numeric
-G2 threshold was retroactively declared.
+当前 `main` 已包含旧研究中的 FireControl、二阶位置 MPC、fixed-rate command
+loop 和 SDK v1 消费者适配。旧共享仓库的 `feature/auto-aim-fire-control` 仅作
+历史取证，不作为工作分支，也不整体合并或 cherry-pick。任何旧设计约束都需在
+本分支重新审查后才能成为当前合同。
 
-## 2026-07-19 chassis-frame +15 repair and replay
+## 稳定验证入口
 
-The ordinary-armor tilt is now applied in the tracker/chassis frame and
-projected through the exposure-matched gimbal pose. The production constrained
- yaw path consumes this chassis-frame result; the prior camera-fixed yaw is
- retained only as an A/B diagnostic. The corrected sidecar remains available
- for refined-corner residual and conditioning diagnostics. A focused synthetic
- test with +15 degrees, 7 degrees gimbal pitch and -11 degrees gimbal yaw
- recovered the known chassis yaw within 0.1 degree and exact reprojection below
- 1e-4 px.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-consumer-boundary.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-architecture.ps1
+```
 
-The replay used the approved native shooting range, target 3, zero linear
-motion, 30 deg/s spin, 30 s per distance, 3/5/7 m, DX12 offscreen performance
-mode. The continuous plot is
-`D:\仿真\runtime\pnp-chassis-pose-continuous-yaw-20260719.png`; metrics and the
-quantitative summary are beside it. Production chassis-yaw adjacent increment
-errors (p50/p95) were 2.59/14.82, 5.26/20.33 and 7.67/28.88 degrees at 3/5/7
-m, versus the camera-fixed legacy 2.65/15.78, 5.66/39.24 and 8.76/69.40.
-Together with the nonzero-pose synthetic regression and reviewed continuous
-curves, this evidence closes G2 and stage two. The result validates the PnP
-input semantics required by the later predictor; these replay files are not
-declared training samples. The later stage-three authorization did not change
-the status of these replay files.
+具体构建、单元测试和控制性能门禁将在完成现状审计与任务定义后写入本文件。
 
-## 2026-07-21 physical-core isolation
+## 实验不变量与指标族
 
-- Existing exact-exposure truth was reused; no recapture was needed. The
-  qualified derived truth-history r5 dataset contains 111,527 train and 36,297
-  validation samples and records `test_accessed=false`.
-- A fixed exact-state constant-twist operator now propagates the real target
-  center, exact translational velocity, exact yaw rate and q0 armor offsets.
-  Its external output is still four future armor positions.
-- On 36,297 validation samples, q0 P95 is 1.86e-9 m. Rule-query motion P95 is
-  4.45e-6/8.19e-6/1.76e-5 m at nominal 0.1/0.2/0.5 s. All 1 mm gates pass.
-- The previous centimetre physical tail was traced to numerical state recovery
-  and rotating about the four-armor arithmetic centroid instead of the true
-  vehicle center. The accepted physical equation is frozen; the next learned
-  component is only the PnP-history observation adapter.
-
-## 2026-07-23 cyclic-track clean-physics reset
-
-- The fixed-slot center/phase/template interpretation used by v13--v16 is
-  superseded for the active predictor. The four armor indices are temporary
-  tracker-owned cyclic state handles. They carry adjacency and update state,
-  but no radius, height, canonical phase, or semantic slot identity.
-- The active v17 scope is clean physical motion only. A virtual, hash-bound
-  view of the qualified r4 train/validation truth exposes one or two adjacent
-  plates per causal event, a cyclic primary mask, and switch steps in
-  `{-1,0,+1}`. PnP, test, fixed geometry, center and phase are excluded.
-- V17 owns four independent stationary/translation/rotation/combined
-  trajectory experts and an independent four-class router. Shared per-track
-  weights plus circular message passing make every raw expert C4-equivariant;
-  invariant pooling makes the router C4-invariant. The combined expert never
-  reads or adds the translation and rotation expert outputs.
-- Each expert directly predicts all four temporary trajectories. Its loss is
-  direct local-label position, motion delta, low-weight self-q0 pair-distance
-  consistency, and balanced router CE. There is no cyclic-shift minimum and no
-  fixed geometry target. PnP recovery becomes a later, separately evaluated
-  adapter only after this clean predictor is accepted.
-
-## 2026-07-24 frozen-S future-motion layer
-
-- V19 epoch 110 is the only accepted S-layer foundation. It remains frozen and
-  owns current q0 reconstruction; the new future layer may only predict motion
-  relative to that q0.
-- The future layer has three independent trainable runs: translation, rotation,
-  and combined. Stationary is deterministic zero motion. No run consumes the
-  output or parameters of another expert, and router/PnP/test remain outside
-  this stage.
-- The decoders are center-free continuous rigid operators. Translation predicts
-  one common velocity. Rotation predicts primary tangential velocity and yaw
-  rate. Combined predicts primary total velocity, planar acceleration and yaw
-  rate, the identifiable center-free form of constant center translation plus
-  constant yaw.
-- A 256-sample-per-class validation truth-parameter audit reconstructed
-  eligible trajectories at micrometre scale: P95 2.55e-6/1.68e-6/6.02e-6 m
-  for translation/rotation/combined. This is representational evidence only;
-  it does not use future truth at inference or establish learned accuracy.
-- Formal runs require clean committed source, immutable per-validation
-  checkpoints, sealed test, frozen V19 hashes, and crash-consistent resume.
+- 射频硬上限固定为 `20 Hz`；必须区分请求射频、实际发射事件射频、有效交战
+  时间内射频以及因安全门禁抑制的发射。
+- 命中率的分母使用实际发生的发射事件，不得使用 fire advice、请求命令或理论
+  槽位替代；命中事件与发射事件必须可追踪关联。
+- 干净输入基线必须版本化并可完全重放，且不得把模拟器真值绕过预测器接口直接
+  注入火控内部。
+- 第二层实验必须锁定火控代码、参数、随机种子、目标轨迹、弹道环境和发射上限，
+  只允许改变版本化的预测器输出质量配置。
+- 除总体射频与命中率外，后续至少按距离、目标运动状态、预测时域、云台误差、
+  预测误差、延迟和门禁原因分层报告；正式口径在基线审计后冻结。
