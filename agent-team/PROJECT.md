@@ -125,3 +125,190 @@ the status of these replay files.
   it does not use future truth at inference or establish learned accuracy.
 - Formal runs require clean committed source, immutable per-validation
   checkpoints, sealed test, frozen V19 hashes, and crash-consistent resume.
+
+## 2026-07-25 clean-F semantic handoff
+
+- The qualified r4 source stores complete four-handle truth histories and
+  futures. Predictor history exposes only one or two virtually visible handles
+  per event; hidden coordinates are masked. History and future are relabelled
+  together, so one handle is never spliced into another, and same-handle future
+  truth remains available after that handle leaves view.
+- The user-defined F boundary is a shared-weight **single-handle** causal
+  trajectory operator applied independently to every maintained armor handle.
+  F must not silently use all-handle pooling, circular messages, adjacent-edge
+  features, a broadcast relational latent, or a joint multi-handle projection.
+  S may still maintain cyclic handles and recover supported q0 state.
+- Rigid-body coupling is a consistency condition, not permission to hide
+  cross-handle state transfer inside F. If a future design needs one vehicle-
+  level shared motion state, that state requires a separate explicit interface
+  and acceptance decision; otherwise each F call infers its own future from
+  that handle's history.
+- Clean-truth F is an identifiability and upper-bound experiment, not the final
+  deployment claim. Later PnP noise may overwhelm short-arc difference and
+  curvature evidence. The user rejects an assumed physics-first priority;
+  clean and noisy-input robustness must remain separately measurable.
+
+## 2026-07-26 anonymous observable-target F reset (v24)
+
+- This section supersedes the 2026-07-25 same-handle F interpretation. F now
+  predicts the target that will be observable at each future query, not the
+  current physical plate after it leaves view. Source slots are used only while
+  building labels and are absent from F input/output.
+- V19-r2 epoch 110 remains the accepted frozen S foundation and is not retrained
+  at this gate. Phase A trains F with truth-S anonymous q0 relations. Only after
+  Phase A passes will the same F checkpoint be evaluated with frozen-S output;
+  S retraining requires evidence that frozen-S, rather than F, fails that A/B.
+- Sparse r4 endpoints cannot unwrap visibility switches. The qualified
+  derivative
+  `D:\仿真\dataset\autoaim-stage3-v1\derived\stage3-observable-future-v1-20260726-r6`
+  uses truth-only 1 ms label rollout, continuity-preserving visibility ties and
+  signed cumulative switch counts. It has 28,573 train and 9,733 validation
+  windows, 299,190 eligible queries, zero uncovered queries, observed step
+  range -5..+6, candidate range -6..+6 and `test_accessed=false`. Its manifest
+  SHA-256 is `bbbd0da95ddabc94375274ce724632e853654ee34b90b912b361ed2751ed2767`.
+- Each dynamic expert is an independent visible-stream TCN plus one shared
+  anonymous candidate head. Candidate rows contain only S-relative q0 position,
+  signed cumulative step, confidence and validity. The forward schema contains
+  no motion class, physical ID, slot ID, primary index, four-track pooling,
+  circular message passing or physics decoder. Stationary remains exact zero.
+- Loss is macro-balanced by signed step: switch CE plus SmoothL1 of the true
+  branch only. Error-branch positions receive zero gradient. Query and candidate
+  permutation equivariance and exact tau-zero identity are structural tests.
+- Sixteen dedicated data/model/loss tests pass under Torch 2.12 CPU; nine legacy
+  cyclic-track regressions also pass. Protected one-step and 20-step rotation
+  smokes execute end to end, but both are explicitly `gate_failed`; the latter
+  only demonstrates objective descent on a tiny CPU subset. Windows `yolov8`
+  provides Torch 2.7.1/CUDA 11.8 and passed a CUDA smoke, but formal 512-window
+  tiny-fit is waiting for the RTX 4060 to be free: an active NIGHTREIGN process
+  currently uses about 6.5/8.2 GB and 70%+ GPU. PnP, router, export, online
+  integration and test remain sealed.
+
+## 2026-07-26 observable-target F training result
+
+- F v9 implements the agreed anonymous future-visible-target definition: a
+  visible-stream history encoder, sample-local signed switch candidates, and a
+  learned history-conditioned continuous time basis. It contains no permanent
+  plate ID, fixed slot lookup or hand-written physical trajectory decoder.
+- Capacity was demonstrated on bounded tiny-fit runs and accepted by the user;
+  further precision refinement was explicitly stopped. Three independent
+  from-scratch full train/validation runs then completed under truth-S.
+- Held-out validation did not pass the historical millimetre gates. Final
+  conditional P95 is 6.337 mm for translation, 31.281 mm for rotation and
+  79.265 mm for combined; final hard-routed P99 is respectively
+  299.814/287.889/332.064 mm. The mismatch between conditional and hard tails
+  identifies anonymous target routing as a major error source, while rotation
+  and combined also retain continuous trajectory generalization error.
+- This closes the authorized F training execution but does not claim a
+  deployable accepted predictor. V19-r2 S remains frozen: truth-S already
+  exposes the present failure, so S retraining and frozen-S A/B are not the
+  next justified actions. PnP/test/router/export/online integration stay
+  sealed.
+
+## 2026-07-26 real-PnP frozen-F upper bound
+
+- The first PnP experiment is explicitly
+  `real_pnp_oracle_association_truth_s_upper_bound`, not a deployable tracker.
+  Every real PnP history point is rebased from its exposure tracker frame into
+  the q0 anchor frame, then associated with same-exposure past truth. History
+  switch labels and q0 candidates remain oracle/truth-S; future physical truth
+  is evaluation-only. Temporary slots and assignments are not exported.
+- The qualified paired derivative contains the same 38,306 clean r6 windows,
+  replays every clean tensor bit-exact, keeps test sealed, and retains all
+  failures in the denominator. q0 association coverage is 90.13%, strict
+  complete-32-event coverage is 59.54%, per-event coverage is 90.15%, and four
+  events are association-ambiguous. It is retained at
+  `D:\仿真\dataset\autoaim-stage3-v1\derived\stage3-observable-future-real-pnp-upper-bound-v1-20260726-r2`;
+  its manifest SHA-256 is
+  `d384210dafed98b87d43ec6fb62141f02e3a1e2b28035418ecee1a6718210497`.
+- On the same strict validation queries and the accepted frozen trajectory
+  checkpoints, conditional P95 changes from 5.63 to 1350.31 mm for
+  translation, 25.40 to 368.06 mm for rotation, and 81.04 to 937.01 mm for
+  combined. Frozen model state hashes are unchanged. The clean F is therefore
+  not robust to direct real-PnP coordinate substitution even under optimistic
+  oracle association and truth-S candidates. The retained formal reports are
+  under `D:\仿真\runtime\observable-f-pnp-upper-bound-r2`.
+- This result does not authorize a claim about the complete raw-PnP pipeline.
+  A deployable next stage still requires a causal, permutation-invariant
+  unordered-PnP association/S interface. Selector-only refinement is closed;
+  any next training should target observation-domain robustness while retaining
+  paired clean anti-forgetting metrics.
+
+## 2026-07-26 paired PnP robustness A/B
+
+- The user authorized two concurrent combined-motion training arms on Windows
+  `yolov8`/CUDA: A learns a causal selected-stream PnP-to-clean adapter while
+  keeping the accepted combined F epoch 180 bit-exact frozen; B initializes
+  V19-r2 S and the same F parent, then retrains both through an explicit
+  differentiable observation boundary.
+- The qualified common derivative is retained at
+  `D:\仿真\dataset\autoaim-stage3-v1\derived\stage3-observable-future-real-pnp-sf-upper-bound-v1-20260726-r4`.
+  Its manifest SHA-256 is
+  `6c25a6a3018ef641f10789bf4622933ef1a8fb0ce57b212ebc9a9e808ddc9836`.
+  It contains all 38,306 parent windows, keeps test sealed, and has 22,806
+  strict common-coverage rows (59.54%); combined train/validation support is
+  5,424/1,985.
+- Four-handle S tensors are associated by past same-exposure truth only, then
+  independently C4-shifted and direction-reversed per window. Handles have no
+  stable identity across windows, assignments are not exported, and the whole
+  experiment remains an oracle-associated non-deployable upper bound.
+
+## 2026-07-27 true-A observation mapping result
+
+- The prior adapter arm was found not to implement the user's intended A: it
+  bypassed S and did not learn non-current absolute candidate corrections. A
+  new 74,451-parameter causal, C4-equivariant, mask-preserving observation
+  mapper now learns paired PnP XYZ to clean physical XYZ before frozen S/F.
+- The mapper input allowlist is only observation XYZ/mask and event time/mask.
+  It has no physical plate ID, session/pair ID, primary/switch, motion class,
+  tau or future target input. The retained r4 data is still oracle-associated,
+  so this remains an upper bound rather than a deployable raw-PnP claim.
+- The retained downstream checkpoint is epoch 16/update 3552 of
+  `D:\仿真\models\engines\stage3-training\20260726-v27-pnp-to-clean-observation-full-r2`.
+  On 1,985 combined/common validation windows and 13,410 nonzero-time queries,
+  direct P95 is 115.84 mm, current P95 120.40 mm, conditional P95 536.82 mm,
+  hard P95 619.01 mm and switch accuracy 62.54%. S and F parent file/state
+  hashes remain unchanged and all 224 Stage-3 tests pass.
+- The true A materially improves the raw frozen-S/F baseline (conditional P95
+  984.38 mm) but does not beat joint B (350.42 mm). The main residual is frozen
+  S candidate/support recovery: mapped candidate P95 is 444.18 mm and invalid
+  q0 P95 is 481.69 mm. Clean observations through frozen S/F have a 252.50 mm
+  conditional floor, versus 81.04 mm for oracle truth-S into frozen F.
+- Mapper-only iteration is closed. The next review must choose between changing
+  S hypothesis/support semantics and defining a deployable unordered-PnP plus
+  quality-feature interface; no further epochs are justified on the current A.
+
+## 2026-07-27 dual-domain PnP F result
+
+- External PnP-to-clean correction is closed for this frozen downstream stack.
+  The v41 aligned mapper reaches 52.81 mm mapped relative-history P95, but its
+  frozen mapper/S/H/F conditional P95 is 517.81 mm. Clean-teacher distillation,
+  physical-future mapper training and a post-H history adapter finish at
+  478.04, 469.85 and 487.74 mm respectively. Their reachable hybrid teacher is
+  283.93 mm, so the adapters are not realizing the available counterfactual.
+- Clean and PnP observations now route externally to two independent anonymous
+  F checkpoints. `CLEAN` keeps the accepted combined epoch-180 F bit-exact;
+  `PNP_V41` uses a separate F initialized from that parent and trained on the
+  fixed v41 mapper -> V19 S -> diagnostic H input distribution. Domain,
+  physical ID and motion class are not neural inputs; unknown domains fail
+  closed.
+- Training is structurally split. The trajectory stage freezes the selector
+  heads and selects only by conditional P95/P99. Its retained checkpoint is
+  `20260727-v50-dual-domain-pnp-f-trajectory-full-r1/epoch-0030-update-002550.pt`:
+  conditional P50/P95/P99 is 39.70/215.85/537.76 mm and current P95 is
+  120.40 mm. This beats the exact old joint-B conditional P95 of 344.00 mm.
+- The selector stage freezes the entire trajectory partition and trains only
+  `switch_candidate_head` plus `switch_logit`. Its retained checkpoint is
+  `20260727-v52-dual-domain-pnp-f-selector-full-r1/epoch-0025-update-002125.pt`:
+  hard P50/P95/P99 is 45.76/363.54/560.30 mm, switch accuracy is 83.25%, and
+  minimum-step recall is 69.02%. Conditional output and upstream-input hashes
+  are bit-exact before/after selector training; all frozen state hashes pass.
+- All 261 Stage3 tests pass, including real-F one-step trajectory/selector
+  optimizer-isolation checks. These checkpoints are protected diagnostic
+  evidence, not deployable models.
+  The r4 derivative uses oracle association, H has legacy diagnostic provenance,
+  v41 and H are provenance-mismatched, source is dirty and test is sealed. The
+  same validation split has also selected checkpoints, triggered early stop and
+  compared several structures, so its numbers have adaptive validation bias.
+  The next legitimate work is a new untouched acceptance split, formalized
+  upstream provenance and an accepted unordered-PnP interface, not tuning the
+  completed dual-domain runs.

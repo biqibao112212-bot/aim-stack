@@ -2,7 +2,35 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-23 cyclic-track clean physical experts (active)
+## 2026-07-25 strict single-handle F redesign (active handoff)
+
+- No trainer is active. Repository `main` is at
+  `464605c46f496836897c1db9b8e76e2376376bf7`. The worktree has four preserved
+  uncommitted V23 draft files: `cyclic_rotation_ab_loss.py`,
+  `cyclic_rotation_ab_model.py`, `tests/test_cyclic_rotation_ab.py`, and
+  `train_cyclic_future_expert.py`.
+- V23 formal training was never launched. Its two aborted smoke runs are
+  invalid because source changed while they ran. The draft adds ordered local
+  multi-track relations and tail losses, conflicts with the newly clarified
+  strict single-handle F contract, and is paused pending an explicit
+  discard/rework decision.
+- V19-r2 epoch 110 remains the accepted frozen S/q0 foundation. PnP, router,
+  export, online integration and test remain sealed. All datasets and model
+  checkpoints are protected and retained.
+- Read-only validation audit: the last-32 primary switches in 4.4%/66.2%/59.6%
+  of translation/rotation/combined windows. Current-handle observed-span
+  P10/P50 is 0.250/0.296 s for translation, 0.041/0.244 s for rotation and
+  0.044/0.249 s for combined. At the nominal 0.5-second target, only
+  95.35%/43.99%/57.83% of q0-current tracks remain virtually visible, but
+  their same-handle future truth is still present; leaving view is supervised
+  extrapolation, while cold/opposite never-seen tracks remain excluded.
+- Current in-progress item for the next conversation: define and validate a
+  flattened per-handle dataset and strict `F_i(history_i, time, tau)` forward
+  contract. First stratify clean error by observed time span/arc and forecast-
+  to-history ratio; then decide architecture and training budget. Do not start
+  another formal run before this interface review.
+
+## 2026-07-23 cyclic-track clean physical experts (historical; superseded)
 
 - User explicitly returned the active scope to a no-PnP physical predictor and
   retained the specialist model: stationary, translation, rotation and a
@@ -683,3 +711,192 @@
 - Current in-progress item: commit the exact clean source and launch distinct
   30-epoch seed-0 A2/B2 controlled runs. PnP, router, export and test remain
   sealed.
+
+### 2026-07-26 v24 anonymous observable-target F execution
+
+- [x] Supersede same-handle future labels with future-visible target labels.
+- [x] Implement dense signed switch unwrapping, q0 history inheritance,
+  continuity-preserving ties and query-order-independent label extraction.
+- [x] Build and independently audit the qualified r6 train/validation
+  derivative: 38,306 windows, 299,190 eligible queries, zero uncovered,
+  candidate steps -6..+6, test sealed.
+- [x] Implement independent translation/rotation/combined visible-stream TCN
+  experts, shared permutation-equivariant candidate heads, exact tau-zero
+  identity and parameter-free stationary route.
+- [x] Implement per-signed-step balanced switch loss, true-branch-only position
+  loss, optional query-order-independent trend loss and mergeable validation
+  metrics.
+- [x] Pass 16 dedicated Torch behavior tests, 9 legacy cyclic regressions,
+  full derivative audit, checkpoint write smoke and 20-update descent smoke.
+- [ ] Run balanced 512-window / 5,000-update truth-S tiny-fit independently for
+  translation, rotation and combined in Windows `yolov8` when the RTX 4060 is
+  not occupied by the active NIGHTREIGN process. Do not displace that workload.
+- [ ] After all three truth-S gates pass, add and run frozen V19-S A/B without
+  changing the accepted F checkpoint. Report missing-candidate coverage outside
+  F error.
+- [ ] Decide whether S needs retraining only from the truth-S versus frozen-S
+  A/B evidence. Until then V19-r2 epoch 110 remains immutable.
+- [ ] Keep PnP, router, export, online integration and test sealed.
+# 2026-07-26 observable F full-training handoff
+
+- User decision: current tiny-fit precision is sufficient; stop refinement.
+- Completed capacity evidence: translation/rotation accepted; combined
+  accepted by explicit user judgment despite the earlier diagnostic 1 mm gate.
+- Active: from-scratch full train/validation for the three independent v9
+  experts.  Do not initialize formal runs from tiny-fit checkpoints.
+- Still pending after truth-S validation: safe frozen-S V19-r2 A/B pairing and
+  the evidence-based decision on whether S needs retraining.  Test/PnP remain
+  sealed.
+
+## 2026-07-26 observable F full-training closure
+
+- [x] Complete from-scratch truth-S full train/validation for translation,
+  rotation and combined in Windows `D:\Anaconda\envs\yolov8` on CUDA.
+- [x] Preserve all protected checkpoints/manifests and keep test/PnP/router/
+  export/online integration sealed (`test_accessed=false` for every run).
+- [x] Stop all tiny-fit and precision refinement under the user's explicit
+  acceptance decision; no continuation is authorized from a numeric gate.
+- [x] Record that formal held-out validation does not satisfy the historical
+  millimetre gates: final conditional P95 is 6.337/31.281/79.265 mm and final
+  hard-routed P99 is 299.814/287.889/332.064 mm for translation/rotation/
+  combined.
+- [x] Do not retrain S. The residual already appears with truth-S, so the
+  completed Phase-A evidence does not implicate frozen V19-r2.
+- [x] Defer frozen-S A/B: Phase A did not isolate a frozen-S regression, and
+  the current derivative lacks a proven hash-bound sample pairing adapter.
+  This is a deliberate evidence boundary, not an unfinished training run.
+- [ ] Any later work must begin as a new user-authorized definition/data audit,
+  not as more epochs or tail tuning on these runs.
+
+## 2026-07-26 real-PnP frozen-F upper-bound result
+
+- [x] Let the dedicated selector finish its fixed 10,000-update budget without
+  supervision or continuation. It stopped normally at `max_updates`; best
+  switch accuracy is 90.86%, but hard P95 remains 299.52 mm. The gate remains
+  failed and selector refinement is closed as a structural plateau.
+- [x] Build a qualified clean/PnP paired derivative from real observation-v4,
+  causal physical r4, truth-history r5 and observable r6. All 38,306 clean rows
+  replay bit-exact; test remains sealed. Strict complete-history PnP coverage is
+  22,806/38,306 (59.54%), with q0 coverage 90.13%.
+- [x] Freeze and evaluate the accepted translation epoch 205, rotation epoch
+  231 and combined epoch 180 checkpoints on CUDA. Paired conditional P95 is
+  1.350/0.368/0.937 m after real PnP, versus 0.0056/0.0254/0.0810 m on the same
+  clean queries. Every full model state hash remains unchanged.
+- [x] Keep hard routing diagnostic-only. The continuous true-branch failure is
+  already decisive, so the roughly 10% clean selector error is not the active
+  bottleneck at this stage.
+- [ ] Current decision point: agree on an observation-domain robustness layer.
+  The recommended next experiment is a causal PnP history denoiser/adapter
+  trained with paired clean targets and an explicit clean anti-forgetting gate;
+  no new training is active. A deployable result additionally needs a
+  permutation-invariant unordered-PnP association/S contract.
+
+## 2026-07-26 paired PnP robustness training
+
+- [x] Freeze a fair two-arm combined-motion contract on the identical 5,424
+  train / 1,985 validation common-coverage rows. Conditional true-branch error
+  is primary; hard routing is diagnostic only.
+- [x] Build and hash the qualified r4 S/F sidecar with window-local C4/reversal
+  anonymization, no fixed armor ID, no truth-filled failures and
+  `test_accessed=false`.
+- [x] Add the default-compatible differentiable F observation boundary, the A
+  causal adapter, and the B four-handle S-to-F composition. Pass both CUDA
+  two-update smokes and all 217 Stage-3 tests.
+- [ ] Active: run A and B concurrently for the fixed 10,000-update budget in
+  Windows `yolov8`; monitor only the first three validation rounds to estimate
+  ETA, then let both finish naturally without extra epochs or tuning.
+- [ ] After both finish, compare paired conditional errors, clean replay,
+  current-anchor error and supported/unsupported S roles. Do not claim raw-PnP
+  deployment; unordered association remains oracle-only in this experiment.
+
+## 2026-07-27 true-A PnP-to-physical mapper closure
+
+- [x] Correct the earlier A definition. The old selected-stream adapter bypassed
+  S and could not change non-current candidate absolute positions. The true A
+  now maps full sparse `[32,4,3]` PnP observations to paired clean physical XYZ,
+  then runs bit-exact frozen V19 S and frozen combined F epoch 180.
+- [x] Use a 74,451-parameter causal mapper with shared handle weights, invariant
+  pooling, no physical/session/pair ID, no primary/switch/motion/future input,
+  mask preservation, zero-init identity, strict causality and C4 equivariance.
+- [x] Train on the qualified r4 train/validation pairs in Windows `yolov8`/CUDA.
+  The full view supplies 28,322/9,688 windows and more than one million masked
+  train occurrences; truth remains loss-only and test remains sealed.
+- [x] Retain the downstream-selected checkpoint
+  `20260726-v27-pnp-to-clean-observation-full-r2/epoch-0016-update-003552.pt`
+  (SHA-256 `7d1cf2b0dcc5e358d43aab7d15a7a0c48546469d9263db47b4f9f4e59c5824db`).
+  On combined/common validation, direct point P95 is 115.84 mm, current P95 is
+  120.40 mm, conditional P95 is 536.82 mm, hard P95 is 619.01 mm and switch
+  accuracy is 62.54%. Frozen S/F state hashes are unchanged.
+- [x] Reject the robust-only, combined-only and primary-history-weighted runs:
+  none improves the frozen-S/F conditional result. Preserve all run evidence;
+  do not delete protected checkpoints.
+- [x] Complete all 224 Stage-3 tests in 13.14 s. No training process remains.
+- [ ] Next decision is architectural, not more epochs: either revise S support
+  for invalid/unseen candidate q0 or build the deployable unordered-PnP/quality
+  input contract. B remains the better current PnP predictor at 350.42 mm
+  conditional P95, but it is not clean-preserving.
+
+## 2026-07-27 A3 frozen-backbone q0 hypothesis adaptation
+
+- User authorized execution of A3. The accepted PnP observation mapper,
+  V19 S backbone and combined F motion backbone remain frozen; mapper-only
+  refinement is closed.
+- Active: freeze the no-leakage data/interface contract, then implement a small
+  C4-equivariant q0 hypothesis adapter H after frozen S. H may correct observed
+  and causally seen anonymous handles, predict support and uncertainty, and
+  compose adjacent/opposite roles; a never-seen cold handle receives no
+  deterministic coordinate loss.
+- Next: pass unit/integration gates, run a bounded train-only capacity check in
+  Windows `D:\Anaconda\envs\yolov8` on CUDA, then run the fixed full H budget
+  only if capacity is demonstrated.
+- After H acceptance: freeze mapper/S/H and the F motion/history/trajectory
+  paths, train only the anonymous switch selector heads, and verify conditional
+  trajectory output is bit-exact before/after selector training.
+- Required evidence: C4 equivariance, no reversal augmentation, optimizer owns
+  only H (then only router heads), mapper/S/F state hashes unchanged, combined
+  tau>0 conditional/hard metrics, support/role/horizon slices, test sealed.
+- Deployment remains out of scope: r4 uses oracle association, primary and
+  switch labels and is a non-deployable upper bound.
+
+## 2026-07-27 dual-domain PnP F closure
+
+- [x] Reject mapper/window distillation and post-H history adaptation after
+  fixed controlled runs: v41 517.81 mm, clean-teacher 478.04 mm,
+  physical-target 469.85 mm and history-adapter 487.74 mm conditional P95.
+- [x] Implement fail-closed external `CLEAN`/`PNP_V41` routing with independent
+  storage. Keep clean F, mapper, V19 S and H frozen and forbid domain, motion
+  class and physical identity as F inputs.
+- [x] Complete the trajectory-only run. Retain v50 epoch 30/update 2550 at
+  215.85 mm conditional P95; automatic plateau stop occurred at update 4250.
+  The frozen selector partition and every upstream/clean hash are unchanged.
+- [x] Complete the selector-only run. Retain v52 epoch 25/update 2125 at
+  363.54 mm hard P95, 83.25% switch accuracy and 69.02% minimum-step recall.
+  Trajectory state is bit-exact to the v50 parent, and v52 conditional outputs
+  are bit-exact between its own pre-training baseline and every validation.
+- [x] Pass all 261 Stage3 tests and checkpoint round-trip/partition audits in
+  Windows `D:\Anaconda\envs\yolov8` with CUDA. Test split remains sealed.
+- [ ] No training is active. Before any formal/deployable claim, rebuild or
+  retrain the mapper/H chain with matching clean provenance and replace the
+  oracle association with an accepted causal unordered-PnP interface. Reserve
+  a new untouched acceptance split because validation has been used
+  adaptively. Do not continue LR/epoch/loss sweeps on v50/v52.
+
+## 2026-07-27 provenance-clean formalization
+
+- [x] Synchronize the complete Stage3 source chain to local Git as separate
+  commits: archived cyclic evidence `7df60cd`, observable F `51089af`, paired
+  PnP A/B `41458e3`, mapper/H `94d4810`, rejected adapter controls `87275b9`,
+  and dual-domain F `050a2cf`. Protected model/data/runtime assets remain
+  outside Git. No remote push has been performed.
+- [ ] Active: add a formal-oracle training mode that requires a clean unchanged
+  commit, complete source-bundle hashes, independent split audit, matching
+  mapper/H provenance and fixed-final checkpoint policy.
+- [ ] Replay the v41 mapper architecture under the clean source baseline using
+  the immutable v27/v39 initial assets. Label those parents as legacy inputs;
+  do not claim that replay retroactively cleans their original provenance.
+- [ ] Train a new H against the exact replayed mapper, then train fixed-final
+  trajectory (2550 updates) and selector (2125 updates) PnP-F stages. Do not
+  reuse v35/v50/v52 weights as formal outputs.
+- [ ] Predeclare and validation-rehearse a single-use sealed holdout builder and
+  evaluator. Test remains unopened until the entire candidate lock is frozen
+  and the user explicitly authorizes one-time consumption.

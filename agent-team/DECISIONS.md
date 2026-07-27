@@ -856,3 +856,355 @@
      omega output. The first controlled comparison is limited to 30 epochs and
      must report relation coverage and the same q3 role metrics before any
      larger budget is authorized.
+
+117. The word "per-track" in v17--v22 described shared per-track output heads,
+     not a strict single-track F. V17 jointly encoded four handles with pooled
+     context and circular messages. V21-B still used all-track pooled context,
+     q0 adjacent edges, circular messages and a joint per-query Procrustes
+     projection. V22 additionally broadcast a multi-track relational latent.
+     These architectures therefore do not implement the user's clarified
+     `one maintained handle history -> the same handle future` interface.
+
+118. V17 motivated the S/F split: its 0.5-second oracle current-visible P95 was
+     about 0.12/49.18/15.39/45.61 cm for stationary/translation/rotation/
+     combined. V18 exposed stale hidden-q0 propagation, and V19-r2 epoch 110
+     became the accepted frozen S foundation, with about 0.97 cm current-visible
+     P95 and 7.02/9.33 cm rotation/combined warm-adjacent P95. V20 then reached
+     about 6.42 cm translation current-visible cascade P95, 20.12/20.69 cm
+     rotation current/warm P95, and 47.97/57.26 cm combined current/warm P95.
+     V21 deterministic-direction direct B improved rotation to 17.17/18.03 cm,
+     but remained far above the desired tail.
+
+119. Both v22 30-epoch runs completed cleanly at commit
+     `464605c46f496836897c1db9b8e76e2376376bf7`, with test sealed and V19
+     unchanged. Best A2 current/warm 0.5-second cascade P95 was 41.78/36.44 cm;
+     best B2 was 30.22/43.07 cm. Zeroing the learned relation vector changed
+     these metrics only at sub-mm/mm scale, and truth-q0 reruns remained about
+     41.93/34.86 and 30.39/41.84 cm. Thus S is not the dominant tail and v22 did
+     not learn to use its relation branch. Its loss/selection diverged, while
+     its 30-epoch schedule reached zero LR after only 8,940 steps versus v21's
+     53,640; this rejects the implemented v22 coupling, objective and schedule,
+     not neural single-track forecasting in principle.
+
+120. The r4 source holds full four-handle truth, while predictor input exposes
+     one or two visible handles and keeps each handle in a separate lane.
+     Same-handle future truth remains available after visibility is lost. At
+     nominal 0.5 seconds, q0-current tracks remain virtually visible in only
+     95.35%/43.99%/57.83% of translation/rotation/combined validation cases,
+     yet they retain labels. Leaving view is therefore supervised temporal
+     extrapolation, not zero-shot prediction. Cold and opposite never-seen
+     handles remain outside the accepted task and loss.
+
+121. The user-defined F contract supersedes multi-track relational fusion inside
+     F. One shared-weight F is invoked separately for every visible or warm
+     handle; it reads only that handle's ordered position/time/mask history and
+     predicts only the same handle. Identity mixing, all-track pooling,
+     circular messages, adjacent-edge features, broadcast relation state and
+     joint multi-handle projection are forbidden in F forward. A rigid-body
+     loss or evaluation may compare independently produced trajectories, but
+     may not transmit another handle's features into F.
+
+122. A computationally shared vehicle motion state cannot exist without an
+     information-transfer mechanism. If handles are strictly independent,
+     common motion is only a property of the truth and a consistency constraint;
+     each F call must infer equivalent latent dynamics from its own history. If
+     future requirements demand immediate transfer from one handle to another,
+     a separate, explicit tracker-level MotionContext (physical parameters or a
+     declared neural latent) must be designed and evaluated. Hidden multi-track
+     fusion inside a component still called "single-track F" is rejected.
+
+123. Clean single-track rotation is learnable in principle from a sufficiently
+     long non-degenerate arc without exposing center or yaw rate as outputs.
+     Combined motion is `p(t)=c0+v*t+R(omega*t)*r`; on a short arc, common
+     translation and rotational tangent velocity are weakly identifiable and
+     require small higher-order curvature evidence. In current validation,
+     current-track observed-span P10 is only 0.041 s for rotation and 0.044 s
+     for combined, while the 0.5-second forecast/history ratio P90 is 10.46/9.60.
+     This conditioning, plus the non-single-track representation and mixed
+     supervision path, is a plausible structural cause of the large tails; it
+     is not evidence that neural networks cannot learn regular arcs.
+
+124. Clean-truth physics remains an isolation/upper-bound tool only. Exact
+     adjacent-edge and single-track curvature signals can be overwhelmed by PnP
+     noise, especially through differencing. No final physics-first priority is
+     assumed. Clean and noisy-input evaluations must stay separate, and PnP
+     robustness, adapter boundaries and anti-forgetting gates require a later
+     explicit decision before PnP or end-to-end training resumes.
+
+125. The user's observable-target clarification supersedes Decisions 120--123
+     wherever they require same-handle future prediction. A training sample is
+     anchored at the currently selected visible plate, but every future query
+     re-applies the visibility rule and supervises that query's selected target.
+     Permanent physical plate identity is forbidden from F. A source slot may
+     exist transiently inside the offline builder only long enough to unwrap an
+     adjacent switch, after which it is replaced by a signed sample-local count.
+
+126. Sparse r4 future endpoints are insufficient supervision for this task:
+     they cannot distinguish no switch from a full revolution and can miss
+     intermediate transitions. V24 therefore constructs a 1 ms label-only
+     physical-truth stream from each already-qualified constant-motion anchor,
+     checks its sparse endpoints against exact r4 future truth, and accumulates
+     visibility switches without modulo reduction. This calculus is permitted
+     only in offline label generation; no physical rollout exists at inference.
+     Visibility ties preserve the preceding selection and q0 inherits the last
+     history selection. The qualified observed range is -5..+6, so the symmetric
+     candidate contract is -6..+6; overflow is never clipped or bucketed.
+
+127. One v24 dynamic F forward consumes a single selected-target relative
+     history, real time/dt/switch increments, detached current q0 position,
+     anonymous detached S candidate relations, signed candidate steps,
+     confidence/validity and arbitrary tau. Current absolute q0 is an allowed
+     observable feature because nearest-range visibility is not translation
+     invariant; withholding it makes translation-induced target selection
+     unidentifiable. It is not a plate identity. Candidate encoding and the
+     decoder are row-shared and permutation-equivariant. Translation, rotation
+     and combined instantiate separate parameters/optimizers/checkpoints;
+     stationary is a deterministic identity path and motion class stays outside
+     forward.
+
+128. V24 learns branch-conditioned trajectories rather than a probability-
+     averaged coordinate. Switch CE and position SmoothL1 are macro-balanced by
+     signed step. Position is gathered from the true candidate branch before
+     loss, so every wrong branch receives exactly zero position gradient.
+     Candidate/query permutations may only permute their matching output axes.
+     Every tau equal to zero, regardless of query order, has exact step-zero
+     probability one and bit-exact zero displacement. Missing true candidates,
+     out-of-horizon tau and invalid masks fail closed.
+
+129. V19-r2 epoch 110 is not retrained for v24 Phase A. The acceptance order is
+     fixed: (1) invariant/unit gates, (2) truth-S 512-window tiny-fit for each
+     dynamic expert, (3) truth-S train/validation run, (4) identical-F frozen-S
+     A/B with candidate coverage reported separately. Only a failure introduced
+     specifically at step 4 is evidence to revisit S. The current CPU smokes are
+     executable-path evidence only and remain `gate_failed`; they do not satisfy
+     any learned-accuracy gate.
+
+130. Windows `D:\Anaconda\envs\yolov8` is the required v24 training runtime;
+     it exposes Torch 2.7.1+cu118 and a CUDA-capable RTX 4060. WSL is retained
+     only as prior test evidence and must not run formal training. A Windows
+     CUDA one-step smoke passed. Formal training must not run concurrently with
+     the user's active NIGHTREIGN GPU workload, which was observed at about
+     6.5/8.2 GB and 70%+ utilization after the training process stopped. The
+     attempted no-checkpoint r2 process was terminated and its exact child PID
+     verified dead; restart must use a new non-overwriting output directory.
+# 2026-07-26 user acceptance: stop tiny-fit precision chasing
+
+- The user explicitly accepted the current observable-F precision and ordered
+  the team to stop further tiny-fit refinement.  The previous 1 mm capacity
+  gate is retained as a diagnostic metric, not a blocker that authorizes more
+  tuning.
+- The active F definition is v9: an anonymous visible-stream encoder, signed
+  sample-local switch routing, one tau-independent coefficient tensor per
+  sample/candidate, and a learned history-conditioned time basis.  It contains
+  no physical plate ID, fixed slot embedding, hand-written circle/ellipse
+  decoder, or translation-plus-rotation expert composition.
+- Accepted tiny-fit evidence: translation completed at conditional P95
+  0.896 mm; rotation completed at 0.946 mm; combined completed at 2.208 mm
+  with every observed signed-step routed correctly and hard P99 4.468 mm.
+- The interrupted combined tail-only continuation was stopped on request and
+  is diagnostic-only.  No further tiny-fit or tail-threshold tuning is allowed
+  under this decision.  Work proceeds to from-scratch full train/validation.
+
+## 2026-07-26 decision 131: close observable-F training without refinement
+
+- The three independent v9 experts completed their fixed from-scratch budgets
+  in Windows `yolov8`/CUDA: translation 10,000 updates, rotation 15,000, and
+  combined 15,000. All stopped normally at `max_updates`, used the same r6
+  manifest SHA-256, and kept test sealed. No formal run was initialized from a
+  tiny-fit checkpoint.
+- Final held-out truth-S validation is diagnostic rather than an acceptance
+  claim. Translation has switch macro/minimum-step recall 0.8811/0.6923,
+  conditional P50/P95/P99 1.109/6.337/17.100 mm and hard P95/P99
+  10.487/299.814 mm. Rotation has 0.9488/0.8679,
+  6.748/31.281/87.411 mm and 38.520/287.889 mm. Combined has
+  0.8509/0.7516, 17.755/79.265/128.392 mm and 304.358/332.064 mm.
+- The manifests correctly retain `status=gate_failed`: the user stopped
+  precision chasing, but that instruction does not retroactively turn the old
+  millimetre gates into passed evidence. Training completion and model
+  acceptance are distinct claims.
+- No more epochs, tiny-fit work, CVaR/tail tuning or threshold search will be
+  launched. The large hard-routed tails are retained as evidence of held-out
+  route/generalization error, not as permission for further optimization.
+- S remains frozen and is not retrained. Because the held-out failure is
+  already measurable with truth-S relations, a frozen-S A/B cannot establish
+  S as the current cause. It is therefore deferred until a future task first
+  supplies a provenance-safe paired adapter and a reason to revisit S.
+- The completed artifacts are protected evidence. PnP, test, motion router,
+  export and online fire-control integration remain outside this closure.
+
+## 2026-07-26 decision 132: stop selector iteration and accept its error as a baseline
+
+- The dedicated selector was allowed to finish its already-fixed 10,000-update
+  budget naturally, but no continuation, supervision loop or extra capacity is
+  authorized. Its best validation accuracy is 90.86% and hard P95 remains
+  299.52 mm while the frozen conditional trajectory is bit-exact. This confirms
+  that more selector epochs do not address the wrong-board structural tail.
+- The remaining roughly 9--10% clean route error is retained as a diagnostic
+  baseline. It is not optimized during the first PnP stage, and hard metrics
+  cannot select a PnP robustness model at this gate.
+
+## 2026-07-26 decision 133: define the first real-PnP experiment as an oracle upper bound
+
+- The first PnP arm uses real observation-v4 xyz, but same-exposure past truth
+  performs the injective association and supplies signed history switch labels.
+  Truth-S supplies all q0 candidate roles; the current role is replaced by the
+  q0 PnP measurement, so every candidate with `step mod 4 == 0` is bit-exact
+  zero. This is deliberately optimistic and non-deployable.
+- Each exposure-local PnP point is transformed through world into the q0 anchor
+  tracker frame before history differencing. A sample enters the strict primary
+  metric only if all selected 32 history events and q0 are uniquely associated.
+  Missing and ambiguous events are reported against the full clean denominator,
+  never truth-filled, interpolated or silently removed.
+- The paired derivative must replay the existing r6 arrays bit-exact and remain
+  hash-bound to observation-v4, truth-history r5, causal r4 and r6. Only train
+  and validation shards are opened; test remains sealed. Physical slots and
+  oracle assignments are transient builder state and are absent from F input.
+
+## 2026-07-26 decision 134: direct clean-F PnP substitution is rejected
+
+- Under the strict oracle upper bound, real PnP increases paired conditional
+  P95 from 5.63 to 1350.31 mm for translation, 25.40 to 368.06 mm for rotation,
+  and 81.04 to 937.01 mm for combined. Paired mean degradation is respectively
+  364.49, 170.18 and 250.73 mm, with bootstrap 95% intervals excluding zero.
+  All frozen state hashes remain unchanged.
+- The result is not explained by the clean selector error: it is measured on
+  the labelled true branch. PnP q0 anchor P95 is 885.24/158.26/179.51 mm on the
+  strict translation/rotation/combined subsets, while conditional response
+  drift P95 is 1351.11/368.89/934.77 mm. The frozen network amplifies the
+  observation-domain change rather than merely inheriting the anchor offset.
+- Therefore the next justified learned component is observation-domain
+  robustness: a causal PnP denoiser/adapter or paired noisy-input F training
+  with frozen clean targets and an explicit clean anti-forgetting gate. A raw
+  PnP deployment claim additionally requires a separately accepted anonymous,
+  permutation-invariant association/S interface. More clean selector training
+  or direct PnP substitution is rejected.
+
+## 2026-07-26 decision 135: run paired adapter versus joint S+F robustness arms
+
+- Arm A is a learned causal PnP-to-clean selected-stream adapter followed by
+  the bit-exact frozen accepted combined F epoch 180. It has no geometry
+  decoder or physical-ID input and is supervised by paired clean current,
+  history, candidates and future absolute position.
+- Arm B is literal joint retraining, not a relabelled F-only experiment. V19-r2
+  S and combined F epoch 180 initialize independent trainable copies, and F's
+  observation boundary is differentiable only when the new explicit opt-in is
+  used; the legacy default remains detached and bit-exact compatible.
+- B consumes one/two virtual-visible oracle-associated PnP handles. All four S
+  q0 outputs remain hypothesis rows so F keeps four residue classes;
+  unsupported cold roles are represented by zero confidence and are reported
+  separately, never truth-filled or silently removed.
+- Fairness is fixed to the same combined-motion common subset, seed, 10,000
+  updates, F objective and validation split. Conditional true-branch P95 is the
+  selection metric, hard routing is diagnostic, and paired clean replay is an
+  anti-forgetting constraint. The experiment remains non-deployable because
+  same-exposure past truth supplies association, primary and switch labels.
+
+## 2026-07-27 decision 136: replace the misdefined A with a true observation mapper
+
+- Decision 135's A implementation is retained as historical evidence but is
+  not considered a faithful test of `PnP -> physical observation -> frozen S/F`.
+  It read a selected stream plus truth-S candidate relations, bypassed S, and
+  preserved every non-current candidate absolute position.
+- The replacement mapper reads only PnP XYZ, observation mask, event time and
+  event mask. Primary, switch, motion class, future truth, session/pair IDs and
+  permanent armor identity are forbidden model inputs. Primary/common flags may
+  select or weight loss rows but are not passed to `forward`.
+- Corrected observations retain the PnP mask and enter frozen V19 S. Frozen F
+  history is rebuilt from the corrected per-event selected absolute positions;
+  falling back to stored raw-PnP history is forbidden. Candidate relations and
+  confidence come only from frozen S.
+- Direct mapping is learnable: on the shared combined/common validation points,
+  P95 falls from 184.82 to 115.84 mm and current P95 from 179.51 to 120.40 mm.
+  The complete frozen-S/F conditional P95 falls from 984.38 to 536.82 mm, but
+  remains worse than joint B's 350.42 mm.
+- Controlled replacements locate the residual: clean current alone gives
+  481.87 mm, clean selected history 321.49 mm, truth candidates 471.48 mm, and
+  clean history plus truth candidates 156.74 mm. Mapped-S candidate P95 is
+  444.18 mm and invalid q0 P95 is 481.69 mm. A mask-preserving mapper cannot
+  invent an unobserved candidate, so further mapper epochs are not authorized.
+- The clean-observation frozen-S/F conditional floor is 252.50 mm, while the
+  oracle truth-S frozen-F floor is 81.04 mm. The remaining decision therefore
+  concerns S hypothesis/support semantics and deployable association/quality
+  inputs, not mapper size or training duration.
+
+## 2026-07-27 decision 137: close external correction of a frozen clean F
+
+- A C4-aligned v4 window mapper preserves the accepted q0 mapper bit-exact and
+  reduces mapped relative-history P95 to 52.81 mm, but the frozen downstream
+  chain still gives 517.81 mm conditional P95. This disproves the assumption
+  that a lower pointwise mapper loss is sufficient for the frozen clean F.
+- Task-aware mapper distillation against the clean teacher (478.04 mm), direct
+  physical future supervision (469.85 mm), and a post-H anonymous history
+  adapter (487.74 mm) all fail their fixed gates. The history-adapter hybrid
+  teacher reaches 283.93 mm, showing a reachable counterfactual that the small
+  external residuals do not learn.
+- No further mapper, adapter, LR, loss-weight or epoch sweep is authorized.
+  External correction remains useful only as frozen upstream preprocessing for
+  the next structural control.
+
+## 2026-07-27 decision 138: split clean F and PnP F by trusted observation domain
+
+- `CLEAN` and `PNP_V41` are explicit external enum routes. Unknown strings fail
+  closed. Clean F and PnP F are independently allocated models/checkpoints with
+  no shared tensor storage. The observation domain is not inferred and is not
+  passed into the network; physical ID and motion class remain forbidden.
+- Clean F stays bit-exact frozen. PnP F is initialized from it once, then learns
+  the actual fixed v41 mapper -> V19 S -> diagnostic H distribution without
+  clean replay, parent-weight regularization or simultaneous S/H updates. This
+  is a domain-expert architecture split, not a last-layer fine-tune.
+- Trajectory and selection are separate optimization stages. Trajectory freezes
+  `switch_candidate_head`/`switch_logit`, sets switch loss to zero and selects
+  only by conditional P95/P99. Selector freezes every trajectory parameter,
+  trains only those two selector modules, and must preserve the full validation
+  conditional-output hash bit-exact.
+
+## 2026-07-27 decision 139: accept diagnostic dual-domain F and stop tuning
+
+- The v50 trajectory run stopped automatically after four stagnant validation
+  checks. Its retained update-2550 checkpoint has conditional P50/P95/P99
+  39.70/215.85/537.76 mm, improving P95 by 58.3% from v41's 517.81 mm and by
+  37.3% from old joint B's exact 344.00 mm. It passes the predefined 250 mm
+  strong gate without changing selector or frozen upstream state.
+- The v52 selector run retains update 2125. Relative to its trajectory parent,
+  hard P95 falls from 440.70 to 363.54 mm, switch accuracy rises from 72.67% to
+  83.25%, and minimum-step recall rises from 37.35% to 69.02%. Conditional P95
+  stays 215.85 mm and the complete conditional tensor stream is bit-exact.
+- v52 also improves the old joint-B hard P95 of 391.39 mm, although its
+  363.54 mm tail remains materially larger than the conditional error. This is
+  accepted as evidence that explicit stage isolation works, not as permission
+  for another selector tuning campaign.
+- Tail risk remains unresolved: PnP conditional P99 is 537.76 mm, hard P99 is
+  560.30 mm and the maximum error is 5.99 m. The frozen clean branch on the
+  same validation rows has 76.17 mm conditional P95, leaving roughly 140 mm of
+  P95 domain gap even after the structural improvement.
+- All 261 Stage3 tests pass and loader/parameter-partition audits pass. The
+  result remains `diagnostic_only`: oracle association, legacy H provenance,
+  v41/H mismatch and dirty source prevent formal or deployable status. Test was
+  not accessed. Because the same validation split selected checkpoints, drove
+  early stopping and compared multiple structures, it is adaptively reused and
+  cannot serve as an untouched final acceptance set. The next work must fix
+  those provenance/interface/evaluation boundaries; v50/v52 tuning is closed.
+
+## 2026-07-27 decision 140: formalize by replay, not by relabelling diagnostics
+
+- The previous source chain is now preserved in local Git, but this does not
+  convert v41/v35/v50/v52 into clean-commit artifacts. Their manifests and
+  diagnostic limitations remain immutable historical evidence.
+- The minimum honest next chain is: clean-source replay of the v41 architecture,
+  H trained against that exact mapper, then fixed-final dual-domain trajectory
+  and selector stages. Formal trainers must reject dirty worktrees, source
+  changes during a run, mapper/H mismatch, diagnostic H, and adaptive best-
+  checkpoint promotion.
+- Replaying v41 from immutable v27/v39 checkpoints makes the new training run
+  reproducible but retains those parents as explicit legacy input assets. A
+  claim of fully provenance-clean lineage would additionally require rebuilding
+  those initial assets from their own clean sources. Until then the precise
+  claim is `formal_oracle_evaluation`, never `deployable_pipeline`.
+- Fixed budgets are inherited once from the accepted diagnostic evidence and
+  cannot be tuned: mapper 264 updates, H 4224, trajectory 2550 and selector
+  2125. Validation uses fixed-final checkpoints and predeclared gates; it no
+  longer selects among epochs.
+- The current validation split is adaptively exhausted. A release-candidate
+  lock must bind commit, environment, dataset, mapper/S/H/F hashes, evaluator
+  and gates before a single-use holdout can be opened. Any holdout failure
+  consumes that holdout; it cannot authorize post-test tuning.
