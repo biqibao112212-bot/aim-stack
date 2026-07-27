@@ -24,6 +24,9 @@ D:\仿真\repos\aim-stack\
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1
 ```
 
+默认运行只保留异步 bridge 汇总和模拟器统计，不写 pipeline JSON/JSONL，也不继承
+Stage3 预测器采样环境。只有诊断预测器采样开销时才显式增加 `-FullTelemetry`。
+
 可视验收：
 
 ```powershell

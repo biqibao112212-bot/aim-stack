@@ -1,12 +1,19 @@
 [CmdletBinding()]
 param([switch]$Visible, [switch]$RebuildBridge, [switch]$DynamicRange,
+      [switch]$StationaryRange,
       [int]$DurationSeconds = 0,
       [double]$RangeTargetDistanceMeters = 0,
       [double]$RangeSpinDegPerSec = 30,
       [switch]$PipelineOnly,
+      [switch]$FullTelemetry,
       [switch]$PnpJointDiagnostics)
 
 $ErrorActionPreference = 'Stop'
+
+if ($DynamicRange -and $StationaryRange) {
+    throw 'DynamicRange and StationaryRange are mutually exclusive.'
+}
+$rangeEnabled = $DynamicRange -or $StationaryRange
 
 function Stop-ProcessTree([int]$RootPid) {
     $children = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
@@ -53,7 +60,7 @@ done
 for pid in $remaining; do
   kill -KILL "$pid" 2>/dev/null || true
 done
-'@.Replace('__TARGET__',$target)
+'@.Replace('__TARGET__',$target).Replace("`r",'')
     $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($cleanup))
     & wsl.exe -d Ubuntu-OSTEP -- bash -lc "echo $payload | base64 -d | bash" | Out-Null
 }
@@ -87,7 +94,8 @@ $bridgeLog = Join-Path $evidenceRoot 'bridge.log'
 $simulatorStdoutLog = Join-Path $evidenceRoot 'simulator.stdout.log'
 $simulatorStderrLog = Join-Path $evidenceRoot 'simulator.stderr.log'
 $simulatorStatsJson = Join-Path $evidenceRoot 'simulator.stats.json'
-if ($DynamicRange) {
+$projectileEventsJsonl = Join-Path $evidenceRoot 'projectiles.jsonl'
+if ($rangeEnabled) {
     if ($RangeTargetDistanceMeters -gt 0 -and
         ($RangeTargetDistanceMeters -lt 0.5 -or $RangeTargetDistanceMeters -gt 12.0)) {
         throw 'RangeTargetDistanceMeters must be within the simulator-supported 0.5..12.0 m range.'
@@ -120,16 +128,18 @@ $ipcDirWsl = Convert-ToWslPath $ipcDir
 $sdkRootWsl = Convert-ToWslPath $sdkRoot
 $modelWsl = Convert-ToWslPath $model
 $bridgeDebugJsonWsl = Convert-ToWslPath $bridgeDebugJson
-$bridgeDebugJsonlWsl = if ($PipelineOnly) { '' } else { Convert-ToWslPath $bridgeDebugJsonl }
-$pipelineDebugJsonWsl = Convert-ToWslPath $pipelineDebugJson
-$pipelineDebugJsonlWsl = Convert-ToWslPath $pipelineDebugJsonl
+$bridgeDebugJsonlWsl = if ($FullTelemetry -and -not $PipelineOnly) { Convert-ToWslPath $bridgeDebugJsonl } else { '' }
+$pipelineDebugJsonWsl = if ($FullTelemetry -or $PipelineOnly) { Convert-ToWslPath $pipelineDebugJson } else { 'OFF' }
+$pipelineDebugJsonlWsl = if ($FullTelemetry -or $PipelineOnly) { Convert-ToWslPath $pipelineDebugJsonl } else { '' }
 $bridgeLogWsl = Convert-ToWslPath $bridgeLog
 $forceRebuild = if ($RebuildBridge) { '1' } else { '0' }
 $pnpJointDiagnosticsValue = if ($PnpJointDiagnostics) { 'ON' } else { 'OFF' }
-$sceneMode = if ($DynamicRange) { 'shooting_range_g2' } else { 'off' }
+$sceneMode = if ($StationaryRange) { 'shooting_range_g2_stationary' } elseif ($DynamicRange) { 'shooting_range_g2' } else { 'off' }
 $spinDegString = $RangeSpinDegPerSec.ToString('0.###',[Globalization.CultureInfo]::InvariantCulture)
 Write-Output "bridge_token=$bridgeToken"
-if ($DynamicRange) {
+if ($StationaryRange) {
+    Write-Output "range_target=3 motion=stationary distance_m=$RangeTargetDistanceMeters"
+} elseif ($DynamicRange) {
     Write-Output "range_target=3 motion=spin spin_deg_s=$RangeSpinDegPerSec distance_m=$RangeTargetDistanceMeters"
 }
 Assert-PortFree TCP $lock.simulator.tcp_image_port
@@ -155,13 +165,18 @@ export AIM_SIM_RANGE_TARGET_NUMBER='3'
 export AIM_SIM_RANGE_SPIN_DEG_S='__SPIN_DEG_S__'
 export AIM_SIM_FORCE_REBUILD=__REBUILD__
 export AIM_SIM_PNP_PARALLEL_JOINT_DIAGNOSTICS=__PNP_JOINT_DIAGNOSTICS__
+# Predictor-research capture is intentionally excluded from the fire-control
+# runtime. Use the dedicated stage3 launcher when those artifacts are needed.
+unset AIM_SIM_STAGE3_OBSERVATIONS AIM_SIM_STAGE3_TRUTH AIM_SIM_STAGE3_SESSION_ID
+unset AIM_SIM_STAGE3_DISTANCE_M AIM_SIM_STAGE3_TRUTH_GIMBAL
+unset AIM_SIM_DEBUG_FOV_JSONL AIM_SIM_PROFILE_DETECTOR_STAGES
 exec bash scripts/run_talos_bridge_wsl.sh armor >'__BRIDGE_LOG__' 2>&1
-'@.Replace('__BRIDGE__',$bridgeRootWsl).Replace('__IPC__',$ipcDirWsl).Replace('__SDK__',$sdkRootWsl).Replace('__MODEL__',$modelWsl).Replace('__SCENE_MODE__',$sceneMode).Replace('__BRIDGE_DEBUG_JSON__',$bridgeDebugJsonWsl).Replace('__BRIDGE_DEBUG_JSONL__',$bridgeDebugJsonlWsl).Replace('__PIPELINE_DEBUG_JSON__',$pipelineDebugJsonWsl).Replace('__PIPELINE_DEBUG_JSONL__',$pipelineDebugJsonlWsl).Replace('__BRIDGE_LOG__',$bridgeLogWsl).Replace('__TOKEN__',$bridgeToken).Replace('__SPIN_DEG_S__',$spinDegString).Replace('__REBUILD__',$forceRebuild).Replace('__PNP_JOINT_DIAGNOSTICS__',$pnpJointDiagnosticsValue)
+'@.Replace('__BRIDGE__',$bridgeRootWsl).Replace('__IPC__',$ipcDirWsl).Replace('__SDK__',$sdkRootWsl).Replace('__MODEL__',$modelWsl).Replace('__SCENE_MODE__',$sceneMode).Replace('__BRIDGE_DEBUG_JSON__',$bridgeDebugJsonWsl).Replace('__BRIDGE_DEBUG_JSONL__',$bridgeDebugJsonlWsl).Replace('__PIPELINE_DEBUG_JSON__',$pipelineDebugJsonWsl).Replace('__PIPELINE_DEBUG_JSONL__',$pipelineDebugJsonlWsl).Replace('__BRIDGE_LOG__',$bridgeLogWsl).Replace('__TOKEN__',$bridgeToken).Replace('__SPIN_DEG_S__',$spinDegString).Replace('__REBUILD__',$forceRebuild).Replace('__PNP_JOINT_DIAGNOSTICS__',$pnpJointDiagnosticsValue).Replace("`r",'')
 
 $env:BEVY_ASSET_ROOT = $releaseRoot
 $env:TALOS_IPC_DIR = $ipcDir
 $env:DAEDALUS_SCENE_CONTROL_BIND = '0.0.0.0:5603'
-if ($DynamicRange) {
+if ($rangeEnabled) {
     $env:DAEDALUS_RANGE_ACTIVE_TARGET_NUMBER = '3'
     $env:DAEDALUS_RANGE_TARGET3_INITIAL_YAW_DEG = '0'
     if ($RangeTargetDistanceMeters -gt 0) {
@@ -181,6 +196,7 @@ $env:DAEDALUS_TALOS_CAPTURE_MAX_HZ = '200'
 $env:DAEDALUS_TALOS_IMAGE_TRANSPORT = 'tcp'
 $env:DAEDALUS_AUTO_AIM_ON_START = '1'
 $env:DAEDALUS_STATS_JSON = $simulatorStatsJson
+$env:DAEDALUS_PROJECTILE_EVENTS_JSONL = $projectileEventsJsonl
 $env:RUST_LOG = 'warn'
 $env:PATH = "$(Join-Path $releaseRoot 'bin');$env:PATH"
 if ($Visible) {
@@ -232,7 +248,7 @@ try {
         }
         if ($DurationSeconds -gt 0) {
             $ready = $true
-            if ($DynamicRange) {
+            if ($rangeEnabled) {
                 $activeConnections = @(Get-NetTCPConnection -LocalPort $lock.simulator.tcp_image_port -State Established -ErrorAction SilentlyContinue)
                 $ready = $activeConnections.Count -gt 0
             }

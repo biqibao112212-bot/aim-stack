@@ -6,7 +6,7 @@
 - 工作目录：`D:\仿真\active-worktrees\aim-stack-fire-control-gimbal`
 - 所属模块：`modules/autoaim`
 - 基线提交：`464605c46f496836897c1db9b8e76e2376376bf7`
-- 模拟器锁：`Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0`
+- 模拟器锁：`Daedalus Simulator 1.0.3 / DaedalusSimSdk 1.0.0`
 - 公共依赖入口：`SIMULATOR_CONSUMER_GUIDE.md` 与 `simulator.lock.json`
 
 ## 目标与所有权
@@ -37,9 +37,15 @@
   `modules/autoaim/src/aim_core_from_vivsionn/AngleSolver/COORDINATE_CONTRACT.md`。
 - 不修改 `D:\仿真\repos\daedalus-simulator`、正式 Release、SDK 或发布脚本；
   不复制模拟器源码，不手写或镜像 SHM/TCP 协议。
-- Simulator 1.0.1 / SDK 1.0.0 是固定的集成和验收依赖，不是当前研究对象。
+- Simulator 1.0.3 / SDK 1.0.0 是固定的集成和验收依赖，不是当前研究对象。
   在纯算法、控制器和离线单元研究阶段不要求启动模拟器；测量实际发射事件、
   命中率和闭环云台行为时，使用该锁定版本作为统一验收环境，但不修改它。
+- 模拟器默认且正式的性能运行方式是 Release `start-simulator.ps1` 的高性能模式：
+  无可见预览、DX12、1440×1080 RGB24、TCP 5602、采集配置上限 200 Hz。遇到
+  启动、渲染、IPC、场景或性能错误时，先查 Release `docs/` 和消费者指南，禁止
+  为排错修改模拟器源码、SDK、启动器或 Release 内容。
+- 集成场景固定使用原生 Shooting Range（SDK 场景 `shooting_range`，人工 F8）。
+  场景切换必须通过 `SceneControlClient`，不得修改模拟器内部实体或资源。
 - 发现模拟器缺陷或新增公共接口需求时，执行
   `SIMULATOR_CHANGE_APPROVAL_REQUIRED`，先提交证据和提案，等待明确批准。
 - 模型、ONNX、TensorRT engine、checkpoint、数据集、标注和正式 Release 均为
@@ -73,3 +79,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-architecture
   只允许改变版本化的预测器输出质量配置。
 - 除总体射频与命中率外，后续至少按距离、目标运动状态、预测时域、云台误差、
   预测误差、延迟和门禁原因分层报告；正式口径在基线审计后冻结。
+
+## 分阶段门禁
+
+1. 校验正式 Release 清单并以默认高性能模式正常启动；使用公开统计字段证明主
+   更新、250 Hz 物理、离屏采集和 TCP 健康。正式消费者任务不重编译模拟器源码。
+2. 通过 SDK ACK 切换到原生 Shooting Range，再构建、运行本分支完整自瞄；性能
+   与 Release `docs/SIMULATOR_PERFORMANCE.md` 的联合基线按相同口径比较。参考值为
+   完整视觉 121.233 Hz、流水线累计均值 6.032 ms，且采集丢帧、GPU map 错误、
+   TCP 错误和曝光关联错误均为 0；这些值是参考基线而非无条件永久承诺。
+3. 性能门禁通过后检查静态弹道。外参只能来自启用的完整 SE(3)
+   `R_CAMERA2GIMBAL/T_CAMERA2GIMBAL` 标定；不得新增经验高度、角度、距离或弹道
+   补偿。任何补偿需求必须先提交多距离残差证据并等待用户批准。
+4. 静态弹道必须在多个距离验证装甲板正中心，而非只验证“击中装甲板”。距离矩阵、
+   中心误差口径和重复次数在运行前冻结。
+5. 上述门禁通过后才允许真值替换实验。真值只在预测器输出接口处作为验证 A/B，
+   不得进入神经预测器输入，也不得绕过目标关联、控制时序和发射事件统计。

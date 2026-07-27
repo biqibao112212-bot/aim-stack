@@ -1162,6 +1162,8 @@ int runSequenceSelectionSelfTest() {
   meta.header.created_ns = 100;
   meta.header.image_width = kImageWidth;
   meta.header.image_height = kImageHeight;
+  meta.header.meta_size = kMetaSize;
+  meta.header.sdk_abi_revision = kSdkAbiRevision;
   meta.image.slots[0] = image(6, 0);
   meta.image.slots[1] = image(7, 1);
 

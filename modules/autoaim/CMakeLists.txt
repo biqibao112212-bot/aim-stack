@@ -194,6 +194,17 @@ if(UNIX)
     aim_sim_tcp_image_receiver
     DaedalusSimSdk::DaedalusSimSdk
   )
+  enable_testing()
+  foreach(bridge_self_test IN ITEMS
+      sequence
+      wall-control
+      image-transport
+      ground-truth)
+    add_test(
+      NAME aim_sim_bridge_${bridge_self_test}_self_test
+      COMMAND aim_sim_talos_auto_aim_bridge --self-test-${bridge_self_test}
+    )
+  endforeach()
 
   if(AIM_SIM_BUILD_SCENE_CONTROL_CLI)
     add_executable(aim_sim_scene_control_cli

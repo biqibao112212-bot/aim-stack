@@ -1,6 +1,6 @@
 # aim_sim_bridge
 
-> 当前权威入口：本模块属于 `D:\仿真\repos\aim-stack` 的自瞄 B；模拟器只能来自 `D:\仿真\releases\daedalus-simulator\1.0.1`。下方保留的旧路径和旧集成说明仅用于迁移溯源，不得作为新任务入口。
+> 当前权威入口：本模块属于 `D:\仿真\repos\aim-stack` 的自瞄 B；模拟器只能来自 `D:\仿真\releases\daedalus-simulator\1.0.3`。下方保留的旧路径和旧集成说明仅用于迁移溯源，不得作为新任务入口。
 
 ## 当前构建与运行
 
@@ -11,9 +11,20 @@ Set-Location D:\仿真\repos\aim-stack
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1
 ```
 
+静止靶场射频复现实验（原生 Shooting Range、3 号靶）：
+
+```powershell
+$env:AIM_SIM_EVIDENCE_ROOT = 'D:\仿真\runtime\fire-control-gimbal\stationary-run'
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1 `
+  -StationaryRange -RangeTargetDistanceMeters 5 -DurationSeconds 45
+```
+
+默认不写逐帧 pipeline JSON/JSONL，以免诊断 I/O 干扰被测流水线；只有诊断任务才显式传入
+`-FullTelemetry`。
+
 启动器固定使用：
 
-- Release SDK：`D:\仿真\releases\daedalus-simulator\1.0.1\sdk`；
+- Release SDK：`D:\仿真\releases\daedalus-simulator\1.0.3\sdk`；
 - 模型：`D:\仿真\models\engines\armor.engine`；
 - 图像：`1440×1080 RGB24 / TCP 5602 / latest-only`；
 - 云台命令：`UDP 5601`，无需 F5 或按住空格授权；
