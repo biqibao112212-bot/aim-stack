@@ -19,6 +19,18 @@ from .dual_domain_future import (
     assert_independent_models,
     route_future_expert,
 )
+from .formal_run_contract import (
+    capture_formal_contract,
+    configure_formal_runtime,
+    load_protocol,
+    require_asset_binding,
+    require_compatible_contracts,
+    require_exact_protocol_arguments,
+    require_fixed_final_state,
+    require_formal_checkpoint_manifest,
+    resolve_formal_schedule,
+    verify_formal_contract,
+)
 from .observable_future_pnp_ab import (
     ObservableFuturePnPSFDataset,
     canonicalize_direction_keep_c4,
@@ -33,6 +45,7 @@ from .pnp_q0_hypothesis_adapter import (
     load_frozen_hypothesis_adapter,
     load_frozen_pnp_mapper,
 )
+from .split_audit import require_formal_split_isolation
 from .train_causal_physical_ab import _git_state, _seed, _to_device
 from .train_observable_future_pnp_ab import (
     _absolute_loss,
@@ -54,6 +67,25 @@ RUN_SCHEMA = "stage3-dual-domain-pnp-f-v1"
 SELECTOR_PARAMETER_PREFIXES = ("switch_candidate_head.", "switch_logit.")
 LEGACY_JOINT_B_CONDITIONAL_P95_M = 0.3440020978450775
 MAPPER_BASELINE_CONDITIONAL_P95_M = 0.517807
+FORMAL_SOURCE_BUNDLE = (
+    "training/stage3/formalization_protocol.json",
+    "training/stage3/formal_run_contract.py",
+    "training/stage3/train_dual_domain_pnp_f.py",
+    "training/stage3/dual_domain_future.py",
+    "training/stage3/observable_future_model.py",
+    "training/stage3/observable_future_loss.py",
+    "training/stage3/observable_future_pnp_ab.py",
+    "training/stage3/train_observable_future_pnp_ab.py",
+    "training/stage3/train_pnp_window_mapper_distillation.py",
+    "training/stage3/build_observable_future_pnp_sf_upper_bound_dataset.py",
+    "training/stage3/pnp_observation_mapper.py",
+    "training/stage3/pnp_q0_hypothesis_adapter.py",
+    "training/stage3/train_pnp_q0_hypothesis_adapter.py",
+    "training/stage3/cyclic_future_foundation.py",
+    "training/stage3/train_causal_physical_ab.py",
+    "training/stage3/split_audit.py",
+    "training/stage3/schema.py",
+)
 
 
 def _configure_trainable_parameters(
@@ -256,12 +288,56 @@ def _assert_initial_output_equivalence(
 
 
 def train(args: argparse.Namespace) -> Path:
-    if not (
+    formal_contract: dict[str, Any] | None = None
+    formal_protocol: dict[str, Any] | None = None
+    formal_root_protocol: dict[str, Any] | None = None
+    if args.formal_oracle:
+        if any((
+            args.diagnostic_only, args.allow_diagnostic_h,
+            args.allow_mapper_h_mismatch,
+        )):
+            raise ValueError("formal-oracle F forbids diagnostic opt-ins")
+        protocol_path, protocol = load_protocol(
+            args.formal_protocol if args.formal_protocol else None
+        )
+        formal_protocol = protocol[args.stage]
+        formal_root_protocol = protocol
+        exact_names = (
+            "seed", "batch_size", "device", "workers", "epochs",
+            "learning_rate", "minimum_learning_rate", "warmup_updates",
+            "weight_decay", "gradient_clip_norm",
+        )
+        require_exact_protocol_arguments(args, formal_protocol, exact_names)
+        if args.max_updates != int(formal_protocol["schedule_total_updates"]):
+            raise ValueError("formal dual-domain LR schedule differs from protocol")
+        if args.stage == "trajectory":
+            require_exact_protocol_arguments(args, formal_protocol, (
+                "position_weight", "position_mse_weight", "rate_weight",
+                "position_tail_weight", "position_tail_fraction",
+                "huber_beta_m", "rate_huber_beta_mps", "rate_tau_floor_s",
+                "macro_balance_weight", "position_macro_balance_weight",
+                "switch_focal_gamma",
+            ))
+        else:
+            require_exact_protocol_arguments(
+                args, formal_protocol, (
+                    "switch_weight", "macro_balance_weight",
+                    "switch_focal_gamma",
+                )
+            )
+        if args.train_limit or args.validation_limit:
+            raise ValueError("formal-oracle F cannot limit train or validation")
+        configure_formal_runtime(args.device, args.workers)
+        formal_contract = capture_formal_contract(
+            FORMAL_SOURCE_BUNDLE, protocol_path=protocol_path,
+            requested_device=args.device, workers=args.workers,
+        )
+    elif not (
         args.diagnostic_only
         and args.allow_diagnostic_h
         and args.allow_mapper_h_mismatch
     ):
-        raise ValueError("dual-domain PnP F requires explicit diagnostic opt-ins")
+        raise ValueError("diagnostic dual-domain F requires explicit opt-ins")
     if args.stage == "trajectory":
         args.switch_weight = 0.0
     elif args.stage == "selector":
@@ -288,6 +364,12 @@ def train(args: argparse.Namespace) -> Path:
     canonicalize_direction_keep_c4(
         validation_dataset.tensors, validation_dataset.pair_ids
     )
+    if args.formal_oracle:
+        split_isolation = require_formal_split_isolation(
+            train_dataset, validation_dataset
+        )
+    else:
+        split_isolation = None
     generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -302,7 +384,7 @@ def train(args: argparse.Namespace) -> Path:
     mapper, mapper_provenance = load_frozen_pnp_mapper(args.mapper_checkpoint)
     s_model, s_provenance = load_frozen_v19(args.s_checkpoint)
     h_model, h_provenance = load_frozen_hypothesis_adapter(
-        args.h_checkpoint, allow_diagnostic=True
+        args.h_checkpoint, allow_diagnostic=not args.formal_oracle
     )
     pnp_initial_checkpoint = (
         args.pnp_init_checkpoint
@@ -310,6 +392,16 @@ def train(args: argparse.Namespace) -> Path:
     )
     pnp_f, pnp_parent = load_observable_f_checkpoint(pnp_initial_checkpoint)
     clean_f, clean_f_parent = load_observable_f_checkpoint(args.f_checkpoint)
+    if args.formal_oracle:
+        assert (
+            formal_contract is not None
+            and formal_root_protocol is not None
+        )
+        assets = formal_root_protocol["assets"]
+        if train_dataset.manifest_sha256 != assets["dataset_manifest_sha256"]:
+            raise ValueError("formal dual-domain F dataset asset mismatch")
+        require_asset_binding("frozen_s", s_provenance, assets["frozen_s"])
+        require_asset_binding("clean_f", clean_f_parent, assets["clean_f"])
     if mapper_provenance["provenance"]["dataset_manifest_sha256"] != train_dataset.manifest_sha256:
         raise ValueError("mapper and dual-domain F datasets differ")
     if h_provenance["provenance"]["dataset_manifest_sha256"] != train_dataset.manifest_sha256:
@@ -325,7 +417,39 @@ def train(args: argparse.Namespace) -> Path:
         "h_expected": h_frozen["frozen_mapper"]["state_dict_sha256"],
         "loaded": mapper_provenance["state_dict_sha256"],
     }
-    if mapper_h_mismatch["h_expected"] == mapper_h_mismatch["loaded"]:
+    if args.formal_oracle:
+        if mapper_h_mismatch["h_expected"] != mapper_h_mismatch["loaded"]:
+            raise ValueError("formal-oracle F forbids mapper/H mismatch")
+        mapper_parent = mapper_provenance["provenance"]
+        if (
+            mapper_parent.get("formal_oracle_evaluation") is not True
+            or not isinstance(mapper_parent.get("formal_source_contract"), dict)
+            or h_frozen.get("formal_oracle_evaluation") is not True
+            or not isinstance(h_frozen.get("formal_source_contract"), dict)
+        ):
+            raise ValueError("formal-oracle F requires formal mapper and H")
+        require_compatible_contracts(
+            "mapper", mapper_parent["formal_source_contract"], formal_contract
+        )
+        require_compatible_contracts(
+            "H", h_frozen["formal_source_contract"], formal_contract
+        )
+        h_checkpoint_path = Path(args.h_checkpoint).resolve()
+        h_manifest = json.loads(
+            (h_checkpoint_path.parent / "run_manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        require_formal_checkpoint_manifest(
+            "formal dual-domain H parent",
+            h_checkpoint_path,
+            h_manifest,
+            expected_update=int(
+                formal_root_protocol["hypothesis"]["fixed_final_update"]
+            ),
+            checkpoint_update=int(h_provenance["update"]),
+        )
+    elif mapper_h_mismatch["h_expected"] == mapper_h_mismatch["loaded"]:
         raise ValueError("diagnostic mapper/H mismatch opt-in was unnecessary")
     selector_parent_metrics: dict[str, Any] | None = None
     if args.stage == "trajectory":
@@ -387,6 +511,33 @@ def train(args: argparse.Namespace) -> Path:
             )
         if selector_payload.get("model_config") != pnp_f.config:
             raise ValueError("selector parent model config differs after reload")
+        if args.formal_oracle:
+            if (
+                selector_provenance.get("formal_oracle_evaluation") is not True
+                or selector_provenance.get("fixed_final_checkpoint") is not True
+                or not isinstance(
+                    selector_provenance.get("formal_source_contract"), dict
+                )
+            ):
+                raise ValueError("formal selector requires a formal trajectory parent")
+            require_compatible_contracts(
+                "trajectory",
+                selector_provenance["formal_source_contract"],
+                formal_contract,
+            )
+            parent_manifest_path = Path(args.pnp_init_checkpoint).resolve().parent / "run_manifest.json"
+            parent_manifest = json.loads(
+                parent_manifest_path.read_text(encoding="utf-8")
+            )
+            require_formal_checkpoint_manifest(
+                "formal selector trajectory parent",
+                args.pnp_init_checkpoint,
+                parent_manifest,
+                expected_update=int(
+                    formal_root_protocol["trajectory"]["fixed_final_update"]
+                ),
+                checkpoint_update=int(selector_payload["update"]),
+            )
         selector_parent_metrics = selector_payload.get("validation")
         if not isinstance(selector_parent_metrics, dict):
             raise ValueError("selector parent lacks validation metrics")
@@ -439,6 +590,12 @@ def train(args: argparse.Namespace) -> Path:
     epoch_updates = len(train_loader)
     planned_updates = args.epochs * epoch_updates
     total_updates = min(planned_updates, args.max_updates) if args.max_updates > 0 else planned_updates
+    stop_update = args.max_updates
+    if args.formal_oracle:
+        assert formal_protocol is not None
+        total_updates, stop_update = resolve_formal_schedule(
+            args.max_updates, planned_updates, formal_protocol
+        )
     if total_updates <= 0:
         raise ValueError("dual-domain F requires at least one update")
     history: list[dict[str, Any]] = []
@@ -493,12 +650,21 @@ def train(args: argparse.Namespace) -> Path:
             for name, value in components.items():
                 sums[name] = sums.get(name, 0.0) + float(value.detach())
             batches += 1
-            if args.max_updates > 0 and update >= args.max_updates:
+            if stop_update > 0 and update >= stop_update:
                 stop = True
-                stop_reason = "max_updates"
+                stop_reason = (
+                    "fixed_final_update" if args.formal_oracle
+                    else "max_updates"
+                )
                 break
 
-        if epoch <= 3 or epoch % args.validation_interval == 0 or stop or epoch == args.epochs:
+        validate_now = (
+            (stop or epoch == args.epochs)
+            if args.formal_oracle else
+            (epoch <= 3 or epoch % args.validation_interval == 0
+             or stop or epoch == args.epochs)
+        )
+        if validate_now:
             metrics = evaluate(
                 pnp_f, clean_f, mapper, s_model, h_model,
                 validation_loader, device,
@@ -529,6 +695,13 @@ def train(args: argparse.Namespace) -> Path:
                     "shared_trainable_parameters": False,
                 },
                 "training_stage": args.stage,
+                "formal_oracle_evaluation": bool(args.formal_oracle),
+                "fixed_final_checkpoint": bool(args.formal_oracle),
+                "full_chain_provenance_clean": False,
+                "formal_source_contract": formal_contract,
+                "train_split_audit": train_dataset.split_audit,
+                "validation_split_audit": validation_dataset.split_audit,
+                "split_isolation": split_isolation,
                 "frozen_mapper": mapper_provenance,
                 "frozen_s": s_provenance,
                 "frozen_h": h_provenance,
@@ -541,11 +714,13 @@ def train(args: argparse.Namespace) -> Path:
                 "anonymous_candidate_contract_retained": True,
                 "physical_id_input": False,
                 "motion_class_forward_input": False,
-                "diagnostic_only": True,
-                "diagnostic_reasons": [
-                    "oracle_association", "legacy_h_diagnostic_provenance",
-                    "mapper_h_provenance_mismatch", "dirty_training_source",
-                ],
+                "diagnostic_only": not args.formal_oracle,
+                "diagnostic_reasons": (
+                    [
+                        "oracle_association", "legacy_h_diagnostic_provenance",
+                        "mapper_h_provenance_mismatch", "dirty_training_source",
+                    ] if not args.formal_oracle else []
+                ),
                 "oracle_association": True,
                 "deployable_pipeline": False,
                 "test_accessed": False,
@@ -573,7 +748,7 @@ def train(args: argparse.Namespace) -> Path:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
             }
             history.append(item)
-            if best is None or selection < tuple(best["selection"]):
+            if args.formal_oracle or best is None or selection < tuple(best["selection"]):
                 best = {
                     "epoch": epoch, "update": update,
                     "path": checkpoint_name,
@@ -598,7 +773,10 @@ def train(args: argparse.Namespace) -> Path:
                 "provenance": provenance,
             }
             _atomic_json(output / "run_progress.json", progress)
-            if args.stage == "trajectory" and update >= 2000:
+            if (
+                not args.formal_oracle
+                and args.stage == "trajectory" and update >= 2000
+            ):
                 conditional_p95 = float(
                     pnp_metrics["conditional_position"]["p95_m"]
                 )
@@ -634,6 +812,14 @@ def train(args: argparse.Namespace) -> Path:
     }
     if not all(frozen_unchanged.values()):
         raise RuntimeError("dual-domain F changed a frozen component")
+    if args.formal_oracle:
+        assert formal_contract is not None and formal_protocol is not None
+        require_fixed_final_state(
+            f"formal {args.stage}", formal_protocol,
+            update=update, stop_reason=stop_reason,
+            history=history, best=best,
+        )
+        verify_formal_contract(formal_contract)
     manifest = json.loads(
         (output / "run_progress.json").read_text(encoding="utf-8")
     )
@@ -691,6 +877,66 @@ def train(args: argparse.Namespace) -> Path:
                 frozen_unchanged.values()
             ),
         }
+    if args.formal_oracle:
+        gates = load_protocol(
+            args.formal_protocol if args.formal_protocol else None
+        )[1]["presealed_gates"]
+        pnp = best_metrics["pnp_domain"]
+        clean = best_metrics["clean_frozen_domain"]
+        formal_gates = {
+            "pnp_conditional_p95": (
+                float(pnp["conditional_position"]["p95_m"])
+                <= gates["pnp_conditional_p95_m_max"]
+            ),
+            "pnp_conditional_p99": (
+                float(pnp["conditional_position"]["p99_m"])
+                <= gates["pnp_conditional_p99_m_max"]
+            ),
+            "current_p95": (
+                float(best_metrics["current_position_error"]["p95_m"])
+                <= gates["current_p95_m_max"]
+            ),
+            "clean_conditional_p95": (
+                float(clean["conditional_position"]["p95_m"])
+                <= gates["clean_conditional_p95_m_max"]
+            ),
+            "clean_hard_p95": (
+                float(clean["hard_routed_position"]["p95_m"])
+                <= gates["clean_hard_p95_m_max"]
+            ),
+            "clean_switch_accuracy": (
+                float(clean["switch_accuracy"])
+                >= gates["clean_switch_accuracy_min"]
+            ),
+            "frozen_components": all(frozen_unchanged.values()),
+        }
+        if args.stage == "selector":
+            formal_gates.update({
+                "selector_hard_p95": (
+                    float(pnp["hard_routed_position"]["p95_m"])
+                    <= gates["selector_hard_p95_m_max"]
+                ),
+                "selector_hard_p99": (
+                    float(pnp["hard_routed_position"]["p99_m"])
+                    <= gates["selector_hard_p99_m_max"]
+                ),
+                "switch_accuracy": (
+                    float(pnp["switch_accuracy"])
+                    >= gates["switch_accuracy_min"]
+                ),
+                "minimum_step_recall": (
+                    float(pnp["minimum_step_switch_recall"] or 0.0)
+                    >= gates["minimum_step_recall_min"]
+                ),
+                "conditional_output_bit_exact": bool(
+                    manifest["gate"]["conditional_output_bit_exact"]
+                ),
+                "upstream_input_bit_exact": bool(
+                    manifest["gate"]["upstream_input_bit_exact"]
+                ),
+            })
+        manifest["formal_gates"] = formal_gates
+        manifest["formal_gate_passed"] = all(formal_gates.values())
     manifest["gate_passed"] = all(manifest["gate"].values())
     _atomic_json(output / "run_manifest.json", manifest)
     return output / "run_manifest.json"
@@ -714,6 +960,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--diagnostic-only", action="store_true")
     result.add_argument("--allow-diagnostic-h", action="store_true")
     result.add_argument("--allow-mapper-h-mismatch", action="store_true")
+    result.add_argument("--formal-oracle", action="store_true")
+    result.add_argument("--formal-protocol", default="")
     result.add_argument("--device", default="cuda")
     result.add_argument("--seed", type=int, default=20260727)
     result.add_argument("--batch-size", type=int, default=64)

@@ -888,10 +888,12 @@
   PnP A/B `41458e3`, mapper/H `94d4810`, rejected adapter controls `87275b9`,
   and dual-domain F `050a2cf`. Protected model/data/runtime assets remain
   outside Git. No remote push has been performed.
-- [ ] Active: add a formal-oracle training mode that requires a clean unchanged
-  commit, complete source-bundle hashes, independent split audit, matching
-  mapper/H provenance and fixed-final checkpoint policy.
-- [ ] Replay the v41 mapper architecture under the clean source baseline using
+- [x] Add a formal-oracle training mode that requires one clean unchanged
+  commit, canonical protocol/source/environment hashes, locked CUDA
+  determinism, immutable asset hashes, independent split audits, matching
+  mapper/H provenance and one fixed-final validation checkpoint. All 271
+  Stage3 tests pass before the source commit.
+- [ ] Active: replay the v41 mapper architecture under the clean source baseline using
   the immutable v27/v39 initial assets. Label those parents as legacy inputs;
   do not claim that replay retroactively cleans their original provenance.
 - [ ] Train a new H against the exact replayed mapper, then train fixed-final

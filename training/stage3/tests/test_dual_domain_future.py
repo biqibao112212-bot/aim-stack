@@ -1,4 +1,6 @@
 from copy import deepcopy
+import json
+from pathlib import Path
 
 import pytest
 import torch
@@ -7,7 +9,13 @@ from torch import nn
 from training.stage3.dual_domain_future import (
     ObservationDomain,
     assert_independent_models,
+    load_formal_dual_domain_checkpoint,
     route_future_expert,
+)
+from training.stage3.formal_run_contract import (
+    load_protocol,
+    repository_root,
+    sha256_file,
 )
 from training.stage3.observable_future_model import AnonymousCandidateFutureExpert
 from training.stage3.train_dual_domain_pnp_f import (
@@ -160,3 +168,60 @@ def test_real_f_optimizer_steps_are_strictly_stage_isolated() -> None:
         for name in frozen_selector_names
     )
     assert before_output.shape == after_output.shape
+
+
+def test_formal_dual_loader_requires_passed_bit_exact_selector(
+    tmp_path: Path,
+) -> None:
+    model = _small_real_f()
+    protocol_path, protocol = load_protocol()
+    contract = {
+        "protocol_path": protocol_path.relative_to(repository_root()).as_posix(),
+        "protocol_sha256": sha256_file(protocol_path),
+        "protocol_schema_version": protocol["schema_version"],
+    }
+    provenance = {
+        "training_stage": "selector",
+        "formal_oracle_evaluation": True,
+        "fixed_final_checkpoint": True,
+        "diagnostic_only": False,
+        "deployable_pipeline": False,
+        "formal_source_contract": contract,
+    }
+    checkpoint = tmp_path / "selector.pt"
+    torch.save({
+        "schema_version": "stage3-dual-domain-pnp-f-v1",
+        "model_class": type(model).__name__,
+        "model_config": model.config,
+        "model": model.state_dict(),
+        "epoch": 25,
+        "update": protocol["selector"]["fixed_final_update"],
+        "provenance": provenance,
+    }, checkpoint)
+    manifest = {
+        "status": "complete",
+        "stop_reason": "fixed_final_update",
+        "formal_gate_passed": True,
+        "update": protocol["selector"]["fixed_final_update"],
+        "provenance": provenance,
+        "best": {
+            "path": checkpoint.name,
+            "sha256": sha256_file(checkpoint),
+            "update": protocol["selector"]["fixed_final_update"],
+        },
+        "history": [{"update": protocol["selector"]["fixed_final_update"]}],
+        "gate": {
+            "conditional_output_bit_exact": True,
+            "upstream_input_bit_exact": True,
+        },
+    }
+    manifest_path = tmp_path / "run_manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    loaded, loaded_provenance = load_formal_dual_domain_checkpoint(checkpoint)
+    assert loaded.config == model.config
+    assert loaded_provenance["formal_provenance"] == provenance
+
+    manifest["gate"]["conditional_output_bit_exact"] = False
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="preserve"):
+        load_formal_dual_domain_checkpoint(checkpoint)

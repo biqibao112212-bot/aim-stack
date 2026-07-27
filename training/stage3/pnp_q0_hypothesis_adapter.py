@@ -9,7 +9,6 @@ receive a finite shared structural prior but no coordinate supervision.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from .pnp_observation_mapper import (
     CausalPnPObservationMapper,
     WindowPnPObservationMapper,
 )
+from .split_audit import build_split_audit
 
 
 H_INPUT_FIELDS = (
@@ -56,14 +56,6 @@ _INTERNAL_FIELDS = (
     "t0_ns",
     "pair_id",
 )
-
-
-def _stable_string_set_sha256(values: set[str]) -> str:
-    digest = hashlib.sha256()
-    for value in sorted(values):
-        digest.update(value.encode("utf-8"))
-        digest.update(b"\n")
-    return digest.hexdigest()
 
 
 def _undo_reflection_keep_c4_origin(
@@ -168,36 +160,29 @@ class PnPQ0HypothesisDataset(Dataset):
             str(sign): int((merged["pnp_s_direction_sign"] == sign).sum())
             for sign in (-1, 1)
         }
-        self.session_ids = tuple(str(value) for value in merged["session_id"])
-        sessions = set(self.session_ids)
-        sample_keys = {
-            f"{session}\x1f{int(t0_ns)}\x1f{pair_id}"
-            for session, t0_ns, pair_id in zip(
-                merged["session_id"], merged["t0_ns"], merged["pair_id"]
-            )
-        }
         split_shards = {
             f"{item['path']}\x1f{item['sha256']}"
             for item in self.manifest["shards"] if str(item["split"]) == split
         }
-        self.split_audit = {
-            "split": split,
-            "sample_count": int(len(merged["session_id"])),
-            "unique_sample_key_count": int(len(sample_keys)),
-            "duplicate_sample_key_count": int(
-                len(merged["session_id"]) - len(sample_keys)
-            ),
-            "session_count": int(len(sessions)),
-            "session_set_sha256": _stable_string_set_sha256(sessions),
-            "sample_key_set_sha256": _stable_string_set_sha256(sample_keys),
-            "shard_set_sha256": _stable_string_set_sha256(split_shards),
-            "sample_strategy": (
-                "full_split" if sample_limit <= 0
-                else "deterministic_even_span_without_replacement"
-            ),
-            "sample_limit": int(sample_limit),
-            "motion_class": motion_class,
-        }
+        sample_strategy = (
+            "full_split" if sample_limit <= 0
+            else "deterministic_even_span_without_replacement"
+        )
+        (
+            self.split_audit,
+            self.session_set,
+            self.sample_key_set,
+        ) = build_split_audit(
+            split=split,
+            session_ids=merged["session_id"],
+            t0_ns=merged["t0_ns"],
+            pair_ids=merged["pair_id"],
+            shard_tokens=split_shards,
+            sample_limit=sample_limit,
+            motion_class=motion_class,
+            sample_strategy=sample_strategy,
+        )
+        self.session_ids = tuple(str(value) for value in merged["session_id"])
         exposed = H_INPUT_FIELDS + H_LABEL_FIELDS + H_CLEAN_CONTROL_FIELDS
         self.tensors = {
             name: torch.from_numpy(np.ascontiguousarray(merged[name]))
@@ -206,10 +191,7 @@ class PnPQ0HypothesisDataset(Dataset):
         self.split = split
         self.motion_class = motion_class
         self.canonical_direction = True
-        self.sample_strategy = (
-            "full_split" if sample_limit <= 0
-            else "deterministic_even_span_without_replacement"
-        )
+        self.sample_strategy = sample_strategy
 
     def __len__(self) -> int:
         return int(self.tensors["pnp_s_obs_m"].shape[0])
@@ -644,6 +626,13 @@ def load_frozen_hypothesis_adapter(
         raise ValueError("H train-sourced validation must be diagnostic-only")
     if diagnostic_only and not allow_diagnostic:
         raise ValueError("diagnostic H checkpoint is forbidden in formal use")
+    formal_oracle = provenance.get("formal_oracle_evaluation") is True
+    if formal_oracle and (
+        diagnostic_only
+        or provenance.get("fixed_final_checkpoint") is not True
+        or not isinstance(provenance.get("formal_source_contract"), dict)
+    ):
+        raise ValueError("formal-oracle H provenance is incomplete")
     expected_contract = {
         "test_accessed": False,
         "oracle_association": True,
@@ -693,6 +682,11 @@ def load_frozen_hypothesis_adapter(
             or manifest.get("source_sha256") != source_sha
         ):
             raise ValueError("formal H is not the manifest-declared best")
+        if formal_oracle and (
+            manifest.get("formal_gate_passed") is not True
+            or manifest.get("update") != payload.get("update")
+        ):
+            raise ValueError("formal-oracle H did not pass its fixed-final gate")
     config = payload["model_config"]
     model = C4Q0HypothesisAdapter(
         torch.tensor(config["position_mean"], dtype=torch.float32),

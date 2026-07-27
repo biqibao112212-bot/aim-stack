@@ -16,6 +16,18 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from .cyclic_future_foundation import load_frozen_v19
+from .formal_run_contract import (
+    capture_formal_contract,
+    configure_formal_runtime,
+    load_protocol,
+    require_asset_binding,
+    require_compatible_contracts,
+    require_exact_protocol_arguments,
+    require_fixed_final_state,
+    require_formal_checkpoint_manifest,
+    resolve_formal_schedule,
+    verify_formal_contract,
+)
 from .observable_future_pnp_ab import (
     load_observable_f_checkpoint,
     sha256_file,
@@ -28,10 +40,26 @@ from .pnp_q0_hypothesis_adapter import (
     load_frozen_pnp_mapper,
     roll_s_output_c4,
 )
+from .split_audit import require_formal_split_isolation
 from .train_causal_physical_ab import _git_state, _seed, _to_device
 
 
 RUN_SCHEMA = "stage3-pnp-q0-hypothesis-adapter-run-v1"
+FORMAL_SOURCE_BUNDLE = (
+    "training/stage3/formalization_protocol.json",
+    "training/stage3/formal_run_contract.py",
+    "training/stage3/train_pnp_q0_hypothesis_adapter.py",
+    "training/stage3/pnp_q0_hypothesis_adapter.py",
+    "training/stage3/pnp_observation_mapper.py",
+    "training/stage3/observable_future_pnp_ab.py",
+    "training/stage3/build_observable_future_pnp_sf_upper_bound_dataset.py",
+    "training/stage3/split_audit.py",
+    "training/stage3/schema.py",
+    "training/stage3/cyclic_future_foundation.py",
+    "training/stage3/cyclic_anchor_edge_model.py",
+    "training/stage3/cyclic_track_model.py",
+    "training/stage3/train_causal_physical_ab.py",
+)
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -352,6 +380,36 @@ def build_h_optimizer(
 
 
 def train(args: argparse.Namespace) -> Path:
+    formal_contract: dict[str, Any] | None = None
+    formal_protocol: dict[str, Any] | None = None
+    formal_root_protocol: dict[str, Any] | None = None
+    formal_assets: dict[str, Any] | None = None
+    if args.formal_oracle:
+        protocol_path, protocol = load_protocol(
+            args.formal_protocol if args.formal_protocol else None
+        )
+        formal_protocol = protocol["hypothesis"]
+        formal_root_protocol = protocol
+        formal_assets = protocol["assets"]
+        require_exact_protocol_arguments(args, formal_protocol, (
+            "seed", "batch_size", "device", "workers", "epochs",
+            "channels",
+            "message_layers", "dropout", "age_scale_s", "learning_rate",
+            "minimum_learning_rate", "warmup_updates", "weight_decay",
+            "gradient_clip_norm", "huber_beta_m", "clean_weight",
+            "q0_weight", "edge_weight", "opposite_weight", "support_weight",
+            "sigma_weight", "c4_weight", "maximum_parameters",
+            "motion_class", "validation_from_train", "patience",
+        ))
+        if args.max_updates != int(formal_protocol["schedule_total_updates"]):
+            raise ValueError("formal H LR schedule differs from protocol")
+        if args.train_limit or args.validation_limit:
+            raise ValueError("formal H cannot limit train or validation")
+        configure_formal_runtime(args.device, args.workers)
+        formal_contract = capture_formal_contract(
+            FORMAL_SOURCE_BUNDLE, protocol_path=protocol_path,
+            requested_device=args.device, workers=args.workers,
+        )
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     _seed(args.seed)
@@ -386,16 +444,55 @@ def train(args: argparse.Namespace) -> Path:
             raise ValueError("H train/validation sessions overlap")
     if mapper_provenance["provenance"]["dataset_manifest_sha256"] != train_dataset.manifest_sha256:
         raise ValueError("H mapper and paired dataset manifests differ")
+    if args.formal_oracle:
+        assert (
+            formal_contract is not None
+            and formal_assets is not None
+            and formal_root_protocol is not None
+        )
+        mapper_parent = mapper_provenance["provenance"]
+        if mapper_parent.get("formal_oracle_evaluation") is not True:
+            raise ValueError("formal H requires a formal-oracle mapper replay")
+        if not isinstance(mapper_parent.get("formal_source_contract"), dict):
+            raise ValueError("formal H mapper lacks a source contract")
+        require_compatible_contracts(
+            "mapper", mapper_parent["formal_source_contract"], formal_contract
+        )
+        if train_dataset.manifest_sha256 != formal_assets["dataset_manifest_sha256"]:
+            raise ValueError("formal H dataset asset mismatch")
+        require_asset_binding("frozen_s", s_provenance, formal_assets["frozen_s"])
+        require_asset_binding("clean_f", f_provenance, formal_assets["clean_f"])
+        mapper_checkpoint_path = Path(mapper_provenance["path"])
+        mapper_manifest_path = mapper_checkpoint_path.parent / "run_manifest.json"
+        mapper_manifest = json.loads(
+            mapper_manifest_path.read_text(encoding="utf-8")
+        )
+        require_formal_checkpoint_manifest(
+            "formal H mapper parent",
+            mapper_checkpoint_path,
+            mapper_manifest,
+            expected_update=int(
+                formal_root_protocol["mapper"]["fixed_final_update"]
+            ),
+            checkpoint_update=int(mapper_provenance["update"]),
+        )
     if (
         mapper_provenance["provenance"]["frozen_s"]["state_dict_sha256"]
         != s_provenance["state_dict_sha256"]
     ):
         raise ValueError("H mapper and supplied frozen S checkpoints differ")
-    session_overlap = len(
-        set(train_dataset.session_ids) & set(validation_dataset.session_ids)
+    session_overlap = len(train_dataset.session_set & validation_dataset.session_set)
+    sample_overlap = len(
+        train_dataset.sample_key_set & validation_dataset.sample_key_set
     )
     if not args.validation_from_train and session_overlap:
         raise ValueError("formal H train/validation sessions overlap")
+    if args.formal_oracle:
+        split_isolation = require_formal_split_isolation(
+            train_dataset, validation_dataset
+        )
+    else:
+        split_isolation = None
     source_names = (
         Path(__file__).name,
         "pnp_q0_hypothesis_adapter.py",
@@ -442,6 +539,12 @@ def train(args: argparse.Namespace) -> Path:
 
     planned_updates = args.epochs * len(train_loader)
     total_updates = min(planned_updates, args.max_updates) if args.max_updates > 0 else planned_updates
+    stop_update = args.max_updates
+    if args.formal_oracle:
+        assert formal_protocol is not None
+        total_updates, stop_update = resolve_formal_schedule(
+            args.max_updates, planned_updates, formal_protocol
+        )
     if total_updates <= 0:
         raise ValueError("H training needs at least one update")
     git = _git_state()
@@ -505,14 +608,19 @@ def train(args: argparse.Namespace) -> Path:
             for name, value in components.items():
                 sums[name] += float(value.detach())
             batches += 1
-            if args.max_updates > 0 and update >= args.max_updates:
+            if stop_update > 0 and update >= stop_update:
                 stop = True
-                stop_reason = "max_updates"
+                stop_reason = (
+                    "fixed_final_update" if args.formal_oracle
+                    else "max_updates"
+                )
                 break
 
         validate_now = (
-            epoch == 1 or epoch % args.validation_interval == 0
-            or stop or epoch == args.epochs
+            (stop or epoch == args.epochs)
+            if args.formal_oracle else
+            (epoch == 1 or epoch % args.validation_interval == 0
+             or stop or epoch == args.epochs)
         )
         if validate_now:
             metrics = evaluate(
@@ -559,12 +667,21 @@ def train(args: argparse.Namespace) -> Path:
                     "window_local_c4_origin_retained": True,
                     "cold_coordinate_supervision": False,
                     "validation_from_train": bool(args.validation_from_train),
-                    "diagnostic_only": bool(args.validation_from_train),
+                    "diagnostic_only": (
+                        bool(args.validation_from_train)
+                        if not args.formal_oracle else False
+                    ),
+                    "formal_oracle_evaluation": bool(args.formal_oracle),
+                    "fixed_final_checkpoint": bool(args.formal_oracle),
+                    "full_chain_provenance_clean": False,
+                    "formal_source_contract": formal_contract,
                     "support_metric_diagnostic_only": True,
                     "support_output_consumed_by_f": False,
                     "train_split_audit": train_dataset.split_audit,
                     "validation_split_audit": validation_dataset.split_audit,
                     "train_validation_session_overlap_count": session_overlap,
+                    "train_validation_sample_key_overlap_count": sample_overlap,
+                    "split_isolation": split_isolation,
                     "source_sha256": source_sha256,
                 },
             }
@@ -577,7 +694,7 @@ def train(args: argparse.Namespace) -> Path:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
             }
             history.append(item)
-            if best is None or selection < tuple(best["selection"]):
+            if args.formal_oracle or best is None or selection < tuple(best["selection"]):
                 best = {
                     "epoch": epoch, "update": update, "path": checkpoint_name,
                     "sha256": item["checkpoint_sha256"],
@@ -625,15 +742,24 @@ def train(args: argparse.Namespace) -> Path:
                 "test_accessed": False,
                 "oracle_association": True,
                 "deployable_pipeline": False,
+                "formal_oracle_evaluation": bool(args.formal_oracle),
+                "fixed_final_checkpoint": bool(args.formal_oracle),
+                "full_chain_provenance_clean": False,
+                "formal_source_contract": formal_contract,
                 "cold_coordinate_supervision": False,
                 "source_sha256": source_sha256,
                 "train_split_audit": train_dataset.split_audit,
                 "validation_split_audit": validation_dataset.split_audit,
                 "train_validation_session_overlap_count": session_overlap,
+                "train_validation_sample_key_overlap_count": sample_overlap,
+                "split_isolation": split_isolation,
                 "git": git,
             }
             _atomic_json(output / "run_progress.json", progress)
-            if args.patience > 0 and bad_rounds >= args.patience:
+            if (
+                not args.formal_oracle
+                and args.patience > 0 and bad_rounds >= args.patience
+            ):
                 stop = True
                 stop_reason = "early_stopping"
         if stop:
@@ -656,6 +782,14 @@ def train(args: argparse.Namespace) -> Path:
     }
     if final_source_sha256 != source_sha256:
         raise RuntimeError("H training source bundle changed during the run")
+    if args.formal_oracle:
+        assert formal_contract is not None and formal_protocol is not None
+        require_fixed_final_state(
+            "formal H", formal_protocol,
+            update=update, stop_reason=stop_reason,
+            history=history, best=best,
+        )
+        verify_formal_contract(formal_contract)
     manifest = json.loads((output / "run_progress.json").read_text(encoding="utf-8"))
     manifest.update({
         "status": "complete", "stop_reason": stop_reason,
@@ -664,6 +798,41 @@ def train(args: argparse.Namespace) -> Path:
         "frozen_s_verified_unchanged": final_frozen_hashes["s"],
         "frozen_f_verified_unchanged": final_frozen_hashes["f"],
     })
+    if args.formal_oracle:
+        metrics = best["validation"]
+        clean = metrics["clean_domain"]
+        gates = formal_protocol["gates"]
+        manifest["formal_gates"] = {
+            "mapped_supported_q0_p95": (
+                float(metrics["h_q0_supported"]["p95_m"])
+                <= gates["mapped_supported_q0_p95_m_max"]
+            ),
+            "mapped_warm_adjacent_p95": (
+                float(metrics["h_q0_by_role"]["warm_adjacent"]["p95_m"])
+                <= gates["mapped_warm_adjacent_p95_m_max"]
+            ),
+            "mapped_warm_opposite_p95": (
+                float(metrics["h_q0_by_role"]["warm_opposite"]["p95_m"])
+                <= gates["mapped_warm_opposite_p95_m_max"]
+            ),
+            "clean_supported_q0_p95": (
+                float(clean["h_q0_supported"]["p95_m"])
+                <= gates["clean_supported_q0_p95_m_max"]
+            ),
+            "c4": float(metrics["c4_max_abs"]) <= gates["c4_max_abs_max"],
+            "support_accuracy": (
+                float(metrics["support_accuracy"])
+                >= gates["support_accuracy_min"]
+            ),
+            "cold_coordinate_unsupervised": (
+                int(metrics["true_cold_coordinate_metric_count"])
+                == gates["true_cold_coordinate_metric_count"]
+            ),
+            "no_session_overlap": session_overlap == 0,
+            "no_sample_overlap": sample_overlap == 0,
+            "frozen_components_unchanged": all(final_frozen_hashes.values()),
+        }
+        manifest["formal_gate_passed"] = all(manifest["formal_gates"].values())
     _atomic_json(output / "run_manifest.json", manifest)
     return output / "run_manifest.json"
 
@@ -675,6 +844,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--s-checkpoint", required=True)
     result.add_argument("--f-checkpoint", required=True)
     result.add_argument("--output", required=True)
+    result.add_argument("--formal-oracle", action="store_true")
+    result.add_argument("--formal-protocol", default="")
     result.add_argument("--device", default="cuda")
     result.add_argument("--seed", type=int, default=20260727)
     result.add_argument("--channels", type=int, default=64)

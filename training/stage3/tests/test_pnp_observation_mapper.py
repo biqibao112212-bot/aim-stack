@@ -276,6 +276,9 @@ def test_mapping_dataset_exposes_only_allowlisted_fields(tmp_path: Path) -> None
         "pnp_s_truth_q0_m": np.full((count, 4, 3), 999.0, dtype=np.float32),
         "target_switch_count": np.full((count, 8), 999, dtype=np.int64),
         "motion_class": np.full(count, 3, dtype=np.int64),
+        "session_id": np.asarray([f"session-{index}" for index in range(count)]),
+        "t0_ns": np.arange(count, dtype=np.int64),
+        "pair_id": np.asarray([f"pair-{index}" for index in range(count)]),
     }
     shard = tmp_path / "train.npz"
     np.savez_compressed(shard, **arrays)
@@ -314,6 +317,9 @@ def test_mapping_dataset_selection_fields_never_reach_model_item(tmp_path: Path)
         pnp_s_primary_mask=np.eye(4, dtype=np.bool_)[np.zeros((count, 32), dtype=np.int64)],
         motion_class=np.asarray((3, 2), dtype=np.int64),
         pnp_sf_common_usable=np.asarray((True, True), dtype=np.bool_),
+        session_id=np.asarray(("session-a", "session-b")),
+        t0_ns=np.asarray((1, 2), dtype=np.int64),
+        pair_id=np.asarray(("pair-a", "pair-b")),
     )
     manifest = {
         "schema_version": SCHEMA_VERSION, "qualification_passed": True,

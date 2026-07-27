@@ -1200,11 +1200,34 @@
   claim of fully provenance-clean lineage would additionally require rebuilding
   those initial assets from their own clean sources. Until then the precise
   claim is `formal_oracle_evaluation`, never `deployable_pipeline`.
-- Fixed budgets are inherited once from the accepted diagnostic evidence and
+- Fixed endpoints are inherited once from the accepted diagnostic evidence and
   cannot be tuned: mapper 264 updates, H 4224, trajectory 2550 and selector
   2125. Validation uses fixed-final checkpoints and predeclared gates; it no
-  longer selects among epochs.
+  longer selects among epochs. Decision 141 separately locks the original
+  cosine schedule horizons so an endpoint does not redefine the LR curve.
 - The current validation split is adaptively exhausted. A release-candidate
   lock must bind commit, environment, dataset, mapper/S/H/F hashes, evaluator
   and gates before a single-use holdout can be opened. Any holdout failure
   consumes that holdout; it cannot authorize post-test tuning.
+
+## 2026-07-27 decision 141: canonical fixed-final formal-oracle protocol
+
+- Formal identity is bound to the one tracked canonical protocol, one clean Git
+  commit, a complete per-stage source bundle, the Windows `yolov8` CUDA
+  environment and the exact GPU identity. Deterministic algorithms, cuDNN
+  determinism, disabled TF32 and pre-launch
+  `CUBLAS_WORKSPACE_CONFIG=:4096:8` are fail-closed requirements.
+- Dataset manifest, V19 S, clean F and the legacy v27/v39 mapper initialization
+  assets are bound by file/state SHA-256. Every train/validation view must have
+  zero duplicate sample keys, zero sample overlap and zero session overlap.
+- Mapper, H, trajectory and selector preserve the diagnostic cosine schedule
+  horizons of 400/5000/10000/3000 updates but stop at the preselected fixed
+  endpoints 264/4224/2550/2125. Each formal stage evaluates exactly once at
+  that endpoint; there is no adaptive checkpoint selection or early-stop
+  promotion. A downstream stage accepts only the manifest-declared,
+  gate-passed fixed final from the same commit, protocol and environment.
+- The strict final loader additionally requires selector conditional/upstream
+  hashes to remain bit-exact. These controls establish a reproducible
+  `formal_oracle_evaluation` chain only. Oracle association and legacy v27/v39
+  parents remain explicit, so `full_chain_provenance_clean=false` and
+  `deployable_pipeline=false` are mandatory.

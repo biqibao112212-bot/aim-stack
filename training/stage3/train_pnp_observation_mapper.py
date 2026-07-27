@@ -16,6 +16,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from .cyclic_future_foundation import load_frozen_v19
+from .formal_run_contract import (
+    capture_formal_contract,
+    configure_formal_runtime,
+    load_protocol,
+    require_asset_binding,
+    require_exact_protocol_arguments,
+    require_fixed_final_state,
+    resolve_formal_schedule,
+    verify_formal_contract,
+)
 from .observable_future_pnp_ab import sha256_file, state_dict_sha256
 from .pnp_observation_mapper import (
     AlignedAnchoredWindowPnPObservationMapper,
@@ -24,11 +34,25 @@ from .pnp_observation_mapper import (
     PnPObservationMappingDataset,
     WindowPnPObservationMapper,
 )
+from .split_audit import require_formal_split_isolation
 from .pnp_q0_hypothesis_adapter import load_frozen_pnp_mapper
 from .train_causal_physical_ab import _git_state, _seed, _to_device
 
 
 RUN_SCHEMA = "stage3-pnp-observation-mapper-run-v1"
+FORMAL_SOURCE_BUNDLE = (
+    "training/stage3/formalization_protocol.json",
+    "training/stage3/formal_run_contract.py",
+    "training/stage3/train_pnp_observation_mapper.py",
+    "training/stage3/pnp_observation_mapper.py",
+    "training/stage3/pnp_q0_hypothesis_adapter.py",
+    "training/stage3/observable_future_pnp_ab.py",
+    "training/stage3/build_observable_future_pnp_sf_upper_bound_dataset.py",
+    "training/stage3/split_audit.py",
+    "training/stage3/schema.py",
+    "training/stage3/cyclic_future_foundation.py",
+    "training/stage3/train_causal_physical_ab.py",
+)
 
 
 def _atomic_json(path: Path, payload: object) -> None:
@@ -341,6 +365,38 @@ def _learning_rate(
 
 
 def train(args: argparse.Namespace) -> Path:
+    formal_contract: dict[str, Any] | None = None
+    formal_protocol: dict[str, Any] | None = None
+    formal_assets: dict[str, Any] | None = None
+    if args.formal_oracle:
+        protocol_path, protocol = load_protocol(
+            args.formal_protocol if args.formal_protocol else None
+        )
+        formal_protocol = protocol["mapper"]
+        formal_assets = protocol["assets"]
+        require_exact_protocol_arguments(args, formal_protocol, (
+            "seed", "batch_size", "device", "workers", "epochs",
+            "channels", "dropout",
+            "history_scale_s", "learning_rate", "minimum_learning_rate",
+            "warmup_updates", "weight_decay", "gradient_clip_norm",
+            "huber_beta_m", "mse_weight", "tail_weight", "tail_fraction",
+            "q0_primary_weight", "primary_history_weight",
+            "primary_relative_weight", "primary_increment_weight",
+            "motion_class", "require_common",
+        ))
+        if args.max_updates != int(formal_protocol["schedule_total_updates"]):
+            raise ValueError("formal mapper LR schedule differs from protocol")
+        if args.mapper_family != formal_protocol["family"]:
+            raise ValueError("formal mapper family differs from protocol")
+        if args.train_limit or args.validation_limit:
+            raise ValueError("formal mapper cannot limit train or validation")
+        if not args.initial_checkpoint or not args.window_initial_checkpoint:
+            raise ValueError("formal mapper requires both immutable initial assets")
+        configure_formal_runtime(args.device, args.workers)
+        formal_contract = capture_formal_contract(
+            FORMAL_SOURCE_BUNDLE, protocol_path=protocol_path,
+            requested_device=args.device, workers=args.workers,
+        )
     output = Path(args.output).resolve()
     output.mkdir(parents=True, exist_ok=False)
     _seed(args.seed)
@@ -360,6 +416,18 @@ def train(args: argparse.Namespace) -> Path:
         motion_class=(args.motion_class if args.motion_class >= 0 else None),
         require_common=args.require_common,
     )
+    if args.formal_oracle:
+        assert formal_assets is not None
+        if train_dataset.manifest_sha256 != formal_assets["dataset_manifest_sha256"]:
+            raise ValueError("formal mapper dataset asset mismatch")
+        require_asset_binding(
+            "frozen_s", s_provenance, formal_assets["frozen_s"]
+        )
+        split_isolation = require_formal_split_isolation(
+            train_dataset, validation_dataset
+        )
+    else:
+        split_isolation = None
     train_generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
@@ -373,10 +441,20 @@ def train(args: argparse.Namespace) -> Path:
     initial_mapper_provenance: dict[str, Any] | None = None
     initial_window_mapper_provenance: dict[str, Any] | None = None
     initial_mapper: torch.nn.Module | None = None
+    initial_anchor_state_sha256: str | None = None
     if args.initial_checkpoint:
         initial_mapper, initial_mapper_provenance = load_frozen_pnp_mapper(
             args.initial_checkpoint
         )
+        initial_anchor_state_sha256 = state_dict_sha256(
+            initial_mapper.state_dict()
+        )
+        if args.formal_oracle:
+            assert formal_assets is not None
+            require_asset_binding(
+                "mapper_anchor_initial", initial_mapper_provenance,
+                formal_assets["mapper_anchor_initial"],
+            )
         if (
             initial_mapper_provenance["provenance"]["dataset_manifest_sha256"]
             != train_dataset.manifest_sha256
@@ -395,6 +473,12 @@ def train(args: argparse.Namespace) -> Path:
         )
         if not isinstance(initial_window_mapper, WindowPnPObservationMapper):
             raise ValueError("window initialization requires a window mapper")
+        if args.formal_oracle:
+            assert formal_assets is not None
+            require_asset_binding(
+                "mapper_window_initial", initial_window_mapper_provenance,
+                formal_assets["mapper_window_initial"],
+            )
         if (
             initial_window_mapper_provenance["provenance"][
                 "dataset_manifest_sha256"
@@ -461,6 +545,12 @@ def train(args: argparse.Namespace) -> Path:
         min(planned_updates, args.max_updates)
         if args.max_updates > 0 else planned_updates
     )
+    stop_update = args.max_updates
+    if args.formal_oracle:
+        assert formal_protocol is not None
+        total_updates, stop_update = resolve_formal_schedule(
+            args.max_updates, planned_updates, formal_protocol
+        )
     if total_updates <= 0:
         raise ValueError("PnP mapper training requires at least one update")
 
@@ -470,6 +560,7 @@ def train(args: argparse.Namespace) -> Path:
     update = 0
     started = time.time()
     stop = False
+    stop_reason = "epoch_limit"
     for epoch in range(1, args.epochs + 1):
         model.train()
         sums = {
@@ -510,13 +601,19 @@ def train(args: argparse.Namespace) -> Path:
             for name, value in components.items():
                 sums[name] += float(value.detach())
             batches += 1
-            if args.max_updates > 0 and update >= args.max_updates:
+            if stop_update > 0 and update >= stop_update:
                 stop = True
+                stop_reason = (
+                    "fixed_final_update" if args.formal_oracle
+                    else "max_updates"
+                )
                 break
 
         validate_now = (
-            epoch == 1 or epoch % args.validation_interval == 0 or stop
-            or epoch == args.epochs
+            (stop or epoch == args.epochs)
+            if args.formal_oracle else
+            (epoch == 1 or epoch % args.validation_interval == 0 or stop
+             or epoch == args.epochs)
         )
         if validate_now:
             metrics = evaluate(model, validation_loader, device)
@@ -557,6 +654,14 @@ def train(args: argparse.Namespace) -> Path:
                     "test_accessed": False,
                     "deployable_pipeline": False,
                     "oracle_association": True,
+                    "formal_oracle_evaluation": bool(args.formal_oracle),
+                    "fixed_final_checkpoint": bool(args.formal_oracle),
+                    "full_chain_provenance_clean": False,
+                    "legacy_initial_assets": bool(args.formal_oracle),
+                    "formal_source_contract": formal_contract,
+                    "train_split_audit": train_dataset.split_audit,
+                    "validation_split_audit": validation_dataset.split_audit,
+                    "split_isolation": split_isolation,
                     "initial_mapper": initial_mapper_provenance,
                     "initial_window_mapper": initial_window_mapper_provenance,
                 },
@@ -571,7 +676,7 @@ def train(args: argparse.Namespace) -> Path:
                 "checkpoint_sha256": sha256_file(checkpoint_path),
             }
             history.append(item)
-            if best is None or selection < tuple(best["selection"]):
+            if args.formal_oracle or best is None or selection < tuple(best["selection"]):
                 best = {
                     "epoch": epoch, "update": update,
                     "path": checkpoint_name,
@@ -598,6 +703,14 @@ def train(args: argparse.Namespace) -> Path:
                 "test_accessed": False,
                 "deployable_pipeline": False,
                 "oracle_association": True,
+                "formal_oracle_evaluation": bool(args.formal_oracle),
+                "fixed_final_checkpoint": bool(args.formal_oracle),
+                "full_chain_provenance_clean": False,
+                "legacy_initial_assets": bool(args.formal_oracle),
+                "formal_source_contract": formal_contract,
+                "train_split_audit": train_dataset.split_audit,
+                "validation_split_audit": validation_dataset.split_audit,
+                "split_isolation": split_isolation,
                 "initial_mapper": initial_mapper_provenance,
                 "initial_window_mapper": initial_window_mapper_provenance,
             }
@@ -607,15 +720,54 @@ def train(args: argparse.Namespace) -> Path:
 
     if best is None:
         raise RuntimeError("PnP mapper training produced no validation checkpoint")
+    if args.formal_oracle:
+        assert formal_contract is not None and formal_protocol is not None
+        require_fixed_final_state(
+            "formal mapper", formal_protocol,
+            update=update, stop_reason=stop_reason,
+            history=history, best=best,
+        )
+        verify_formal_contract(formal_contract)
+    frozen_anchor_verified_unchanged = (
+        initial_mapper is not None
+        and initial_anchor_state_sha256 is not None
+        and state_dict_sha256(initial_mapper.state_dict())
+        == initial_anchor_state_sha256
+    )
     manifest = json.loads((output / "run_progress.json").read_text(encoding="utf-8"))
     manifest.update({
         "status": "complete",
-        "stop_reason": "max_updates" if stop else "epoch_limit",
+        "stop_reason": stop_reason,
         "elapsed_s": time.time() - started,
         "frozen_s_verified_unchanged": (
             state_dict_sha256(frozen_s.state_dict()) == frozen_s_state
         ),
+        "frozen_anchor_verified_unchanged": frozen_anchor_verified_unchanged,
     })
+    if args.formal_oracle:
+        metrics = best["validation"]
+        gates = formal_protocol["gates"]
+        manifest["formal_gates"] = {
+            "all_observation_p95": (
+                float(metrics["corrected_all_observation"]["p95_m"])
+                <= gates["all_observation_p95_m_max"]
+            ),
+            "q0_primary_p95": (
+                float(metrics["corrected_q0_primary_observation"]["p95_m"])
+                <= gates["q0_primary_p95_m_max"]
+            ),
+            "primary_relative_history_p95": (
+                float(metrics["corrected_primary_relative_history"]["p95_m"])
+                <= gates["primary_relative_history_p95_m_max"]
+            ),
+            "primary_increment_p95": (
+                float(metrics["corrected_primary_increment"]["p95_m"])
+                <= gates["primary_increment_p95_m_max"]
+            ),
+            "frozen_s_unchanged": bool(manifest["frozen_s_verified_unchanged"]),
+            "q0_anchor_bit_exact": bool(frozen_anchor_verified_unchanged),
+        }
+        manifest["formal_gate_passed"] = all(manifest["formal_gates"].values())
     _atomic_json(output / "run_manifest.json", manifest)
     return output / "run_manifest.json"
 
@@ -627,6 +779,8 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--initial-checkpoint", default="")
     result.add_argument("--window-initial-checkpoint", default="")
     result.add_argument("--output", required=True)
+    result.add_argument("--formal-oracle", action="store_true")
+    result.add_argument("--formal-protocol", default="")
     result.add_argument("--device", default="cuda")
     result.add_argument("--seed", type=int, default=20260727)
     result.add_argument("--channels", type=int, default=48)

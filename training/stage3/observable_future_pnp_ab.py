@@ -17,6 +17,7 @@ from .observable_future_model import (
     AnonymousCandidateFutureExpert,
     MaskedCausalResidualBlock,
 )
+from .split_audit import build_split_audit
 
 
 TENSOR_FIELDS = (
@@ -122,14 +123,18 @@ class ObservableFuturePnPSFDataset(Dataset):
             raise ValueError("formal PnP A/B requires a qualified complete dataset")
         arrays_by_name: dict[str, list[np.ndarray]] = {name: [] for name in TENSOR_FIELDS}
         pair_ids: list[np.ndarray] = []
+        session_ids: list[np.ndarray] = []
+        t0_values: list[np.ndarray] = []
+        split_shards: set[str] = set()
         for item in self.manifest["shards"]:
             if str(item["split"]) != split:
                 continue
             path = self.dataset_dir / Path(str(item["path"]).replace("\\", "/"))
             if sha256_file(path) != str(item["sha256"]):
                 raise ValueError(f"paired PnP S/F shard hash mismatch: {path}")
+            split_shards.add(f"{item['path']}\x1f{item['sha256']}")
             with np.load(path, allow_pickle=False) as loaded:
-                missing = set(TENSOR_FIELDS) - set(loaded.files)
+                missing = set(TENSOR_FIELDS + ("pair_id", "session_id", "t0_ns")) - set(loaded.files)
                 if missing:
                     raise ValueError(f"paired PnP S/F shard fields missing: {sorted(missing)}")
                 keep = (
@@ -140,6 +145,8 @@ class ObservableFuturePnPSFDataset(Dataset):
                     for name in TENSOR_FIELDS:
                         arrays_by_name[name].append(loaded[name][keep].copy())
                     pair_ids.append(loaded["pair_id"][keep].copy())
+                    session_ids.append(loaded["session_id"][keep].copy())
+                    t0_values.append(loaded["t0_ns"][keep].copy())
         if not pair_ids:
             raise ValueError(f"paired PnP S/F {split} has no common usable samples")
         numpy_arrays = {
@@ -147,11 +154,15 @@ class ObservableFuturePnPSFDataset(Dataset):
             for name, values in arrays_by_name.items()
         }
         pair_array = np.concatenate(pair_ids, axis=0)
+        session_array = np.concatenate(session_ids, axis=0)
+        t0_array = np.concatenate(t0_values, axis=0)
         if sample_limit > 0:
             numpy_arrays = {
                 name: value[:sample_limit] for name, value in numpy_arrays.items()
             }
             pair_array = pair_array[:sample_limit]
+            session_array = session_array[:sample_limit]
+            t0_array = t0_array[:sample_limit]
         self.tensors = {
             name: torch.from_numpy(np.ascontiguousarray(value))
             for name, value in numpy_arrays.items()
@@ -159,6 +170,20 @@ class ObservableFuturePnPSFDataset(Dataset):
         self.pair_ids = tuple(str(value) for value in pair_array)
         self.motion_class = int(motion_class)
         self.split = split
+        (
+            self.split_audit,
+            self.session_set,
+            self.sample_key_set,
+        ) = build_split_audit(
+            split=split,
+            session_ids=session_array,
+            t0_ns=t0_array,
+            pair_ids=pair_array,
+            shard_tokens=split_shards,
+            sample_limit=sample_limit,
+            motion_class=motion_class,
+            sample_strategy="full_split" if sample_limit <= 0 else "head_slice",
+        )
 
     def __len__(self) -> int:
         return len(self.pair_ids)

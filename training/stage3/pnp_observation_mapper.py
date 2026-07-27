@@ -21,6 +21,7 @@ from torch.utils.data import Dataset
 from .build_observable_future_pnp_sf_upper_bound_dataset import SCHEMA_VERSION
 from .observable_future_model import MaskedCausalResidualBlock
 from .observable_future_pnp_ab import sha256_file
+from .split_audit import build_split_audit
 
 
 INPUT_FIELDS = (
@@ -62,15 +63,21 @@ class PnPObservationMappingDataset(Dataset):
             raise ValueError("PnP mapping view must remain a non-deployable upper bound")
 
         names = INPUT_FIELDS + LABEL_FIELDS
+        metadata_names = ("session_id", "t0_ns", "pair_id")
         arrays: dict[str, list[np.ndarray]] = {name: [] for name in names}
+        metadata: dict[str, list[np.ndarray]] = {
+            name: [] for name in metadata_names
+        }
+        split_shards: set[str] = set()
         for item in self.manifest["shards"]:
             if str(item["split"]) != split:
                 continue
             path = self.dataset_dir / Path(str(item["path"]).replace("\\", "/"))
             if sha256_file(path) != str(item["sha256"]):
                 raise ValueError(f"PnP mapping shard hash mismatch: {path}")
+            split_shards.add(f"{item['path']}\x1f{item['sha256']}")
             with np.load(path, allow_pickle=False) as loaded:
-                missing = set(names) - set(loaded.files)
+                missing = set(names + metadata_names) - set(loaded.files)
                 if missing:
                     raise ValueError(
                         f"PnP mapping fields missing: {sorted(missing)}"
@@ -93,14 +100,24 @@ class PnPObservationMappingDataset(Dataset):
                 if bool(keep.any()):
                     for name in names:
                         arrays[name].append(loaded[name][keep].copy())
+                    for name in metadata_names:
+                        metadata[name].append(loaded[name][keep].copy())
         if not arrays["pnp_s_obs_m"]:
             raise ValueError(f"PnP mapping {split} has no paired observations")
         merged = {
             name: np.concatenate(values, axis=0)
             for name, values in arrays.items()
         }
+        merged_metadata = {
+            name: np.concatenate(values, axis=0)
+            for name, values in metadata.items()
+        }
         if sample_limit > 0:
             merged = {name: value[:sample_limit] for name, value in merged.items()}
+            merged_metadata = {
+                name: value[:sample_limit]
+                for name, value in merged_metadata.items()
+            }
         self.tensors = {
             name: torch.from_numpy(np.ascontiguousarray(value))
             for name, value in merged.items()
@@ -108,6 +125,20 @@ class PnPObservationMappingDataset(Dataset):
         self.split = split
         self.motion_class = motion_class
         self.require_common = bool(require_common)
+        (
+            self.split_audit,
+            self.session_set,
+            self.sample_key_set,
+        ) = build_split_audit(
+            split=split,
+            session_ids=merged_metadata["session_id"],
+            t0_ns=merged_metadata["t0_ns"],
+            pair_ids=merged_metadata["pair_id"],
+            shard_tokens=split_shards,
+            sample_limit=sample_limit,
+            motion_class=motion_class,
+            sample_strategy="full_split" if sample_limit <= 0 else "head_slice",
+        )
 
     def __len__(self) -> int:
         return int(self.tensors["pnp_s_obs_m"].shape[0])
