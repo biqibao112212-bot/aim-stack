@@ -254,6 +254,8 @@ class UnsignedRelationalMotionEncoder(nn.Module):
         obs_mask = obs_mask[:, -self.history_events:].to(torch.bool)
         event_mask = event_mask[:, -self.history_events:].to(torch.bool)
         event_time_s = event_time_s[:, -self.history_events:]
+        if bool(torch.any(event_mask & (event_time_s > 1e-7))):
+            raise ValueError("causal relation event times must not exceed q0")
         visible = obs_mask & event_mask.unsqueeze(-1)
         physical = obs * position_std.view(1, 1, 1, 3)
         physical = physical + position_mean.view(1, 1, 1, 3)
@@ -316,6 +318,187 @@ class UnsignedRelationalMotionEncoder(nn.Module):
         return relation, edge_any.detach(), curve_any.detach()
 
 
+class OrderedLocalRelationalMotionEncoder(nn.Module):
+    """Keep unsigned relation evidence ordered and attached to cyclic handles.
+
+    Each directed edge and each temporary track owns a shared recurrent state.
+    The output for track ``i`` fuses its curve state with the incoming and
+    outgoing directed-edge states.  Track identity remains purely temporary:
+    all parameters are shared and a cyclic relabeling rolls the output.
+    """
+
+    feature_count = UnsignedRelationalMotionEncoder.feature_count
+
+    def __init__(
+        self,
+        channels: int,
+        dropout: float,
+        history_events: int,
+        *,
+        maximum_gap_s: float = 0.1,
+    ) -> None:
+        super().__init__()
+        if maximum_gap_s <= 0:
+            raise ValueError("maximum relation gap must be positive")
+        self.channels = int(channels)
+        self.history_events = int(history_events)
+        self.maximum_gap_s = float(maximum_gap_s)
+        token = lambda: nn.Sequential(
+            nn.Linear(self.feature_count, channels),
+            nn.LayerNorm(channels), nn.SiLU(), nn.Dropout(dropout),
+            nn.Linear(channels, channels), nn.SiLU(),
+        )
+        self.edge_token = token()
+        self.curve_token = token()
+        self.edge_recurrence = nn.GRUCell(channels, channels)
+        self.curve_recurrence = nn.GRUCell(channels, channels)
+        self.fuse = nn.Sequential(
+            nn.Linear(3 * channels + 6, 2 * channels),
+            nn.LayerNorm(2 * channels), nn.SiLU(), nn.Dropout(dropout),
+            nn.Linear(2 * channels, channels), nn.SiLU(),
+        )
+
+    def _ordered_reduce(
+        self,
+        token: torch.Tensor,
+        valid: torch.Tensor,
+        token_time_s: torch.Tensor,
+        latest_time_s: torch.Tensor,
+        recurrence: nn.GRUCell,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if token.ndim != 4 or valid.shape != token.shape[:3]:
+            raise ValueError("ordered relation token/mask shapes do not match")
+        batch, steps, tracks, channels = token.shape
+        state = token.new_zeros((batch, tracks, channels))
+        count = token.new_zeros((batch, tracks))
+        last_time = token.new_zeros((batch, tracks))
+        for step in range(steps):
+            proposed = recurrence(
+                token[:, step].reshape(batch * tracks, channels),
+                state.reshape(batch * tracks, channels),
+            ).reshape(batch, tracks, channels)
+            mask = valid[:, step]
+            state = torch.where(mask.unsqueeze(-1), proposed, state)
+            count = count + mask.to(token.dtype)
+            last_time = torch.where(
+                mask, token_time_s[:, step, None].expand(-1, tracks), last_time,
+            )
+        supported = count > 0
+        maximum_age = self.maximum_gap_s * max(self.history_events, 1)
+        age = (latest_time_s[:, None] - last_time).clamp(0.0, maximum_age)
+        age = torch.where(supported, age, torch.full_like(age, maximum_age))
+        count_ratio = count / max(steps, 1)
+        age_ratio = age / maximum_age
+        return state, count_ratio, age_ratio
+
+    def forward(
+        self,
+        obs: torch.Tensor,
+        obs_mask: torch.Tensor,
+        event_mask: torch.Tensor,
+        event_time_s: torch.Tensor,
+        position_mean: torch.Tensor,
+        position_std: torch.Tensor,
+    ) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+    ]:
+        if obs.ndim != 4 or obs.shape[2:] != (4, 3):
+            raise ValueError("obs must have shape [B,T,4,3]")
+        obs = obs[:, -self.history_events:]
+        obs_mask = obs_mask[:, -self.history_events:].to(torch.bool)
+        event_mask = event_mask[:, -self.history_events:].to(torch.bool)
+        event_time_s = event_time_s[:, -self.history_events:]
+        if bool(torch.any(event_mask & (event_time_s > 1e-7))):
+            raise ValueError("causal relation event times must not exceed q0")
+        visible = obs_mask & event_mask.unsqueeze(-1)
+        physical = obs * position_std.view(1, 1, 1, 3)
+        physical = physical + position_mean.view(1, 1, 1, 3)
+        physical = torch.where(
+            visible.unsqueeze(-1), physical, torch.zeros_like(physical),
+        )
+        xy = physical[..., :2]
+        scale = position_std[:2].mean().clamp_min(1e-6)
+        latest_time = torch.where(
+            event_mask, event_time_s, torch.full_like(event_time_s, -torch.inf),
+        ).amax(dim=1)
+        latest_time = torch.where(
+            torch.isfinite(latest_time), latest_time, torch.zeros_like(latest_time),
+        )
+
+        gap = event_time_s[:, 1:] - event_time_s[:, :-1]
+        consecutive = (
+            event_mask[:, 1:] & event_mask[:, :-1]
+            & (gap > 0) & (gap <= self.maximum_gap_s)
+        )
+        edge = torch.roll(xy, shifts=-1, dims=2) - xy
+        edge_visible = visible & torch.roll(visible, shifts=-1, dims=2)
+        edge_valid = edge_visible[:, 1:] & edge_visible[:, :-1]
+        edge_valid = edge_valid & consecutive[:, :, None]
+        edge_feature = UnsignedRelationalMotionEncoder._unsigned_pair_features(
+            edge[:, :-1], edge[:, 1:],
+            gap[:, :, None].expand_as(edge_valid),
+            gap[:, :, None].expand_as(edge_valid),
+            scale, self.maximum_gap_s,
+        )
+        edge_feature = torch.where(
+            edge_valid.unsqueeze(-1), edge_feature,
+            torch.zeros_like(edge_feature),
+        )
+        edge_state, edge_count, edge_age = self._ordered_reduce(
+            self.edge_token(edge_feature), edge_valid, event_time_s[:, 1:],
+            latest_time, self.edge_recurrence,
+        )
+
+        first_delta = xy[:, 1:-1] - xy[:, :-2]
+        second_delta = xy[:, 2:] - xy[:, 1:-1]
+        left_gap = event_time_s[:, 1:-1] - event_time_s[:, :-2]
+        right_gap = event_time_s[:, 2:] - event_time_s[:, 1:-1]
+        curve_valid = visible[:, :-2] & visible[:, 1:-1] & visible[:, 2:]
+        curve_valid = curve_valid & (
+            (left_gap > 0) & (left_gap <= self.maximum_gap_s)
+        )[:, :, None]
+        curve_valid = curve_valid & (
+            (right_gap > 0) & (right_gap <= self.maximum_gap_s)
+        )[:, :, None]
+        curve_feature = UnsignedRelationalMotionEncoder._unsigned_pair_features(
+            first_delta, second_delta,
+            left_gap[:, :, None].expand_as(curve_valid),
+            right_gap[:, :, None].expand_as(curve_valid),
+            scale, self.maximum_gap_s,
+        )
+        curve_feature = torch.where(
+            curve_valid.unsqueeze(-1), curve_feature,
+            torch.zeros_like(curve_feature),
+        )
+        curve_state, curve_count, curve_age = self._ordered_reduce(
+            self.curve_token(curve_feature), curve_valid, event_time_s[:, 2:],
+            latest_time, self.curve_recurrence,
+        )
+
+        incoming_state = torch.roll(edge_state, shifts=1, dims=1)
+        incoming_count = torch.roll(edge_count, shifts=1, dims=1)
+        incoming_age = torch.roll(edge_age, shifts=1, dims=1)
+        local = self.fuse(torch.cat((
+            curve_state, incoming_state, edge_state,
+            curve_count.unsqueeze(-1), incoming_count.unsqueeze(-1),
+            edge_count.unsqueeze(-1), curve_age.unsqueeze(-1),
+            incoming_age.unsqueeze(-1), edge_age.unsqueeze(-1),
+        ), dim=-1))
+        edge_track_support = edge_count > 0
+        curve_track_support = curve_count > 0
+        local_support = (
+            curve_track_support | edge_track_support
+            | torch.roll(edge_track_support, shifts=1, dims=1)
+        )
+        local = torch.where(local_support.unsqueeze(-1), local, torch.zeros_like(local))
+        edge_any = edge_track_support.any(dim=1)
+        curve_any = curve_track_support.any(dim=1)
+        return (
+            local, edge_any.detach(), curve_any.detach(),
+            edge_track_support.detach(), curve_track_support.detach(),
+        )
+
+
 class _RotationABBase(nn.Module):
     def __init__(
         self,
@@ -326,17 +509,27 @@ class _RotationABBase(nn.Module):
         dropout: float,
         history_events: int,
         relational_evidence: bool = False,
+        local_relational_evidence: bool = False,
     ) -> None:
         super().__init__()
+        if relational_evidence and local_relational_evidence:
+            raise ValueError("global and local relation modes are mutually exclusive")
         self.channels = int(channels)
         self.dropout = float(dropout)
         self.history_events = int(history_events)
         self.relational_evidence = bool(relational_evidence)
+        self.local_relational_evidence = bool(local_relational_evidence)
         self.evidence = MotionEvidenceEncoder(channels, dropout, history_events)
-        self.relation = (
-            UnsignedRelationalMotionEncoder(channels, dropout, history_events)
-            if self.relational_evidence else None
-        )
+        if self.local_relational_evidence:
+            self.relation = OrderedLocalRelationalMotionEncoder(
+                channels, dropout, history_events,
+            )
+        elif self.relational_evidence:
+            self.relation = UnsignedRelationalMotionEncoder(
+                channels, dropout, history_events,
+            )
+        else:
+            self.relation = None
         self.register_buffer("position_mean", position_mean.float().clone())
         self.register_buffer("position_std", position_std.float().clone())
 
@@ -351,7 +544,7 @@ class _RotationABBase(nn.Module):
         s_state: dict[str, torch.Tensor],
     ) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
-        torch.Tensor, torch.Tensor, torch.Tensor,
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
     ]:
         state, pooled = self.evidence(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
@@ -373,14 +566,27 @@ class _RotationABBase(nn.Module):
                 obs.shape[0], device=obs.device, dtype=torch.bool,
             )
             curve_support = edge_support.clone()
+            edge_track_support = torch.zeros(
+                (obs.shape[0], 4), device=obs.device, dtype=torch.bool,
+            )
+            curve_track_support = edge_track_support.clone()
         else:
-            relation, edge_support, curve_support = self.relation(
+            relation_output = self.relation(
                 obs, obs_mask, event_mask, event_time_s,
                 self.position_mean, self.position_std,
             )
+            relation, edge_support, curve_support = relation_output[:3]
+            if len(relation_output) == 5:
+                edge_track_support, curve_track_support = relation_output[3:]
+            else:
+                edge_track_support = torch.zeros(
+                    (obs.shape[0], 4), device=obs.device, dtype=torch.bool,
+                )
+                curve_track_support = edge_track_support.clone()
         return (
             state, pooled, direction, direction_source, future_valid,
             relation, edge_support, curve_support,
+            edge_track_support, curve_track_support,
         )
 
 
@@ -434,6 +640,7 @@ class ParametricRotationFutureExpertV2(_RotationABBase):
         (
             state, pooled, direction, direction_source, future_valid,
             relation, relation_edge_support, relation_curve_support,
+            _, _,
         ) = self._common(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
             switch_step, s_state,
@@ -509,11 +716,13 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         history_events: int = 32,
         max_tau_s: float = 0.5,
         relational_evidence: bool = False,
+        local_relational_evidence: bool = False,
     ) -> None:
         super().__init__(
             position_mean, position_std, channels=channels, dropout=dropout,
             history_events=history_events,
             relational_evidence=relational_evidence,
+            local_relational_evidence=local_relational_evidence,
         )
         self.max_tau_s = float(max_tau_s)
         if self.max_tau_s <= 0:
@@ -525,7 +734,21 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
             CyclicMessageBlock(channels, dropout) for _ in range(2)
         )
         input_channels = (
-            3 * channels + 4 + (channels if relational_evidence else 0)
+            3 * channels + 4
+            + (channels if relational_evidence else 0)
+        )
+        self.local_relation_update = (
+            nn.Sequential(
+                nn.Linear(2 * channels, channels), nn.SiLU(),
+                nn.Linear(channels, channels),
+            ) if local_relational_evidence else None
+        )
+        self.local_relation_norm = (
+            nn.LayerNorm(channels) if local_relational_evidence else None
+        )
+        self.relation_chord_head = (
+            nn.Linear(channels, 4, bias=False)
+            if local_relational_evidence else None
         )
         self.head = nn.Sequential(
             nn.Linear(input_channels, 2 * channels), nn.SiLU(),
@@ -550,6 +773,7 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         (
             state, pooled, direction, direction_source, future_valid,
             relation, relation_edge_support, relation_curve_support,
+            relation_edge_track_support, relation_curve_track_support,
         ) = self._common(
             obs, obs_mask, primary_mask, event_mask, event_time_s,
             switch_step, s_state,
@@ -579,8 +803,31 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
             previous_valid.to(q0_m.dtype).unsqueeze(-1),
         ), dim=-1)
         state = state + self.edge(edge_feature)
+        local_sample_support: torch.Tensor | None = None
+        if self.local_relational_evidence:
+            if relation.ndim != 3 or relation.shape[:2] != state.shape[:2]:
+                raise ValueError("local relation must have shape [B,4,C]")
+            if self.local_relation_update is None or self.local_relation_norm is None:
+                raise RuntimeError("local relation fusion modules are missing")
+            local_support = (
+                relation_curve_track_support | relation_edge_track_support
+                | torch.roll(relation_edge_track_support, shifts=1, dims=1)
+            )
+            local_sample_support = local_support.any(dim=1)
+            residual = self.local_relation_update(torch.cat((state, relation), dim=-1))
+            candidate = self.local_relation_norm(state + residual)
+            state = torch.where(local_support.unsqueeze(-1), candidate, state)
         for message in self.query_message:
             state = message(state)
+        if self.local_relational_evidence:
+            updated_pooled = torch.cat(
+                (state.mean(dim=1), state.amax(dim=1)), dim=-1,
+            )
+            if local_sample_support is None:
+                raise RuntimeError("local relation support is missing")
+            pooled = torch.where(
+                local_sample_support.unsqueeze(-1), updated_pooled, pooled,
+            )
         batch, tracks, _ = state.shape
         tau = _expanded_tau(tau, batch)
         u = tau / self.max_tau_s
@@ -591,12 +838,13 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
         ), dim=-1)
         expanded_track = track_context[:, None].expand(-1, query_count, -1, -1)
         expanded_query = query[:, :, None].expand(-1, -1, tracks, -1)
-        expanded_relation = relation[:, None, None].expand(
-            -1, query_count, tracks, -1,
-        )
-        raw_delta_xy = self.head(torch.cat((
-            expanded_track, expanded_query, expanded_relation,
-        ), dim=-1))
+        head_inputs = [expanded_track, expanded_query]
+        if self.relational_evidence:
+            expanded_relation = relation[:, None, None].expand(
+                -1, query_count, tracks, -1,
+            )
+            head_inputs.append(expanded_relation)
+        raw_delta_xy = self.head(torch.cat(head_inputs, dim=-1))
         delta_xy = u[:, :, None, None] * raw_delta_xy
         raw_delta = torch.cat((
             delta_xy, torch.zeros_like(delta_xy[..., :1]),
@@ -607,7 +855,7 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
             (tau == 0)[:, :, None, None], q0_m[:, None], position,
         )
         delta = position - q0_m[:, None]
-        return {
+        result = {
             "position_m": position,
             "delta_m": delta,
             "future_valid": future_valid,
@@ -618,12 +866,41 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
             "relational_edge_support": relation_edge_support,
             "relational_curve_support": relation_curve_support,
         }
+        if self.local_relational_evidence:
+            result["relational_edge_track_support"] = relation_edge_track_support
+            result["relational_curve_track_support"] = relation_curve_track_support
+            result["relational_local_track_support"] = (
+                relation_curve_track_support | relation_edge_track_support
+                | torch.roll(relation_edge_track_support, shifts=1, dims=1)
+            )
+            if self.relation_chord_head is None:
+                raise RuntimeError("local relation chord head is missing")
+            chord_basis = torch.stack((
+                torch.ones_like(u), u, u.square(), u.pow(3),
+            ), dim=-1)
+            chord_coefficients = self.relation_chord_head(relation)
+            chord_raw = torch.einsum(
+                "btc,bqc->bqt", chord_coefficients, chord_basis,
+            )
+            chord_ratio = 2.0 * torch.sigmoid(chord_raw)
+            chord_ratio = torch.where(
+                result["relational_local_track_support"][:, None],
+                chord_ratio, torch.zeros_like(chord_ratio),
+            )
+            chord_ratio = torch.where(
+                (tau > 0)[:, :, None], chord_ratio, torch.zeros_like(chord_ratio),
+            )
+            result["relation_edge_chord_ratio"] = chord_ratio
+        return result
 
     def config(self) -> dict[str, object]:
         return {
             "family": (
-                "cyclic-relational-direct-rotation-future-delta-expert-v2"
-                if self.relational_evidence else self.model_family
+                "cyclic-ordered-local-relational-direct-rotation-expert-v3"
+                if self.local_relational_evidence else (
+                    "cyclic-relational-direct-rotation-future-delta-expert-v2"
+                    if self.relational_evidence else self.model_family
+                )
             ),
             "channels": self.channels,
             "dropout": self.dropout,
@@ -635,6 +912,20 @@ class DirectRotationTrajectoryExpert(_RotationABBase):
                     "forbidden; unsigned invariants only"
                 ),
             } if self.relational_evidence else {}),
+            **({
+                "ordered_local_relational_evidence": True,
+                "relation_state": (
+                    "per temporary track with incoming/outgoing directed edges, "
+                    "causal order, support count and recency"
+                ),
+                "relation_probe": (
+                    "relation-conditioned coefficients over a fixed query polynomial "
+                    "basis for edge-chord ratio; no query-only learned path and no omega output"
+                ),
+                "relational_direction_information": (
+                    "forbidden; unsigned invariants only"
+                ),
+            } if self.local_relational_evidence else {}),
             "direction": "deterministic causal history geometry; never learned",
             "direction_history": "all available causal observation events",
             "future_output": "direct continuous q0-relative trajectory with per-query rigid projection",

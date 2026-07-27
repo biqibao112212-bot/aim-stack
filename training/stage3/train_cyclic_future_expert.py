@@ -275,6 +275,11 @@ def _validate(
     direction_truth_support_parts: list[np.ndarray] = []
     relational_edge_support_parts: list[np.ndarray] = []
     relational_curve_support_parts: list[np.ndarray] = []
+    relational_edge_track_support_parts: list[np.ndarray] = []
+    relational_curve_track_support_parts: list[np.ndarray] = []
+    relation_probe_parts: list[np.ndarray] = []
+    relation_probe_target_parts: list[np.ndarray] = []
+    relation_probe_support_parts: list[np.ndarray] = []
     velocity_error_parts: list[np.ndarray] = []
     velocity_ratio_parts: list[np.ndarray] = []
     velocity_cosine_parts: list[np.ndarray] = []
@@ -349,6 +354,33 @@ def _validate(
                 )
                 relational_curve_support_parts.append(
                     output["relational_curve_support"].cpu().numpy()
+                )
+            if "relational_edge_track_support" in output:
+                relational_edge_track_support_parts.append(
+                    output["relational_edge_track_support"].cpu().numpy()
+                )
+                relational_curve_track_support_parts.append(
+                    output["relational_curve_track_support"].cpu().numpy()
+                )
+            if "relation_edge_chord_ratio" in output:
+                truth_q0_edge = (
+                    torch.roll(target[:, 0], shifts=-1, dims=1) - target[:, 0]
+                )
+                truth_q0_edge_length = torch.linalg.vector_norm(
+                    truth_q0_edge, dim=-1,
+                ).clamp_min(1e-4)
+                target_edge_delta = (
+                    torch.roll(target_delta, shifts=-1, dims=2) - target_delta
+                )
+                probe_target = torch.linalg.vector_norm(
+                    target_edge_delta, dim=-1,
+                ) / truth_q0_edge_length[:, None]
+                relation_probe_parts.append(
+                    output["relation_edge_chord_ratio"].float().cpu().numpy()
+                )
+                relation_probe_target_parts.append(probe_target.cpu().numpy())
+                relation_probe_support_parts.append(
+                    output["relational_local_track_support"].cpu().numpy()
                 )
             if args.expert == "translation":
                 row = torch.arange(target.shape[0], device=device)
@@ -489,11 +521,44 @@ def _validate(
                 relational_edge_support | relational_curve_support
             )),
         }
+        if relational_edge_track_support_parts:
+            edge_track_support = np.concatenate(
+                relational_edge_track_support_parts,
+            ).astype(np.bool_)
+            curve_track_support = np.concatenate(
+                relational_curve_track_support_parts,
+            ).astype(np.bool_)
+            result["relational_evidence"].update({
+                "edge_track_coverage": float(np.mean(edge_track_support)),
+                "curve_track_coverage": float(np.mean(curve_track_support)),
+                "union_track_coverage": float(np.mean(
+                    edge_track_support | curve_track_support
+                )),
+            })
     if velocity_error_parts:
         result["translation_velocity"] = {
             "error_mps": _summary(np.concatenate(velocity_error_parts)),
             "speed_ratio_median": float(np.median(np.concatenate(velocity_ratio_parts))),
             "direction_cosine_median": float(np.median(np.concatenate(velocity_cosine_parts))),
+        }
+    if relation_probe_parts:
+        probe = np.concatenate(relation_probe_parts)
+        probe_target = np.concatenate(relation_probe_target_parts)
+        probe_support = np.concatenate(
+            relation_probe_support_parts,
+        ).astype(np.bool_)
+        pair_valid = valid & np.roll(valid, shift=-1, axis=1)
+        q3_eligible = rule[:, SELECTION_QUERY_INDEX, None] & pair_valid
+        probe_roles = {
+            "current_visible": visible,
+            "warm_adjacent": warm,
+        }
+        result["relation_chord_probe_q3"] = {
+            name: _summary(np.abs(
+                probe[:, SELECTION_QUERY_INDEX]
+                - probe_target[:, SELECTION_QUERY_INDEX]
+            )[q3_eligible & role & probe_support])
+            for name, role in probe_roles.items()
         }
     return result
 
@@ -677,6 +742,9 @@ def _train_epoch(
                     edge_weight=args.edge_weight,
                     rigid_weight=args.rigid_weight,
                     omega_magnitude_weight=args.omega_magnitude_weight,
+                    edge_chord_weight=args.edge_chord_weight,
+                    relation_probe_weight=args.relation_probe_weight,
+                    q3_tail_weight=args.q3_tail_weight,
                     max_omega_rad_s=args.max_omega_rad_s,
                 )
         if not bool(torch.isfinite(total)):
@@ -718,6 +786,7 @@ def train(args: argparse.Namespace) -> Path:
     v21_rotation = args.rotation_architecture != "legacy"
     relational_rotation = args.rotation_architecture in {
         "parametric_relational_v3", "direct_relational_trajectory",
+        "direct_ordered_relational_trajectory",
     }
     if bool(git_state["worktree_dirty"]) and not args.allow_dirty_worktree:
         raise ValueError("official future expert training requires a clean worktree")
@@ -779,13 +848,20 @@ def train(args: argparse.Namespace) -> Path:
         ).to(device)
     elif args.rotation_architecture in {
         "direct_trajectory", "direct_relational_trajectory",
+        "direct_ordered_relational_trajectory",
     }:
         model = DirectRotationTrajectoryExpert(
             position_mean, position_std,
             channels=args.channels, dropout=args.dropout,
             history_events=args.history_events,
             max_tau_s=args.max_tau_s,
-            relational_evidence=relational_rotation,
+            relational_evidence=(
+                args.rotation_architecture == "direct_relational_trajectory"
+            ),
+            local_relational_evidence=(
+                args.rotation_architecture
+                == "direct_ordered_relational_trajectory"
+            ),
         ).to(device)
     else:
         model = CyclicFutureMotionExpert(
@@ -831,6 +907,17 @@ def train(args: argparse.Namespace) -> Path:
             "tail_weight": args.tail_weight,
             "edge_weight": args.edge_weight,
             "rigid_weight": args.rigid_weight,
+            "edge_chord_weight": args.edge_chord_weight,
+            "relation_probe_weight": args.relation_probe_weight,
+            "q3_tail_weight": args.q3_tail_weight,
+            "edge_chord_contract": (
+                "per-sample predicted/truth q0 edge-normalized motion chord; "
+                "visible-visible/mixed/warm-warm groups balanced"
+            ),
+            "q3_tail_contract": (
+                "query-index-3 q0/q3-eligible top-10-percent CVaR; "
+                "worst of current-visible and warm-adjacent roles"
+            ),
             "omega_magnitude_weight": (
                 args.omega_magnitude_weight
                 if args.rotation_architecture in {
@@ -853,7 +940,12 @@ def train(args: argparse.Namespace) -> Path:
     provenance: dict[str, object] = {
         "schema_version": (
             (
-                "stage3-cyclic-relational-rotation-ab-run-v2"
+                (
+                    "stage3-cyclic-track-local-relational-rotation-run-v3"
+                    if args.rotation_architecture
+                    == "direct_ordered_relational_trajectory" else
+                    "stage3-cyclic-relational-rotation-ab-run-v2"
+                )
                 if relational_rotation else "stage3-cyclic-rotation-ab-run-v1"
             ) if v21_rotation
             else "stage3-cyclic-future-expert-run-v1"
@@ -908,6 +1000,11 @@ def train(args: argparse.Namespace) -> Path:
             ),
             **({
                 "relational_evidence": (
+                    (
+                        "ordered per-handle unsigned edge/curve histories; "
+                        "support count and recency; no direction sign"
+                    ) if args.rotation_architecture
+                    == "direct_ordered_relational_trajectory" else
                     "pre-compression unsigned edge/curve invariants; no direction sign"
                 ),
             } if relational_rotation else {}),
@@ -1282,6 +1379,7 @@ def _parser() -> argparse.ArgumentParser:
         choices=(
             "legacy", "parametric_v2", "direct_trajectory",
             "parametric_relational_v3", "direct_relational_trajectory",
+            "direct_ordered_relational_trajectory",
         ),
         default="legacy",
     )
@@ -1302,6 +1400,9 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--tail-weight", type=float, default=0.20)
     parser.add_argument("--edge-weight", type=float, default=0.15)
     parser.add_argument("--rigid-weight", type=float, default=0.02)
+    parser.add_argument("--edge-chord-weight", type=float, default=0.0)
+    parser.add_argument("--relation-probe-weight", type=float, default=0.0)
+    parser.add_argument("--q3-tail-weight", type=float, default=0.0)
     parser.add_argument("--validation-interval", type=int, default=5)
     parser.add_argument("--grad-clip", type=float, default=5.0)
     parser.add_argument("--amp", choices=("off", "float16", "bfloat16"), default="bfloat16")
@@ -1336,6 +1437,7 @@ def main(argv: list[str] | None = None) -> int:
     if min(
         args.omega_weight, args.omega_sign_weight, args.omega_magnitude_weight,
         args.tail_weight, args.edge_weight, args.rigid_weight,
+        args.edge_chord_weight, args.relation_probe_weight, args.q3_tail_weight,
         args.weight_decay,
     ) < 0:
         parser.error("nonnegative weights are required")
