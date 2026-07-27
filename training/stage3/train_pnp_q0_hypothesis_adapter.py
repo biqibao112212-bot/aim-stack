@@ -1,0 +1,734 @@
+"""Train A3 H while the PnP mapper, V19 S and accepted F stay frozen."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+from pathlib import Path
+import time
+from typing import Any
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader
+
+from .cyclic_future_foundation import load_frozen_v19
+from .observable_future_pnp_ab import (
+    load_observable_f_checkpoint,
+    sha256_file,
+    state_dict_sha256,
+)
+from .pnp_q0_hypothesis_adapter import (
+    C4Q0HypothesisAdapter,
+    PnPQ0HypothesisDataset,
+    hypothesis_forward,
+    load_frozen_pnp_mapper,
+    roll_s_output_c4,
+)
+from .train_causal_physical_ab import _git_state, _seed, _to_device
+
+
+RUN_SCHEMA = "stage3-pnp-q0-hypothesis-adapter-run-v1"
+
+
+def _atomic_json(path: Path, payload: object) -> None:
+    pending = path.with_name(f".{path.name}.pending-{os.getpid()}-{time.time_ns()}")
+    pending.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    pending.replace(path)
+
+
+def _atomic_checkpoint(path: Path, payload: object) -> None:
+    if path.exists():
+        raise FileExistsError(f"refusing to overwrite H checkpoint: {path}")
+    pending = path.with_name(f".{path.name}.pending-{os.getpid()}-{time.time_ns()}")
+    try:
+        torch.save(payload, pending)
+        pending.replace(path)
+    finally:
+        if pending.exists():
+            pending.unlink()
+
+
+def _s_forward(
+    model: torch.nn.Module,
+    obs_m: torch.Tensor,
+    obs_mask: torch.Tensor,
+    primary_mask: torch.Tensor,
+    event_mask: torch.Tensor,
+    event_time_s: torch.Tensor,
+    switch_step: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    mask = obs_mask.to(torch.bool)
+    normalized = (obs_m - model.position_mean) / model.position_std
+    normalized = torch.where(mask.unsqueeze(-1), normalized, torch.zeros_like(normalized))
+    return model(
+        normalized, mask, primary_mask.to(torch.bool), event_mask.to(torch.bool),
+        event_time_s, switch_step,
+    )
+
+
+def frozen_mapper_s_forward(
+    mapper: torch.nn.Module,
+    s_model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    mapper.eval()
+    s_model.eval()
+    with torch.no_grad():
+        mapped = mapper(
+            batch["pnp_s_obs_m"], batch["pnp_s_obs_mask"],
+            batch["pnp_s_event_time_s"], batch["pnp_s_event_mask"],
+        )
+        s_output = _s_forward(
+            s_model, mapped["corrected_obs_m"], batch["pnp_s_obs_mask"],
+            batch["pnp_s_primary_mask"], batch["pnp_s_event_mask"],
+            batch["pnp_s_event_time_s"], batch["pnp_s_switch_step"],
+        )
+    return (
+        {name: value.detach() for name, value in mapped.items()},
+        {name: value.detach() for name, value in s_output.items()},
+    )
+
+
+def frozen_clean_s_forward(
+    s_model: torch.nn.Module,
+    batch: dict[str, torch.Tensor],
+) -> dict[str, torch.Tensor]:
+    s_model.eval()
+    with torch.no_grad():
+        s_output = _s_forward(
+            s_model, batch["clean_s_obs_m"], batch["clean_s_obs_mask"],
+            batch["clean_s_primary_mask"], batch["clean_s_event_mask"],
+            batch["clean_s_event_time_s"], batch["clean_s_switch_step"],
+        )
+    return {name: value.detach() for name, value in s_output.items()}
+
+
+def _masked_huber(
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    mask: torch.Tensor,
+    *,
+    beta: float,
+) -> torch.Tensor | None:
+    selected = mask.to(torch.bool)
+    if not bool(selected.any()):
+        return None
+    # Index before subtraction: a poisoned true-cold label is never consumed.
+    difference = prediction[selected] - target[selected]
+    return F.smooth_l1_loss(difference, torch.zeros_like(difference), beta=beta)
+
+
+def hypothesis_loss(
+    prediction: dict[str, torch.Tensor],
+    target_q0_m: torch.Tensor,
+    *,
+    huber_beta_m: float,
+    q0_weight: float = 1.0,
+    edge_weight: float = 0.5,
+    opposite_weight: float = 0.5,
+    support_weight: float = 0.2,
+    sigma_weight: float = 0.2,
+    c4_loss: torch.Tensor | None = None,
+    c4_weight: float = 0.1,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    roles = (
+        prediction["observed"].to(torch.bool),
+        prediction["warm_adjacent"].to(torch.bool),
+        prediction["warm_opposite"].to(torch.bool),
+    )
+    role_losses = [
+        loss for mask in roles
+        if (loss := _masked_huber(
+            prediction["q0_m"], target_q0_m, mask, beta=huber_beta_m
+        )) is not None
+    ]
+    if not role_losses:
+        raise ValueError("H batch has no coordinate-supported handle")
+    q0_role_macro = torch.stack(role_losses).mean()
+    supported = prediction["evidence_supported"].to(torch.bool)
+    edge_mask = supported & torch.roll(supported, shifts=-1, dims=1)
+    if bool(edge_mask.any()):
+        target_edge = (
+            torch.roll(target_q0_m, shifts=-1, dims=1)[edge_mask]
+            - target_q0_m[edge_mask]
+        )
+        edge_difference = prediction["edge0_m"][edge_mask] - target_edge
+        directed_edge = F.smooth_l1_loss(
+            edge_difference, torch.zeros_like(edge_difference), beta=huber_beta_m
+        )
+    else:
+        directed_edge = q0_role_macro.new_zeros(())
+    opposite = _masked_huber(
+        prediction["q0_m"], target_q0_m,
+        prediction["warm_opposite"], beta=huber_beta_m,
+    )
+    if opposite is None:
+        opposite = q0_role_macro.new_zeros(())
+    support = F.binary_cross_entropy_with_logits(
+        prediction["support_logits"], supported.to(prediction["support_logits"].dtype)
+    )
+    if bool(supported.any()):
+        sigma = prediction["hypothesis_sigma_m"][supported].clamp_min(1e-5)
+        absolute_error = (
+            prediction["q0_m"][supported].detach()
+            - target_q0_m[supported]
+        ).abs()
+        sigma_calibration = (
+            absolute_error / sigma + torch.log(sigma / 0.1)
+        ).mean()
+    else:
+        sigma_calibration = q0_role_macro.new_zeros(())
+    equivariance = (
+        q0_role_macro.new_zeros(()) if c4_loss is None else c4_loss
+    )
+    total = (
+        q0_weight * q0_role_macro
+        + edge_weight * directed_edge
+        + opposite_weight * opposite
+        + support_weight * support
+        + sigma_weight * sigma_calibration
+        + c4_weight * equivariance
+    )
+    return total, {
+        "q0_role_macro": q0_role_macro,
+        "directed_edge": directed_edge,
+        "warm_opposite": opposite,
+        "support": support,
+        "sigma_calibration": sigma_calibration,
+        "c4": equivariance,
+    }
+
+
+def c4_equivariance_loss(
+    model: C4Q0HypothesisAdapter,
+    s_output: dict[str, torch.Tensor],
+    reference: dict[str, torch.Tensor],
+    shift: int,
+) -> torch.Tensor:
+    rolled = hypothesis_forward(model, roll_s_output_c4(s_output, shift))
+    pieces = []
+    for name in ("q0_m", "edge0_m", "hypothesis_sigma_m", "support_probability"):
+        expected = torch.roll(reference[name], shifts=shift, dims=1)
+        pieces.append(F.mse_loss(rolled[name], expected))
+    return torch.stack(pieces).mean()
+
+
+def _stats(parts: list[np.ndarray]) -> dict[str, float | int | None]:
+    if not parts:
+        return {
+            "count": 0, "mean_m": None, "p50_m": None,
+            "p95_m": None, "p99_m": None, "max_m": None,
+        }
+    merged = np.concatenate(parts).astype(np.float64, copy=False)
+    if not merged.size or not np.isfinite(merged).all():
+        raise ValueError("H metric contains no finite values")
+    return {
+        "count": int(merged.size), "mean_m": float(merged.mean()),
+        "p50_m": float(np.quantile(merged, 0.50)),
+        "p95_m": float(np.quantile(merged, 0.95)),
+        "p99_m": float(np.quantile(merged, 0.99)),
+        "max_m": float(merged.max()),
+    }
+
+
+@torch.no_grad()
+def evaluate(
+    model: C4Q0HypothesisAdapter,
+    mapper: torch.nn.Module,
+    s_model: torch.nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    domain: str = "mapped",
+) -> dict[str, Any]:
+    if domain not in {"mapped", "clean"}:
+        raise ValueError("H evaluation domain must be mapped or clean")
+    model.eval()
+    names = ("observed", "warm_adjacent", "warm_opposite")
+    before: dict[str, list[np.ndarray]] = {name: [] for name in names}
+    after: dict[str, list[np.ndarray]] = {name: [] for name in names}
+    before_all: list[np.ndarray] = []
+    after_all: list[np.ndarray] = []
+    edge_before: list[np.ndarray] = []
+    edge_after: list[np.ndarray] = []
+    support_correct: list[np.ndarray] = []
+    support_brier: list[np.ndarray] = []
+    role_counts = {name: 0 for name in (*names, "true_cold")}
+    c4_max = 0.0
+    for batch_index, raw_batch in enumerate(loader):
+        batch = _to_device(raw_batch, device)
+        if domain == "mapped":
+            _, s_output = frozen_mapper_s_forward(mapper, s_model, batch)
+        else:
+            s_output = frozen_clean_s_forward(s_model, batch)
+        prediction = hypothesis_forward(model, s_output)
+        target = batch["pnp_s_truth_q0_m"]
+        s_error = torch.linalg.vector_norm(s_output["q0_m"] - target, dim=-1)
+        h_error = torch.linalg.vector_norm(prediction["q0_m"] - target, dim=-1)
+        supported = prediction["evidence_supported"].to(torch.bool)
+        before_all.append(s_error[supported].cpu().numpy())
+        after_all.append(h_error[supported].cpu().numpy())
+        for name in names:
+            mask = prediction[name].to(torch.bool)
+            role_counts[name] += int(mask.sum())
+            if bool(mask.any()):
+                before[name].append(s_error[mask].cpu().numpy())
+                after[name].append(h_error[mask].cpu().numpy())
+        cold = prediction["true_cold"].to(torch.bool)
+        role_counts["true_cold"] += int(cold.sum())
+        edge_mask = supported & torch.roll(supported, shifts=-1, dims=1)
+        if bool(edge_mask.any()):
+            truth_edge = torch.roll(target, shifts=-1, dims=1)[edge_mask] - target[edge_mask]
+            edge_before.append(torch.linalg.vector_norm(
+                s_output["edge0_m"][edge_mask] - truth_edge, dim=-1
+            ).cpu().numpy())
+            edge_after.append(torch.linalg.vector_norm(
+                prediction["edge0_m"][edge_mask] - truth_edge, dim=-1
+            ).cpu().numpy())
+        probability = prediction["support_probability"]
+        support_correct.append(
+            ((probability >= 0.5) == supported).cpu().numpy().reshape(-1)
+        )
+        support_brier.append(
+            (probability - supported.to(probability.dtype)).square().cpu().numpy().reshape(-1)
+        )
+        if batch_index == 0:
+            for shift in (1, 2, 3):
+                rolled = hypothesis_forward(model, roll_s_output_c4(s_output, shift))
+                for name in ("q0_m", "edge0_m", "hypothesis_sigma_m", "support_probability"):
+                    difference = rolled[name] - torch.roll(
+                        prediction[name], shifts=shift, dims=1
+                    )
+                    c4_max = max(c4_max, float(difference.abs().max()))
+    support_correct_np = np.concatenate(support_correct)
+    support_brier_np = np.concatenate(support_brier)
+    return {
+        "s_q0_supported": _stats(before_all),
+        "h_q0_supported": _stats(after_all),
+        "s_q0_by_role": {name: _stats(before[name]) for name in names},
+        "h_q0_by_role": {name: _stats(after[name]) for name in names},
+        "s_directed_edge": _stats(edge_before),
+        "h_directed_edge": _stats(edge_after),
+        "role_counts": role_counts,
+        "true_cold_coordinate_metric_count": 0,
+        "support_accuracy": float(support_correct_np.mean()),
+        "support_brier": float(support_brier_np.mean()),
+        "c4_max_abs": c4_max,
+        "domain": domain,
+    }
+
+
+def _learning_rate(
+    base: float, update: int, total: int, warmup: int, minimum: float
+) -> float:
+    if update <= warmup:
+        return base * update / max(warmup, 1)
+    progress = (update - warmup) / max(total - warmup, 1)
+    floor = minimum / base
+    return base * (floor + (1.0 - floor) * 0.5 * (1.0 + math.cos(math.pi * progress)))
+
+
+def build_h_optimizer(
+    model: C4Q0HypothesisAdapter,
+    *,
+    learning_rate: float,
+    weight_decay: float,
+) -> torch.optim.Optimizer:
+    optimizer = torch.optim.AdamW(
+        (parameter for parameter in model.parameters() if parameter.requires_grad),
+        lr=learning_rate, weight_decay=weight_decay,
+    )
+    optimizer_ids = {
+        id(parameter) for group in optimizer.param_groups for parameter in group["params"]
+    }
+    model_ids = {id(parameter) for parameter in model.parameters() if parameter.requires_grad}
+    if optimizer_ids != model_ids:
+        raise RuntimeError("H optimizer does not contain exactly H parameters")
+    return optimizer
+
+
+def train(args: argparse.Namespace) -> Path:
+    output = Path(args.output).resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    _seed(args.seed)
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA was requested but is unavailable")
+
+    mapper, mapper_provenance = load_frozen_pnp_mapper(args.mapper_checkpoint)
+    s_model, s_provenance = load_frozen_v19(args.s_checkpoint)
+    f_model, f_provenance = load_observable_f_checkpoint(args.f_checkpoint)
+    mapper_state = state_dict_sha256(mapper.state_dict())
+    s_state = state_dict_sha256(s_model.state_dict())
+    f_state = state_dict_sha256(f_model.state_dict())
+    for frozen in (mapper, s_model, f_model):
+        frozen.eval().requires_grad_(False)
+    mapper.to(device)
+    s_model.to(device)
+
+    motion_class = None if args.motion_class < 0 else args.motion_class
+    train_dataset = PnPQ0HypothesisDataset(
+        args.dataset, "train", sample_limit=args.train_limit,
+        motion_class=motion_class,
+    )
+    if args.validation_from_train:
+        validation_dataset = train_dataset
+    else:
+        validation_dataset = PnPQ0HypothesisDataset(
+            args.dataset, "validation", sample_limit=args.validation_limit,
+            motion_class=motion_class,
+        )
+        if set(train_dataset.session_ids) & set(validation_dataset.session_ids):
+            raise ValueError("H train/validation sessions overlap")
+    if mapper_provenance["provenance"]["dataset_manifest_sha256"] != train_dataset.manifest_sha256:
+        raise ValueError("H mapper and paired dataset manifests differ")
+    if (
+        mapper_provenance["provenance"]["frozen_s"]["state_dict_sha256"]
+        != s_provenance["state_dict_sha256"]
+    ):
+        raise ValueError("H mapper and supplied frozen S checkpoints differ")
+    session_overlap = len(
+        set(train_dataset.session_ids) & set(validation_dataset.session_ids)
+    )
+    if not args.validation_from_train and session_overlap:
+        raise ValueError("formal H train/validation sessions overlap")
+    source_names = (
+        Path(__file__).name,
+        "pnp_q0_hypothesis_adapter.py",
+        "pnp_observation_mapper.py",
+        "observable_future_pnp_ab.py",
+        "cyclic_future_foundation.py",
+        "cyclic_anchor_edge_model.py",
+        "cyclic_track_model.py",
+    )
+    source_sha256 = {
+        name: sha256_file(Path(__file__).with_name(name))
+        for name in source_names
+    }
+    train_loader = DataLoader(
+        train_dataset, batch_size=args.batch_size, shuffle=True,
+        generator=torch.Generator().manual_seed(args.seed),
+        num_workers=args.workers, pin_memory=device.type == "cuda",
+    )
+    validation_loader = DataLoader(
+        validation_dataset, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.workers, pin_memory=device.type == "cuda",
+    )
+    model = C4Q0HypothesisAdapter(
+        s_model.position_mean.detach().cpu(), s_model.position_std.detach().cpu(),
+        channels=args.channels, dropout=args.dropout,
+        message_layers=args.message_layers, age_scale_s=args.age_scale_s,
+    ).to(device)
+    parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    if parameter_count > args.maximum_parameters:
+        raise ValueError(f"H parameter count {parameter_count} exceeds cap")
+    optimizer = build_h_optimizer(
+        model, learning_rate=args.learning_rate, weight_decay=args.weight_decay
+    )
+    frozen_ids = {
+        id(parameter)
+        for frozen in (mapper, s_model, f_model)
+        for parameter in frozen.parameters()
+    }
+    optimizer_ids = {
+        id(parameter) for group in optimizer.param_groups for parameter in group["params"]
+    }
+    if frozen_ids & optimizer_ids:
+        raise RuntimeError("H optimizer contains frozen mapper/S/F parameters")
+
+    planned_updates = args.epochs * len(train_loader)
+    total_updates = min(planned_updates, args.max_updates) if args.max_updates > 0 else planned_updates
+    if total_updates <= 0:
+        raise ValueError("H training needs at least one update")
+    git = _git_state()
+    history: list[dict[str, Any]] = []
+    best: dict[str, Any] | None = None
+    update = 0
+    bad_rounds = 0
+    stop_reason = "epoch_limit"
+    started = time.time()
+    stop = False
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        sums = {
+            "objective": 0.0, "q0_role_macro": 0.0, "directed_edge": 0.0,
+            "warm_opposite": 0.0, "support": 0.0,
+            "sigma_calibration": 0.0, "c4": 0.0,
+        }
+        batches = 0
+        for raw_batch in train_loader:
+            update += 1
+            lr = _learning_rate(
+                args.learning_rate, update, total_updates,
+                args.warmup_updates, args.minimum_learning_rate,
+            )
+            for group in optimizer.param_groups:
+                group["lr"] = lr
+            batch = _to_device(raw_batch, device)
+            _, s_output = frozen_mapper_s_forward(mapper, s_model, batch)
+            clean_s_output = frozen_clean_s_forward(s_model, batch)
+            optimizer.zero_grad(set_to_none=True)
+            prediction = hypothesis_forward(model, s_output)
+            equivariance = c4_equivariance_loss(
+                model, s_output, prediction, shift=1 + (update % 3)
+            )
+            mapped_objective, mapped_components = hypothesis_loss(
+                prediction, batch["pnp_s_truth_q0_m"],
+                huber_beta_m=args.huber_beta_m,
+                q0_weight=args.q0_weight, edge_weight=args.edge_weight,
+                opposite_weight=args.opposite_weight,
+                support_weight=args.support_weight, sigma_weight=args.sigma_weight,
+                c4_loss=equivariance, c4_weight=args.c4_weight,
+            )
+            clean_prediction = hypothesis_forward(model, clean_s_output)
+            clean_objective, clean_components = hypothesis_loss(
+                clean_prediction, batch["pnp_s_truth_q0_m"],
+                huber_beta_m=args.huber_beta_m,
+                q0_weight=args.q0_weight, edge_weight=args.edge_weight,
+                opposite_weight=args.opposite_weight,
+                support_weight=args.support_weight, sigma_weight=args.sigma_weight,
+                c4_loss=None, c4_weight=0.0,
+            )
+            objective = mapped_objective + args.clean_weight * clean_objective
+            components = {
+                name: mapped_components[name] + args.clean_weight * clean_components[name]
+                for name in mapped_components
+            }
+            objective.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip_norm)
+            optimizer.step()
+            sums["objective"] += float(objective.detach())
+            for name, value in components.items():
+                sums[name] += float(value.detach())
+            batches += 1
+            if args.max_updates > 0 and update >= args.max_updates:
+                stop = True
+                stop_reason = "max_updates"
+                break
+
+        validate_now = (
+            epoch == 1 or epoch % args.validation_interval == 0
+            or stop or epoch == args.epochs
+        )
+        if validate_now:
+            metrics = evaluate(
+                model, mapper, s_model, validation_loader, device, domain="mapped"
+            )
+            clean_metrics = evaluate(
+                model, mapper, s_model, validation_loader, device, domain="clean"
+            )
+            metrics["clean_domain"] = clean_metrics
+            supported = metrics["h_q0_supported"]
+            clean_supported = clean_metrics["h_q0_supported"]
+            warm_opposite = metrics["h_q0_by_role"]["warm_opposite"]
+            warm_adjacent = metrics["h_q0_by_role"]["warm_adjacent"]
+            selection = (
+                float(supported["p95_m"]),
+                float(clean_supported["p95_m"]),
+                float(warm_opposite["p95_m"] or math.inf),
+                float(warm_adjacent["p95_m"] or math.inf),
+            )
+            checkpoint_name = f"epoch-{epoch:04d}-update-{update:06d}.pt"
+            checkpoint_path = output / checkpoint_name
+            checkpoint = {
+                "schema_version": RUN_SCHEMA,
+                "model_class": "C4Q0HypothesisAdapter",
+                "epoch": epoch, "update": update,
+                "model_config": model.config,
+                "model": model.state_dict(),
+                "optimizer": optimizer.state_dict(),
+                "validation": metrics, "selection": selection,
+                "provenance": {
+                    "dataset_manifest_path": str(
+                        Path(args.dataset).resolve() / "dataset_manifest.json"
+                    ),
+                    "dataset_manifest_sha256": train_dataset.manifest_sha256,
+                    "frozen_mapper": mapper_provenance,
+                    "frozen_s": s_provenance,
+                    "frozen_f": f_provenance,
+                    "git": git,
+                    "test_accessed": False,
+                    "oracle_association": True,
+                    "deployable_pipeline": False,
+                    "optimizer_only_h": True,
+                    "canonical_direction_reflection_removed": True,
+                    "window_local_c4_origin_retained": True,
+                    "cold_coordinate_supervision": False,
+                    "validation_from_train": bool(args.validation_from_train),
+                    "diagnostic_only": bool(args.validation_from_train),
+                    "support_metric_diagnostic_only": True,
+                    "support_output_consumed_by_f": False,
+                    "train_split_audit": train_dataset.split_audit,
+                    "validation_split_audit": validation_dataset.split_audit,
+                    "train_validation_session_overlap_count": session_overlap,
+                    "source_sha256": source_sha256,
+                },
+            }
+            _atomic_checkpoint(checkpoint_path, checkpoint)
+            item = {
+                "epoch": epoch, "update": update, "learning_rate": lr,
+                "train": {name: value / max(batches, 1) for name, value in sums.items()},
+                "validation": metrics, "selection": selection,
+                "checkpoint": checkpoint_name,
+                "checkpoint_sha256": sha256_file(checkpoint_path),
+            }
+            history.append(item)
+            if best is None or selection < tuple(best["selection"]):
+                best = {
+                    "epoch": epoch, "update": update, "path": checkpoint_name,
+                    "sha256": item["checkpoint_sha256"],
+                    "selection": selection, "validation": metrics,
+                }
+                bad_rounds = 0
+            else:
+                bad_rounds += 1
+            elapsed = time.time() - started
+            rate = update / max(elapsed, 1e-6)
+            print(json.dumps({
+                "epoch": epoch, "update": update,
+                "h_supported_p95_m": supported["p95_m"],
+                "h_warm_adjacent_p95_m": warm_adjacent["p95_m"],
+                "h_warm_opposite_p95_m": warm_opposite["p95_m"],
+                "clean_h_supported_p95_m": clean_supported["p95_m"],
+                "support_accuracy": metrics["support_accuracy"],
+                "c4_max_abs": metrics["c4_max_abs"],
+                "elapsed_s": elapsed,
+                "eta_s": max(total_updates - update, 0) / max(rate, 1e-9),
+            }, sort_keys=True), flush=True)
+            progress = {
+                "schema_version": RUN_SCHEMA,
+                "status": "running", "epoch": epoch, "update": update,
+                "best": best, "history": history,
+                "elapsed_s": elapsed,
+                "train_sample_count": len(train_dataset),
+                "validation_sample_count": len(validation_dataset),
+                "validation_from_train": bool(args.validation_from_train),
+                "dataset_manifest_sha256": train_dataset.manifest_sha256,
+                "source_direction_counts": train_dataset.source_direction_counts,
+                "c4_origin_counts": train_dataset.c4_origin_counts,
+                "sample_strategy": train_dataset.sample_strategy,
+                "parameter_count": parameter_count,
+                "maximum_parameters": args.maximum_parameters,
+                "model_config": model.config,
+                "training_arguments": vars(args),
+                "frozen_mapper": mapper_provenance,
+                "frozen_s": s_provenance,
+                "frozen_f": f_provenance,
+                "frozen_mapper_verified_unchanged": state_dict_sha256(mapper.state_dict()) == mapper_state,
+                "frozen_s_verified_unchanged": state_dict_sha256(s_model.state_dict()) == s_state,
+                "frozen_f_verified_unchanged": state_dict_sha256(f_model.state_dict()) == f_state,
+                "optimizer_only_h": True,
+                "test_accessed": False,
+                "oracle_association": True,
+                "deployable_pipeline": False,
+                "cold_coordinate_supervision": False,
+                "source_sha256": source_sha256,
+                "train_split_audit": train_dataset.split_audit,
+                "validation_split_audit": validation_dataset.split_audit,
+                "train_validation_session_overlap_count": session_overlap,
+                "git": git,
+            }
+            _atomic_json(output / "run_progress.json", progress)
+            if args.patience > 0 and bad_rounds >= args.patience:
+                stop = True
+                stop_reason = "early_stopping"
+        if stop:
+            break
+    if best is None:
+        raise RuntimeError("H training produced no validation checkpoint")
+    for frozen in (mapper, s_model, f_model):
+        if any(parameter.grad is not None for parameter in frozen.parameters()):
+            raise RuntimeError("frozen mapper/S/F received gradients")
+    final_frozen_hashes = {
+        "mapper": state_dict_sha256(mapper.state_dict()) == mapper_state,
+        "s": state_dict_sha256(s_model.state_dict()) == s_state,
+        "f": state_dict_sha256(f_model.state_dict()) == f_state,
+    }
+    if not all(final_frozen_hashes.values()):
+        raise RuntimeError("H training changed a frozen mapper/S/F state hash")
+    final_source_sha256 = {
+        name: sha256_file(Path(__file__).with_name(name))
+        for name in source_names
+    }
+    if final_source_sha256 != source_sha256:
+        raise RuntimeError("H training source bundle changed during the run")
+    manifest = json.loads((output / "run_progress.json").read_text(encoding="utf-8"))
+    manifest.update({
+        "status": "complete", "stop_reason": stop_reason,
+        "elapsed_s": time.time() - started,
+        "frozen_mapper_verified_unchanged": final_frozen_hashes["mapper"],
+        "frozen_s_verified_unchanged": final_frozen_hashes["s"],
+        "frozen_f_verified_unchanged": final_frozen_hashes["f"],
+    })
+    _atomic_json(output / "run_manifest.json", manifest)
+    return output / "run_manifest.json"
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description=__doc__)
+    result.add_argument("--dataset", required=True)
+    result.add_argument("--mapper-checkpoint", required=True)
+    result.add_argument("--s-checkpoint", required=True)
+    result.add_argument("--f-checkpoint", required=True)
+    result.add_argument("--output", required=True)
+    result.add_argument("--device", default="cuda")
+    result.add_argument("--seed", type=int, default=20260727)
+    result.add_argument("--channels", type=int, default=64)
+    result.add_argument("--dropout", type=float, default=0.05)
+    result.add_argument("--message-layers", type=int, default=2)
+    result.add_argument("--age-scale-s", type=float, default=0.32)
+    result.add_argument("--maximum-parameters", type=int, default=150000)
+    result.add_argument("--batch-size", type=int, default=128)
+    result.add_argument("--workers", type=int, default=0)
+    result.add_argument("--epochs", type=int, default=80)
+    result.add_argument("--max-updates", type=int, default=5000)
+    result.add_argument("--learning-rate", type=float, default=3e-4)
+    result.add_argument("--minimum-learning-rate", type=float, default=3e-6)
+    result.add_argument("--warmup-updates", type=int, default=200)
+    result.add_argument("--weight-decay", type=float, default=1e-4)
+    result.add_argument("--gradient-clip-norm", type=float, default=1.0)
+    result.add_argument("--huber-beta-m", type=float, default=0.01)
+    result.add_argument("--q0-weight", type=float, default=1.0)
+    result.add_argument("--edge-weight", type=float, default=0.5)
+    result.add_argument("--opposite-weight", type=float, default=0.5)
+    result.add_argument("--support-weight", type=float, default=0.2)
+    result.add_argument("--sigma-weight", type=float, default=0.2)
+    result.add_argument("--c4-weight", type=float, default=0.1)
+    result.add_argument("--clean-weight", type=float, default=0.5)
+    result.add_argument("--validation-interval", type=int, default=1)
+    result.add_argument("--patience", type=int, default=8)
+    result.add_argument("--train-limit", type=int, default=0)
+    result.add_argument("--validation-limit", type=int, default=0)
+    result.add_argument("--validation-from-train", action="store_true")
+    result.add_argument(
+        "--motion-class", type=int, default=-1,
+        help="selection-only optional class; never passed to mapper/S/H",
+    )
+    return result
+
+
+def main() -> None:
+    args = parser().parse_args()
+    positive = (
+        args.learning_rate, args.minimum_learning_rate, args.gradient_clip_norm,
+        args.huber_beta_m, args.maximum_parameters,
+    )
+    if min(positive) <= 0:
+        raise ValueError("positive H optimization arguments required")
+    if min(
+        args.q0_weight, args.edge_weight, args.opposite_weight,
+        args.support_weight, args.sigma_weight, args.c4_weight,
+        args.clean_weight,
+    ) < 0:
+        raise ValueError("H loss weights cannot be negative")
+    if args.motion_class not in {-1, 0, 1, 2, 3}:
+        raise ValueError("H motion class must be -1 or 0..3")
+    print(train(args))
+
+
+if __name__ == "__main__":
+    main()
