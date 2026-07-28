@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 import torch
+from torch.utils.data import DataLoader, Dataset
 
 from training.stage3.cyclic_track_dataset import cyclic_relabel
 from training.stage3.pnp_q0_hypothesis_adapter import (
@@ -29,7 +30,9 @@ from training.stage3.train_pnp_q0_hypothesis_adapter import (
     _read_run_lock,
     _release_run_lock,
     _restore_rng_state,
+    _train_cache_contract,
     _write_recovery_state,
+    TRAIN_CACHE_SCHEMA,
     build_h_optimizer,
     hypothesis_loss,
     parser,
@@ -265,6 +268,45 @@ def test_optimizer_contains_exactly_h_parameters() -> None:
     expected = {id(parameter) for parameter in model.parameters() if parameter.requires_grad}
     assert actual == expected
     assert sum(parameter.numel() for parameter in model.parameters()) <= 150_000
+
+
+def test_index_loader_preserves_shuffle_order_and_generator_state() -> None:
+    class IndexedDictDataset(Dataset):
+        def __len__(self) -> int:
+            return 29
+
+        def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+            return {"index": torch.tensor(index, dtype=torch.long)}
+
+    original_generator = torch.Generator().manual_seed(20260727)
+    cached_generator = torch.Generator().manual_seed(20260727)
+    original = DataLoader(
+        IndexedDictDataset(), batch_size=8, shuffle=True,
+        generator=original_generator, num_workers=0,
+    )
+    cached = DataLoader(
+        range(29), batch_size=8, shuffle=True,
+        generator=cached_generator, num_workers=0,
+    )
+    for _ in range(2):
+        original_order = torch.cat([batch["index"] for batch in original])
+        cached_order = torch.cat([batch for batch in cached])
+        assert torch.equal(original_order, cached_order)
+        assert torch.equal(original_generator.get_state(), cached_generator.get_state())
+
+
+def test_train_cache_contract_excludes_only_build_time() -> None:
+    metadata = {
+        "schema_version": TRAIN_CACHE_SCHEMA,
+        "content_sha256": "abc",
+        "build_elapsed_s": 1.25,
+        "validation_cached": False,
+    }
+    assert _train_cache_contract(metadata) == {
+        "schema_version": TRAIN_CACHE_SCHEMA,
+        "content_sha256": "abc",
+        "validation_cached": False,
+    }
 
 
 def test_formal_h_recovery_round_trip_is_state_only_and_non_overwriting(

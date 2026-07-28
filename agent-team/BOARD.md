@@ -912,3 +912,21 @@
 - [ ] Predeclare and validation-rehearse a single-use sealed holdout builder and
   evaluator. Test remains unopened until the entire candidate lock is frozen
   and the user explicitly authorizes one-time consumption.
+
+## 2026-07-28 formal-H throughput correction
+
+- [x] Stop the inefficient server H only after preserving its epoch-6/update-792
+  recovery checkpoint; stop its watchdog first and preserve every old asset/log.
+- [x] Diagnose the measured 3090 bottleneck: about 900 s/epoch, 30--32% GPU,
+  597 MiB VRAM and one CPU core while every update recomputed frozen mapper/S.
+- [x] Implement a train-only float32 CUDA cache for the 14 S fields consumed by
+  H plus q0 truth. Keep batch 128, DataLoader shuffle/generator, optimizer/LR,
+  three H forwards, loss and the partial tail batch unchanged.
+- [x] Bind cache schema/content digest/shapes/dtypes/bytes and mapper/S/dataset
+  hashes into provenance and recovery. Validation remains uncached and sealed.
+- [x] Pass 277 Stage3 tests locally. Two design reviews accepted cache-only as
+  the lowest-risk first stage; a final diff review and real 3090 benchmark are
+  still required before a new formal launch.
+- [ ] Commit the new source/protocol, replay mapper on that exact commit, then
+  require cache field equality and at least 2.5x amortized speedup before
+  restarting formal H from scratch. Never resume v59 under the new contract.

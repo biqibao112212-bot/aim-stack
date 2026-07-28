@@ -78,7 +78,16 @@
     "epochs": 60,
     "schedule_total_updates": 5000,
     "fixed_final_update": 4224,
-    "recovery_epoch_interval": 1,
+      "recovery_epoch_interval": 1,
+      "execution_mode": "frozen_train_s_cache_v1",
+      "train_cache": {
+        "schema_version": "stage3-formal-h-train-cache-v1",
+        "device_type": "cuda",
+        "float_dtype": "torch.float32",
+        "precompute_batch_size": 128,
+        "validation_cached": false,
+        "partial_training_batch_cached": false
+      },
     "channels": 64,
     "message_layers": 2,
     "dropout": 0.05,

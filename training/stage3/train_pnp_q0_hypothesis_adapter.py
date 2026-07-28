@@ -49,6 +49,13 @@ from .train_causal_physical_ab import _git_state, _seed, _to_device
 
 RUN_SCHEMA = "stage3-pnp-q0-hypothesis-adapter-run-v1"
 RUN_LOCK_SCHEMA = "stage3-formal-h-run-lock-v1"
+TRAIN_CACHE_SCHEMA = "stage3-formal-h-train-cache-v1"
+H_S_CACHE_KEYS = (
+    "q0_m", "direct_q0_m", "q0_sigma_m", "confidence",
+    "edge0_m", "edge0_sigma_m", "edge0_supported", "age_s",
+    "current_primary", "current_visible", "warm_hidden", "cold",
+    "adjacent", "anchor_composed",
+)
 FORMAL_SOURCE_BUNDLE = (
     "training/stage3/formalization_protocol.json",
     "training/stage3/formal_run_contract.py",
@@ -240,6 +247,7 @@ def _write_recovery_state(
     mapper_state_sha256: str,
     s_state_sha256: str,
     f_state_sha256: str,
+    train_cache: dict[str, Any] | None = None,
 ) -> Path:
     name = (
         f"recovery-epoch-{epoch:04d}-update-{update:06d}"
@@ -263,6 +271,7 @@ def _write_recovery_state(
             "s": s_state_sha256,
             "f": f_state_sha256,
         },
+        "train_cache": train_cache,
         "validation_accessed": False,
         "model_selection_performed": False,
         "test_accessed": False,
@@ -353,6 +362,147 @@ def frozen_clean_s_forward(
             batch["clean_s_event_time_s"], batch["clean_s_switch_step"],
         )
     return {name: value.detach() for name, value in s_output.items()}
+
+
+def _dataset_batch(
+    dataset: PnPQ0HypothesisDataset,
+    indices: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    cpu_indices = indices.detach().to(device="cpu", dtype=torch.long)
+    return {
+        name: value.index_select(0, cpu_indices)
+        for name, value in dataset.tensors.items()
+    }
+
+
+def _cache_digest(
+    mapped: dict[str, torch.Tensor],
+    clean: dict[str, torch.Tensor],
+    truth_q0_m: torch.Tensor,
+) -> str:
+    tensors = {
+        **{f"mapped.{name}": mapped[name] for name in H_S_CACHE_KEYS},
+        **{f"clean.{name}": clean[name] for name in H_S_CACHE_KEYS},
+        "target.pnp_s_truth_q0_m": truth_q0_m,
+    }
+    return state_dict_sha256(tensors)
+
+
+def _train_cache_contract(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Return the reproducible cache identity; wall-clock build time is evidence only."""
+    return {
+        name: value for name, value in metadata.items()
+        if name != "build_elapsed_s"
+    }
+
+
+def _build_train_cache(
+    dataset: PnPQ0HypothesisDataset,
+    mapper: torch.nn.Module,
+    s_model: torch.nn.Module,
+    *,
+    device: torch.device,
+    batch_size: int,
+    dataset_manifest_sha256: str,
+    mapper_state_sha256: str,
+    s_state_sha256: str,
+) -> tuple[dict[str, dict[str, torch.Tensor] | torch.Tensor], dict[str, Any]]:
+    """Materialize only frozen train-side H inputs without consuming shuffle RNG."""
+    if device.type != "cuda":
+        raise ValueError("formal H train cache requires CUDA residency")
+    if batch_size <= 0 or len(dataset) < batch_size:
+        raise ValueError("H train cache requires at least one full batch")
+    started = time.time()
+    cpu_rng_before = torch.get_rng_state().clone()
+    cuda_rng_before = [value.clone() for value in torch.cuda.get_rng_state_all()]
+    mapped_parts = {name: [] for name in H_S_CACHE_KEYS}
+    clean_parts = {name: [] for name in H_S_CACHE_KEYS}
+    sample_count = len(dataset)
+    with torch.no_grad():
+        for start in range(0, sample_count, batch_size):
+            stop = min(start + batch_size, sample_count)
+            actual = stop - start
+            indices = torch.arange(start, stop, dtype=torch.long)
+            if actual < batch_size:
+                padding = torch.arange(batch_size - actual, dtype=torch.long)
+                indices = torch.cat((indices, padding))
+            batch = _to_device(_dataset_batch(dataset, indices), device)
+            _, mapped_output = frozen_mapper_s_forward(mapper, s_model, batch)
+            clean_output = frozen_clean_s_forward(s_model, batch)
+            for name in H_S_CACHE_KEYS:
+                mapped_parts[name].append(mapped_output[name][:actual].detach())
+                clean_parts[name].append(clean_output[name][:actual].detach())
+    mapped = {name: torch.cat(parts, dim=0) for name, parts in mapped_parts.items()}
+    clean = {name: torch.cat(parts, dim=0) for name, parts in clean_parts.items()}
+    truth = dataset.tensors["pnp_s_truth_q0_m"].to(device=device)
+    if any(value.shape[0] != sample_count for value in (*mapped.values(), *clean.values())):
+        raise RuntimeError("H train cache sample count mismatch")
+    if not torch.equal(cpu_rng_before, torch.get_rng_state()):
+        raise RuntimeError("H train cache consumed CPU RNG state")
+    cuda_rng_after = torch.cuda.get_rng_state_all()
+    if len(cuda_rng_before) != len(cuda_rng_after) or any(
+        not torch.equal(before, after)
+        for before, after in zip(cuda_rng_before, cuda_rng_after)
+    ):
+        raise RuntimeError("H train cache consumed CUDA RNG state")
+
+    # Verify two full batches with different membership. The training tail stays
+    # online because its smaller matrix shape can select a different CUDA kernel.
+    probe_sets = [
+        torch.arange(batch_size, dtype=torch.long),
+        torch.arange(sample_count - batch_size, sample_count, dtype=torch.long),
+    ]
+    if sample_count >= 2 * batch_size:
+        # Mix rows from two precompute batches to prove membership independence.
+        probe_sets.append(torch.arange(0, 2 * batch_size, 2, dtype=torch.long))
+    for indices in probe_sets:
+        batch = _to_device(_dataset_batch(dataset, indices), device)
+        _, online_mapped = frozen_mapper_s_forward(mapper, s_model, batch)
+        online_clean = frozen_clean_s_forward(s_model, batch)
+        device_indices = indices.to(device)
+        for name in H_S_CACHE_KEYS:
+            if not torch.equal(online_mapped[name], mapped[name].index_select(0, device_indices)):
+                raise RuntimeError(f"mapped H train cache is not bit-exact for {name}")
+            if not torch.equal(online_clean[name], clean[name].index_select(0, device_indices)):
+                raise RuntimeError(f"clean H train cache is not bit-exact for {name}")
+
+    all_tensors = (*mapped.values(), *clean.values(), truth)
+    if any(value.device.type != "cuda" for value in all_tensors):
+        raise RuntimeError("H train cache is not fully CUDA resident")
+    if any(
+        value.is_floating_point() and value.dtype != torch.float32
+        for value in all_tensors
+    ):
+        raise RuntimeError("H train cache floating tensors must remain float32")
+    metadata = {
+        "schema_version": TRAIN_CACHE_SCHEMA,
+        "execution_mode": "frozen_train_s_cache_v1",
+        "sample_count": sample_count,
+        "precompute_batch_size": int(batch_size),
+        "full_batches_cached": True,
+        "partial_training_batch_cached": False,
+        "validation_cached": False,
+        "device_type": device.type,
+        "float_dtype": "torch.float32",
+        "keys": list(H_S_CACHE_KEYS),
+        "shapes": {
+            domain: {name: list(values[name].shape) for name in H_S_CACHE_KEYS}
+            for domain, values in (("mapped", mapped), ("clean", clean))
+        },
+        "dtypes": {
+            domain: {name: str(values[name].dtype) for name in H_S_CACHE_KEYS}
+            for domain, values in (("mapped", mapped), ("clean", clean))
+        },
+        "bytes": int(sum(value.numel() * value.element_size() for value in all_tensors)),
+        "content_sha256": _cache_digest(mapped, clean, truth),
+        "dataset_manifest_sha256": dataset_manifest_sha256,
+        "mapper_state_dict_sha256": mapper_state_sha256,
+        "s_state_dict_sha256": s_state_sha256,
+        "build_elapsed_s": time.time() - started,
+        "rng_preserved": True,
+        "bit_exact_probe_batches": len(probe_sets),
+    }
+    return {"mapped": mapped, "clean": clean, "truth_q0_m": truth}, metadata
 
 
 def _masked_huber(
@@ -627,6 +777,17 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
             raise ValueError("formal H LR schedule differs from protocol")
         if int(formal_protocol.get("recovery_epoch_interval", 0)) != 1:
             raise ValueError("formal H requires one recovery state per full epoch")
+        cache_protocol = formal_protocol.get("train_cache", {})
+        if (
+            formal_protocol.get("execution_mode") != "frozen_train_s_cache_v1"
+            or cache_protocol.get("schema_version") != TRAIN_CACHE_SCHEMA
+            or cache_protocol.get("device_type") != "cuda"
+            or cache_protocol.get("float_dtype") != "torch.float32"
+            or int(cache_protocol.get("precompute_batch_size", 0)) != args.batch_size
+            or cache_protocol.get("validation_cached") is not False
+            or cache_protocol.get("partial_training_batch_cached") is not False
+        ):
+            raise ValueError("formal H train-cache protocol mismatch")
         if args.train_limit or args.validation_limit:
             raise ValueError("formal H cannot limit train or validation")
         configure_formal_runtime(args.device, args.workers)
@@ -730,7 +891,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
     }
     train_generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
-        train_dataset, batch_size=args.batch_size, shuffle=True,
+        range(len(train_dataset)), batch_size=args.batch_size, shuffle=True,
         generator=train_generator,
         num_workers=args.workers, pin_memory=device.type == "cuda",
     )
@@ -759,6 +920,25 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
     }
     if frozen_ids & optimizer_ids:
         raise RuntimeError("H optimizer contains frozen mapper/S/F parameters")
+
+    train_cache, train_cache_metadata = _build_train_cache(
+        train_dataset, mapper, s_model,
+        device=device, batch_size=args.batch_size,
+        dataset_manifest_sha256=train_dataset.manifest_sha256,
+        mapper_state_sha256=mapper_state, s_state_sha256=s_state,
+    )
+    if args.formal_oracle:
+        assert formal_protocol is not None
+        cache_protocol = formal_protocol["train_cache"]
+        if any(
+            train_cache_metadata[name] != cache_protocol[name]
+            for name in (
+                "schema_version", "device_type", "float_dtype",
+                "precompute_batch_size", "validation_cached",
+                "partial_training_batch_cached",
+            )
+        ):
+            raise RuntimeError("built H train cache differs from formal protocol")
 
     planned_updates = args.epochs * len(train_loader)
     total_updates = min(planned_updates, args.max_updates) if args.max_updates > 0 else planned_updates
@@ -789,6 +969,8 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
         expected_frozen = {"mapper": mapper_state, "s": s_state, "f": f_state}
         if recovery.get("frozen_state_dict_sha256") != expected_frozen:
             raise ValueError("formal H recovery frozen state mismatch")
+        if recovery.get("train_cache") != _train_cache_contract(train_cache_metadata):
+            raise ValueError("formal H recovery train cache mismatch")
         if recovery.get("model_config") != model.config:
             raise ValueError("formal H recovery model configuration mismatch")
         if (
@@ -834,7 +1016,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
             "sigma_calibration": 0.0, "c4": 0.0,
         }
         batches = 0
-        for raw_batch in train_loader:
+        for raw_indices in train_loader:
             update += 1
             lr = _learning_rate(
                 args.learning_rate, update, total_updates,
@@ -842,16 +1024,32 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
             )
             for group in optimizer.param_groups:
                 group["lr"] = lr
-            batch = _to_device(raw_batch, device)
-            _, s_output = frozen_mapper_s_forward(mapper, s_model, batch)
-            clean_s_output = frozen_clean_s_forward(s_model, batch)
+            indices = raw_indices.to(dtype=torch.long)
+            if indices.numel() == args.batch_size:
+                device_indices = indices.to(device=device, non_blocking=True)
+                s_output = {
+                    name: train_cache["mapped"][name].index_select(0, device_indices)
+                    for name in H_S_CACHE_KEYS
+                }
+                clean_s_output = {
+                    name: train_cache["clean"][name].index_select(0, device_indices)
+                    for name in H_S_CACHE_KEYS
+                }
+                target_q0_m = train_cache["truth_q0_m"].index_select(
+                    0, device_indices
+                )
+            else:
+                batch = _to_device(_dataset_batch(train_dataset, indices), device)
+                _, s_output = frozen_mapper_s_forward(mapper, s_model, batch)
+                clean_s_output = frozen_clean_s_forward(s_model, batch)
+                target_q0_m = batch["pnp_s_truth_q0_m"]
             optimizer.zero_grad(set_to_none=True)
             prediction = hypothesis_forward(model, s_output)
             equivariance = c4_equivariance_loss(
                 model, s_output, prediction, shift=1 + (update % 3)
             )
             mapped_objective, mapped_components = hypothesis_loss(
-                prediction, batch["pnp_s_truth_q0_m"],
+                prediction, target_q0_m,
                 huber_beta_m=args.huber_beta_m,
                 q0_weight=args.q0_weight, edge_weight=args.edge_weight,
                 opposite_weight=args.opposite_weight,
@@ -860,7 +1058,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
             )
             clean_prediction = hypothesis_forward(model, clean_s_output)
             clean_objective, clean_components = hypothesis_loss(
-                clean_prediction, batch["pnp_s_truth_q0_m"],
+                clean_prediction, target_q0_m,
                 huber_beta_m=args.huber_beta_m,
                 q0_weight=args.q0_weight, edge_weight=args.edge_weight,
                 opposite_weight=args.opposite_weight,
@@ -961,6 +1159,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
                     "train_validation_sample_key_overlap_count": sample_overlap,
                     "split_isolation": split_isolation,
                     "source_sha256": source_sha256,
+                    "train_cache": train_cache_metadata,
                 },
             }
             _atomic_checkpoint(checkpoint_path, checkpoint)
@@ -1027,6 +1226,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
                 "recovery_resume": recovery_resume,
                 "cold_coordinate_supervision": False,
                 "source_sha256": source_sha256,
+                "train_cache": train_cache_metadata,
                 "train_split_audit": train_dataset.split_audit,
                 "validation_split_audit": validation_dataset.split_audit,
                 "train_validation_session_overlap_count": session_overlap,
@@ -1061,6 +1261,7 @@ def _train_locked(args: argparse.Namespace, output: Path) -> Path:
                 mapper_state_sha256=mapper_state,
                 s_state_sha256=s_state,
                 f_state_sha256=f_state,
+                train_cache=_train_cache_contract(train_cache_metadata),
             )
             print(json.dumps({
                 "epoch": epoch,

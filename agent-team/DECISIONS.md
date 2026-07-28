@@ -1255,3 +1255,28 @@
   the passed mapper from commit `17e54ae` remains valid historical evidence but
   cannot parent the new H. The mapper must be replayed on the recovery commit
   before H is restarted; no old artifact is relabelled or deleted.
+
+## 2026-07-28 decision 143: cache frozen train features, preserve H semantics
+
+- The server v59 H run demonstrated an implementation bottleneck rather than a
+  useful 3090 workload: epochs 3--6 each took 884--906 seconds while GPU use was
+  30--32% and VRAM use was below 0.6 GiB. Its watchdog and process were stopped
+  after the immutable epoch-6/update-792 recovery point was confirmed.
+- Mapper and V19 S are frozen deterministic functions of each train sample, yet
+  the old loop recomputed mapper once and S twice per update for all 4224
+  updates. The accepted first acceleration stage computes only the 14 S fields
+  consumed by H once, keeps them float32 and CUDA-resident, and gathers them by
+  the original shuffled row index. Validation is never cached.
+- The formal DataLoader structure, generator consumption, batch size, optimizer
+  updates, LR schedule, dropout call order, C4 shift, losses and three H forwards
+  remain unchanged. A final partial batch continues through the online frozen
+  path to preserve its CUDA matrix shape. Cache probes must be `torch.equal`.
+- Cache identity is part of the formal protocol and recovery contract. It binds
+  content digest, field schema, shapes/dtypes/bytes, dataset manifest and frozen
+  mapper/S state hashes. A new source commit requires a fresh mapper replay and
+  H restart; the v59 recovery cannot cross this source contract.
+- GPU utilization is not the gate. The cache-only implementation must include
+  its one-time build cost and deliver at least 2.5x projected end-to-end speedup
+  (target 3x or better) without metric/state divergence. H-forward fusion,
+  larger batches, AMP, TF32 and `torch.compile` remain deferred because they
+  alter numeric execution or training semantics.

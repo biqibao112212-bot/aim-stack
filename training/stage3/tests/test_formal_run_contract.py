@@ -34,6 +34,16 @@ def test_formalization_protocol_is_versioned_and_fixed_final() -> None:
     for stage in ("mapper", "hypothesis", "trajectory", "selector"):
         assert protocol[stage]["fixed_final_checkpoint"] is True
         assert 0 < protocol[stage]["fixed_final_update"] < protocol[stage]["schedule_total_updates"]
+    hypothesis = protocol["hypothesis"]
+    assert hypothesis["execution_mode"] == "frozen_train_s_cache_v1"
+    assert hypothesis["train_cache"] == {
+        "schema_version": "stage3-formal-h-train-cache-v1",
+        "device_type": "cuda",
+        "float_dtype": "torch.float32",
+        "precompute_batch_size": 128,
+        "validation_cached": False,
+        "partial_training_batch_cached": False,
+    }
 
 
 def test_protocol_argument_check_fails_closed() -> None:
