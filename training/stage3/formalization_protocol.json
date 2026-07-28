@@ -78,6 +78,7 @@
     "epochs": 60,
     "schedule_total_updates": 5000,
     "fixed_final_update": 4224,
+    "recovery_epoch_interval": 1,
     "channels": 64,
     "message_layers": 2,
     "dropout": 0.05,

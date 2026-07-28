@@ -7,6 +7,9 @@ import json
 import math
 import os
 from pathlib import Path
+import random
+import secrets
+import sys
 import time
 from typing import Any
 
@@ -45,6 +48,7 @@ from .train_causal_physical_ab import _git_state, _seed, _to_device
 
 
 RUN_SCHEMA = "stage3-pnp-q0-hypothesis-adapter-run-v1"
+RUN_LOCK_SCHEMA = "stage3-formal-h-run-lock-v1"
 FORMAL_SOURCE_BUNDLE = (
     "training/stage3/formalization_protocol.json",
     "training/stage3/formal_run_contract.py",
@@ -78,6 +82,222 @@ def _atomic_checkpoint(path: Path, payload: object) -> None:
     finally:
         if pending.exists():
             pending.unlink()
+
+
+def _atomic_recovery_checkpoint(path: Path, payload: object) -> None:
+    if path.exists():
+        raise FileExistsError(f"refusing to overwrite H recovery state: {path}")
+    pending = path.with_name(f".{path.name}.pending-{os.getpid()}-{time.time_ns()}")
+    try:
+        torch.save(payload, pending)
+        pending.replace(path)
+    finally:
+        if pending.exists():
+            pending.unlink()
+
+
+def _read_run_lock(path: Path) -> dict[str, Any]:
+    owner_path = path.with_name(".formal_h_training.owner.json")
+    try:
+        payload = json.loads(owner_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"schema_version": "unreadable", "pid": -1}
+    return payload if isinstance(payload, dict) else {
+        "schema_version": "invalid", "pid": -1,
+    }
+
+def _lock_stream_nonblocking(stream: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\n")
+            stream.flush()
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock_stream(stream: Any) -> None:
+    if os.name == "nt":
+        import msvcrt
+
+        stream.seek(0)
+        msvcrt.locking(stream.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+
+
+def _acquire_run_lock(output: Path) -> tuple[Path, str, Any]:
+    path = output / ".formal_h_training.lock"
+    owner_path = output / ".formal_h_training.owner.json"
+    token = secrets.token_hex(16)
+    payload = {
+        "schema_version": RUN_LOCK_SCHEMA,
+        "pid": os.getpid(),
+        "token": token,
+        "process_started_unix_ns": time.time_ns(),
+        "command": sys.argv,
+        "released": False,
+    }
+    stream = path.open("a+b")
+    try:
+        _lock_stream_nonblocking(stream)
+    except OSError as error:
+        stream.close()
+        owner = _read_run_lock(path)
+        raise RuntimeError(
+            "H output directory is owned by a live training process: "
+            f"pid={owner.get('pid', 'unknown')} lock={path}"
+        ) from error
+    try:
+        previous = _read_run_lock(path)
+        if previous.get("released") is False:
+            previous_pid = int(previous.get("pid", -1))
+            _atomic_json(
+                output / (
+                    f".formal_h_training.stale-pid-{previous_pid}"
+                    f"-{time.time_ns()}.json"
+                ),
+                previous,
+            )
+        _atomic_json(owner_path, payload)
+    except BaseException:
+        _unlock_stream(stream)
+        stream.close()
+        raise
+    return path, token, stream
+
+
+def _release_run_lock(path: Path, token: str, stream: Any) -> None:
+    try:
+        owner = _read_run_lock(path)
+        if owner.get("pid") == os.getpid() and owner.get("token") == token:
+            owner["released"] = True
+            owner["released_unix_ns"] = time.time_ns()
+            _atomic_json(path.with_name(".formal_h_training.owner.json"), owner)
+    finally:
+        _unlock_stream(stream)
+        stream.close()
+
+
+def _recovery_training_arguments(args: argparse.Namespace) -> dict[str, Any]:
+    values = dict(vars(args))
+    values.pop("resume", None)
+    return values
+
+
+def _capture_rng_state(train_generator: torch.Generator) -> dict[str, Any]:
+    return {
+        "python": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch_cpu": torch.get_rng_state(),
+        "torch_cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else [],
+        "train_generator": train_generator.get_state(),
+    }
+
+
+def _restore_rng_state(
+    state: dict[str, Any], train_generator: torch.Generator,
+) -> None:
+    random.setstate(state["python"])
+    np.random.set_state(state["numpy"])
+    torch.set_rng_state(state["torch_cpu"].cpu())
+    if torch.cuda.is_available():
+        torch.cuda.set_rng_state_all(
+            [value.cpu() for value in state["torch_cuda"]]
+        )
+    train_generator.set_state(state["train_generator"].cpu())
+
+
+def _move_optimizer_state_to_device(
+    optimizer: torch.optim.Optimizer, device: torch.device,
+) -> None:
+    for state in optimizer.state.values():
+        for name, value in tuple(state.items()):
+            if isinstance(value, torch.Tensor):
+                state[name] = value.to(device)
+
+
+def _write_recovery_state(
+    output: Path,
+    *,
+    epoch: int,
+    update: int,
+    elapsed_s: float,
+    model: C4Q0HypothesisAdapter,
+    optimizer: torch.optim.Optimizer,
+    train_generator: torch.Generator,
+    arguments: argparse.Namespace,
+    formal_contract: dict[str, Any],
+    dataset_manifest_sha256: str,
+    mapper_state_sha256: str,
+    s_state_sha256: str,
+    f_state_sha256: str,
+) -> Path:
+    name = (
+        f"recovery-epoch-{epoch:04d}-update-{update:06d}"
+        f"-{time.time_ns()}.pt"
+    )
+    path = output / name
+    payload = {
+        "schema_version": "stage3-formal-h-recovery-v1",
+        "completed_epoch": int(epoch),
+        "update": int(update),
+        "elapsed_s": float(elapsed_s),
+        "model_config": model.config,
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
+        "rng_state": _capture_rng_state(train_generator),
+        "training_arguments": _recovery_training_arguments(arguments),
+        "formal_source_contract": formal_contract,
+        "dataset_manifest_sha256": dataset_manifest_sha256,
+        "frozen_state_dict_sha256": {
+            "mapper": mapper_state_sha256,
+            "s": s_state_sha256,
+            "f": f_state_sha256,
+        },
+        "validation_accessed": False,
+        "model_selection_performed": False,
+        "test_accessed": False,
+    }
+    _atomic_recovery_checkpoint(path, payload)
+    _atomic_json(output / "recovery_latest.json", {
+        "schema_version": "stage3-formal-h-recovery-pointer-v1",
+        "path": name,
+        "sha256": sha256_file(path),
+        "completed_epoch": int(epoch),
+        "update": int(update),
+    })
+    return path
+
+
+def _load_recovery_state(output: Path) -> tuple[Path, dict[str, Any]]:
+    pointer_path = output / "recovery_latest.json"
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    if pointer.get("schema_version") != "stage3-formal-h-recovery-pointer-v1":
+        raise ValueError("formal H recovery pointer schema mismatch")
+    checkpoint = (output / str(pointer["path"])).resolve()
+    if checkpoint.parent != output or not checkpoint.is_file():
+        raise ValueError("formal H recovery checkpoint escapes its output directory")
+    if sha256_file(checkpoint) != pointer.get("sha256"):
+        raise ValueError("formal H recovery checkpoint hash mismatch")
+    payload = torch.load(checkpoint, map_location="cpu", weights_only=False)
+    if payload.get("schema_version") != "stage3-formal-h-recovery-v1":
+        raise ValueError("formal H recovery checkpoint schema mismatch")
+    if (
+        int(payload.get("completed_epoch", -1))
+        != int(pointer.get("completed_epoch", -2))
+        or int(payload.get("update", -1)) != int(pointer.get("update", -2))
+    ):
+        raise ValueError("formal H recovery pointer metadata mismatch")
+    return checkpoint, payload
 
 
 def _s_forward(
@@ -379,11 +599,13 @@ def build_h_optimizer(
     return optimizer
 
 
-def train(args: argparse.Namespace) -> Path:
+def _train_locked(args: argparse.Namespace, output: Path) -> Path:
     formal_contract: dict[str, Any] | None = None
     formal_protocol: dict[str, Any] | None = None
     formal_root_protocol: dict[str, Any] | None = None
     formal_assets: dict[str, Any] | None = None
+    if args.resume and not args.formal_oracle:
+        raise ValueError("H recovery is available only in formal-oracle mode")
     if args.formal_oracle:
         protocol_path, protocol = load_protocol(
             args.formal_protocol if args.formal_protocol else None
@@ -403,6 +625,8 @@ def train(args: argparse.Namespace) -> Path:
         ))
         if args.max_updates != int(formal_protocol["schedule_total_updates"]):
             raise ValueError("formal H LR schedule differs from protocol")
+        if int(formal_protocol.get("recovery_epoch_interval", 0)) != 1:
+            raise ValueError("formal H requires one recovery state per full epoch")
         if args.train_limit or args.validation_limit:
             raise ValueError("formal H cannot limit train or validation")
         configure_formal_runtime(args.device, args.workers)
@@ -410,8 +634,6 @@ def train(args: argparse.Namespace) -> Path:
             FORMAL_SOURCE_BUNDLE, protocol_path=protocol_path,
             requested_device=args.device, workers=args.workers,
         )
-    output = Path(args.output).resolve()
-    output.mkdir(parents=True, exist_ok=False)
     _seed(args.seed)
     device = torch.device(args.device)
     if device.type == "cuda" and not torch.cuda.is_available():
@@ -506,9 +728,10 @@ def train(args: argparse.Namespace) -> Path:
         name: sha256_file(Path(__file__).with_name(name))
         for name in source_names
     }
+    train_generator = torch.Generator().manual_seed(args.seed)
     train_loader = DataLoader(
         train_dataset, batch_size=args.batch_size, shuffle=True,
-        generator=torch.Generator().manual_seed(args.seed),
+        generator=train_generator,
         num_workers=args.workers, pin_memory=device.type == "cuda",
     )
     validation_loader = DataLoader(
@@ -551,11 +774,59 @@ def train(args: argparse.Namespace) -> Path:
     history: list[dict[str, Any]] = []
     best: dict[str, Any] | None = None
     update = 0
+    start_epoch = 1
+    elapsed_before_s = 0.0
+    recovery_resume: dict[str, Any] | None = None
+    if args.resume:
+        assert formal_contract is not None
+        recovery_path, recovery = _load_recovery_state(output)
+        if recovery.get("formal_source_contract") != formal_contract:
+            raise ValueError("formal H recovery source contract mismatch")
+        if recovery.get("training_arguments") != _recovery_training_arguments(args):
+            raise ValueError("formal H recovery training arguments mismatch")
+        if recovery.get("dataset_manifest_sha256") != train_dataset.manifest_sha256:
+            raise ValueError("formal H recovery dataset manifest mismatch")
+        expected_frozen = {"mapper": mapper_state, "s": s_state, "f": f_state}
+        if recovery.get("frozen_state_dict_sha256") != expected_frozen:
+            raise ValueError("formal H recovery frozen state mismatch")
+        if recovery.get("model_config") != model.config:
+            raise ValueError("formal H recovery model configuration mismatch")
+        if (
+            recovery.get("validation_accessed") is not False
+            or recovery.get("model_selection_performed") is not False
+            or recovery.get("test_accessed") is not False
+        ):
+            raise ValueError("formal H recovery state crossed an evaluation boundary")
+        completed_epoch = int(recovery.get("completed_epoch", -1))
+        recovered_update = int(recovery.get("update", -1))
+        if (
+            completed_epoch < 1
+            or completed_epoch >= args.epochs
+            or recovered_update != completed_epoch * len(train_loader)
+            or recovered_update >= stop_update
+        ):
+            raise ValueError("formal H recovery epoch/update boundary is invalid")
+        elapsed_before_s = float(recovery.get("elapsed_s", -1.0))
+        if not math.isfinite(elapsed_before_s) or elapsed_before_s < 0.0:
+            raise ValueError("formal H recovery elapsed time is invalid")
+        model.load_state_dict(recovery["model"], strict=True)
+        optimizer.load_state_dict(recovery["optimizer"])
+        _move_optimizer_state_to_device(optimizer, device)
+        _restore_rng_state(recovery["rng_state"], train_generator)
+        update = recovered_update
+        start_epoch = completed_epoch + 1
+        recovery_resume = {
+            "path": str(recovery_path),
+            "sha256": sha256_file(recovery_path),
+            "completed_epoch": completed_epoch,
+            "update": recovered_update,
+        }
     bad_rounds = 0
     stop_reason = "epoch_limit"
     started = time.time()
+    elapsed_now = lambda: elapsed_before_s + time.time() - started
     stop = False
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         model.train()
         sums = {
             "objective": 0.0, "q0_role_macro": 0.0, "directed_edge": 0.0,
@@ -642,6 +913,12 @@ def train(args: argparse.Namespace) -> Path:
             )
             checkpoint_name = f"epoch-{epoch:04d}-update-{update:06d}.pt"
             checkpoint_path = output / checkpoint_name
+            if checkpoint_path.exists() and args.formal_oracle:
+                checkpoint_name = (
+                    f"epoch-{epoch:04d}-update-{update:06d}"
+                    f"-recovered-{time.time_ns()}.pt"
+                )
+                checkpoint_path = output / checkpoint_name
             checkpoint = {
                 "schema_version": RUN_SCHEMA,
                 "model_class": "C4Q0HypothesisAdapter",
@@ -675,6 +952,7 @@ def train(args: argparse.Namespace) -> Path:
                     "fixed_final_checkpoint": bool(args.formal_oracle),
                     "full_chain_provenance_clean": False,
                     "formal_source_contract": formal_contract,
+                    "recovery_resume": recovery_resume,
                     "support_metric_diagnostic_only": True,
                     "support_output_consumed_by_f": False,
                     "train_split_audit": train_dataset.split_audit,
@@ -703,7 +981,7 @@ def train(args: argparse.Namespace) -> Path:
                 bad_rounds = 0
             else:
                 bad_rounds += 1
-            elapsed = time.time() - started
+            elapsed = elapsed_now()
             rate = update / max(elapsed, 1e-6)
             print(json.dumps({
                 "epoch": epoch, "update": update,
@@ -746,6 +1024,7 @@ def train(args: argparse.Namespace) -> Path:
                 "fixed_final_checkpoint": bool(args.formal_oracle),
                 "full_chain_provenance_clean": False,
                 "formal_source_contract": formal_contract,
+                "recovery_resume": recovery_resume,
                 "cold_coordinate_supervision": False,
                 "source_sha256": source_sha256,
                 "train_split_audit": train_dataset.split_audit,
@@ -762,6 +1041,35 @@ def train(args: argparse.Namespace) -> Path:
             ):
                 stop = True
                 stop_reason = "early_stopping"
+        epoch_completed = batches == len(train_loader) and not stop
+        if (
+            args.formal_oracle
+            and epoch_completed
+            and epoch % int(formal_protocol["recovery_epoch_interval"]) == 0
+        ):
+            recovery_path = _write_recovery_state(
+                output,
+                epoch=epoch,
+                update=update,
+                elapsed_s=elapsed_now(),
+                model=model,
+                optimizer=optimizer,
+                train_generator=train_generator,
+                arguments=args,
+                formal_contract=formal_contract,
+                dataset_manifest_sha256=train_dataset.manifest_sha256,
+                mapper_state_sha256=mapper_state,
+                s_state_sha256=s_state,
+                f_state_sha256=f_state,
+            )
+            print(json.dumps({
+                "epoch": epoch,
+                "update": update,
+                "recovery_checkpoint": str(recovery_path),
+                "validation_accessed": False,
+                "model_selection_performed": False,
+                "elapsed_s": elapsed_now(),
+            }, sort_keys=True), flush=True)
         if stop:
             break
     if best is None:
@@ -793,7 +1101,7 @@ def train(args: argparse.Namespace) -> Path:
     manifest = json.loads((output / "run_progress.json").read_text(encoding="utf-8"))
     manifest.update({
         "status": "complete", "stop_reason": stop_reason,
-        "elapsed_s": time.time() - started,
+        "elapsed_s": elapsed_now(),
         "frozen_mapper_verified_unchanged": final_frozen_hashes["mapper"],
         "frozen_s_verified_unchanged": final_frozen_hashes["s"],
         "frozen_f_verified_unchanged": final_frozen_hashes["f"],
@@ -837,6 +1145,22 @@ def train(args: argparse.Namespace) -> Path:
     return output / "run_manifest.json"
 
 
+def train(args: argparse.Namespace) -> Path:
+    output = Path(args.output).resolve()
+    if args.resume:
+        if not output.is_dir():
+            raise FileNotFoundError("formal H resume output directory is missing")
+        if (output / "run_manifest.json").exists():
+            raise RuntimeError("formal H run is already complete")
+    else:
+        output.mkdir(parents=True, exist_ok=False)
+    lock_path, lock_token, lock_stream = _acquire_run_lock(output)
+    try:
+        return _train_locked(args, output)
+    finally:
+        _release_run_lock(lock_path, lock_token, lock_stream)
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument("--dataset", required=True)
@@ -845,6 +1169,10 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--f-checkpoint", required=True)
     result.add_argument("--output", required=True)
     result.add_argument("--formal-oracle", action="store_true")
+    result.add_argument(
+        "--resume", action="store_true",
+        help="resume a formal-oracle run from its latest full-epoch state",
+    )
     result.add_argument("--formal-protocol", default="")
     result.add_argument("--device", default="cuda")
     result.add_argument("--seed", type=int, default=20260727)

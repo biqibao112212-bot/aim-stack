@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import inspect
 import json
+import os
+import random
 from types import SimpleNamespace
 
 import numpy as np
@@ -20,8 +23,16 @@ from training.stage3.pnp_q0_hypothesis_adapter import (
     roll_s_output_c4,
 )
 from training.stage3.train_pnp_q0_hypothesis_adapter import (
+    _acquire_run_lock,
+    _capture_rng_state,
+    _load_recovery_state,
+    _read_run_lock,
+    _release_run_lock,
+    _restore_rng_state,
+    _write_recovery_state,
     build_h_optimizer,
     hypothesis_loss,
+    parser,
 )
 from training.stage3.observable_future_model import AnonymousCandidateFutureExpert
 from training.stage3.train_observable_future_dedicated_selector import (
@@ -254,6 +265,118 @@ def test_optimizer_contains_exactly_h_parameters() -> None:
     expected = {id(parameter) for parameter in model.parameters() if parameter.requires_grad}
     assert actual == expected
     assert sum(parameter.numel() for parameter in model.parameters()) <= 150_000
+
+
+def test_formal_h_recovery_round_trip_is_state_only_and_non_overwriting(
+    tmp_path,
+) -> None:
+    model = _model()
+    optimizer = build_h_optimizer(model, learning_rate=1e-3, weight_decay=0.0)
+    generator = torch.Generator().manual_seed(31)
+    arguments = argparse.Namespace(
+        formal_oracle=True,
+        resume=False,
+        output=str(tmp_path),
+        seed=31,
+    )
+    values = {
+        "formal_contract": {"schema_version": "contract", "git_commit": "abc"},
+        "dataset_manifest_sha256": "dataset",
+        "mapper_state_sha256": "mapper",
+        "s_state_sha256": "s",
+        "f_state_sha256": "f",
+    }
+    first = _write_recovery_state(
+        tmp_path,
+        epoch=1,
+        update=7,
+        elapsed_s=1.25,
+        model=model,
+        optimizer=optimizer,
+        train_generator=generator,
+        arguments=arguments,
+        **values,
+    )
+    second = _write_recovery_state(
+        tmp_path,
+        epoch=1,
+        update=7,
+        elapsed_s=1.5,
+        model=model,
+        optimizer=optimizer,
+        train_generator=generator,
+        arguments=arguments,
+        **values,
+    )
+    assert first != second
+    assert first.is_file() and second.is_file()
+    loaded_path, payload = _load_recovery_state(tmp_path.resolve())
+    assert loaded_path == second.resolve()
+    assert payload["completed_epoch"] == 1
+    assert payload["update"] == 7
+    assert payload["training_arguments"] == {
+        "formal_oracle": True,
+        "output": str(tmp_path),
+        "seed": 31,
+    }
+    assert payload["validation_accessed"] is False
+    assert payload["model_selection_performed"] is False
+    assert payload["test_accessed"] is False
+
+    pointer_path = tmp_path / "recovery_latest.json"
+    pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+    pointer["sha256"] = "0" * 64
+    pointer_path.write_text(json.dumps(pointer), encoding="utf-8")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        _load_recovery_state(tmp_path.resolve())
+
+
+def test_formal_h_recovery_restores_all_host_rng_and_loader_state() -> None:
+    random.seed(41)
+    np.random.seed(41)
+    torch.manual_seed(41)
+    generator = torch.Generator().manual_seed(41)
+    state = _capture_rng_state(generator)
+    expected = (
+        random.random(),
+        float(np.random.random()),
+        torch.rand(5),
+        torch.randperm(17, generator=generator),
+    )
+    _restore_rng_state(state, generator)
+    actual = (
+        random.random(),
+        float(np.random.random()),
+        torch.rand(5),
+        torch.randperm(17, generator=generator),
+    )
+    assert actual[0] == expected[0]
+    assert actual[1] == expected[1]
+    assert torch.equal(actual[2], expected[2])
+    assert torch.equal(actual[3], expected[3])
+
+
+def test_h_resume_cli_is_explicit() -> None:
+    action = next(item for item in parser()._actions if item.dest == "resume")
+    assert action.default is False
+
+
+def test_h_run_lock_rejects_concurrent_owner_and_releases_on_exit(tmp_path) -> None:
+    path, token, stream = _acquire_run_lock(tmp_path)
+    owner = _read_run_lock(path)
+    assert owner["pid"] == os.getpid()
+    assert owner["released"] is False
+    with pytest.raises(RuntimeError, match="live training process"):
+        _acquire_run_lock(tmp_path)
+    _release_run_lock(path, token, stream)
+    assert _read_run_lock(path)["released"] is True
+
+    next_path, next_token, next_stream = _acquire_run_lock(tmp_path)
+    try:
+        assert next_path == path
+        assert _read_run_lock(path)["token"] == next_token
+    finally:
+        _release_run_lock(next_path, next_token, next_stream)
 
 
 def test_h_compose_uses_corrected_observations_and_is_c4_invariant() -> None:

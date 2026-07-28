@@ -1231,3 +1231,27 @@
   `formal_oracle_evaluation` chain only. Oracle association and legacy v27/v39
   parents remain explicit, so `full_chain_provenance_clean=false` and
   `deployable_pipeline=false` are mandatory.
+
+## 2026-07-28 decision 142: recovery state is continuity, not model selection
+
+- Formal H writes one recovery checkpoint after every fully completed training
+  epoch. It contains the exact H and AdamW states, cumulative update/elapsed
+  counters, Python/NumPy/Torch CPU/CUDA RNG states and the dedicated shuffled
+  DataLoader generator state. Resume starts at the following epoch, so an
+  interruption loses at most the current incomplete epoch.
+- A recovery checkpoint is forbidden from reading validation or test and is
+  never entered into validation history, `best`, gate evaluation or checkpoint
+  selection. The single fixed-final validation at update 4224 remains the only
+  formal evaluation and promotion point.
+- Resume fails closed unless source commit/protocol/environment, complete
+  training arguments, dataset manifest, frozen mapper/S/F state hashes and H
+  model configuration all match. Recovery files are immutable protected model
+  assets; unique names prevent overwrite, while an atomically replaced hash-
+  bound pointer identifies the latest committed recovery state. A process-held
+  OS file lock makes each output directory single-writer; owner metadata records
+  PID/start/command, live contention is rejected and a dead owner's metadata is
+  archived before takeover.
+- Adding recovery changes the canonical protocol/source contract. Therefore
+  the passed mapper from commit `17e54ae` remains valid historical evidence but
+  cannot parent the new H. The mapper must be replayed on the recovery commit
+  before H is restarted; no old artifact is relabelled or deleted.

@@ -893,12 +893,22 @@
   determinism, immutable asset hashes, independent split audits, matching
   mapper/H provenance and one fixed-final validation checkpoint. All 271
   Stage3 tests pass before the source commit.
-- [ ] Active: replay the v41 mapper architecture under the clean source baseline using
-  the immutable v27/v39 initial assets. Label those parents as legacy inputs;
-  do not claim that replay retroactively cleans their original provenance.
-- [ ] Train a new H against the exact replayed mapper, then train fixed-final
-  trajectory (2550 updates) and selector (2125 updates) PnP-F stages. Do not
-  reuse v35/v50/v52 weights as formal outputs.
+- [x] Replay the v41 mapper architecture at fixed update 264 on commit
+  `17e54ae`; all four mapper gates passed. The corresponding matched-H r1 run
+  was externally interrupted before its first final-only checkpoint and left
+  no recovery state, so it is incomplete evidence rather than a failed model.
+- [x] Add formal-H full-epoch recovery states that preserve model,
+  optimizer, RNG and DataLoader-generator state without accessing validation
+  or selecting a checkpoint. Add an output-level OS process lock so duplicate
+  launches cannot race recovery/final pointers. All 275 Stage3 tests and two
+  independent read-only reviews pass.
+- [ ] Active: commit and clean-validate the recovery mechanism, then replay the
+  mapper on that exact commit because formal parent/child source contracts must
+  match.
+- [ ] Restart matched H with recovery enabled and preserve the interrupted empty
+  r1 directory. After H completes, train fixed-final trajectory (2550 updates)
+  and selector (2125 updates) PnP-F stages. Do not reuse v35/v50/v52 weights as
+  formal outputs.
 - [ ] Predeclare and validation-rehearse a single-use sealed holdout builder and
   evaluator. Test remains unopened until the entire candidate lock is frozen
   and the user explicitly authorizes one-time consumption.
