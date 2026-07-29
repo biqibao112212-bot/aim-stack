@@ -1045,3 +1045,25 @@
   capture. All 1,050 frames are `wide_6mm`; valid solved observation coverage
   is 100%, target-3 coverage is 99.90%, and empty coverage is 0%. All four WSL
   CTest targets pass. Do not add this smoke-only session to training data.
+
+## 2026-07-29 fixed-6-mm generalization recollection
+
+- [x] Generate a new-seed (`2026072911`) fixed-6-mm manifest with six spin and
+  six linear-plus-spin sessions, 20 seconds each. Reject 18 unsafe combined
+  draws before capture; every admitted complete path plus the 0.10 s
+  collection-only gimbal lead stays inside the declared range/yaw/forward
+  envelope.
+- [x] Collect all 12 sessions locally through the locked Simulator Release/SDK.
+  Every session succeeds on attempt one, the batch exits normally, and no
+  simulator/bridge process remains. Preserve all 332.42 MiB of raw observation
+  and exact-exposure truth assets.
+- [x] Join and audit all 35,554 observation frames against exact exposure truth.
+  Every frame is native `wide_6mm` with dual focal disabled. Overall valid-any,
+  target-3, empty and valid-wrong-only rates are 98.82%, 97.83%, 1.18% and
+  0.98%; target-3 coverage is 97.33% for spin and 98.36% for combined motion.
+- [ ] Next: rebuild the derived PnP/history windows from this capture and run
+  the complete frozen Mapper/S/H/V50/V66/V67 chain without updating weights or
+  choosing thresholds. Report end-to-end admission coverage and one plain
+  future-time/error scatter before deciding whether any training change is
+  justified. Treat this as an observation-recovery/frozen-evaluation set, not
+  as a still-sealed final test set.

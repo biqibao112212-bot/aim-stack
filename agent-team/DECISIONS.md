@@ -1443,3 +1443,23 @@
   acceptance test only and is excluded from training. The next dataset should
   be recollected under these defaults before judging end-to-end availability
   or changing Mapper/S/F/V66/V67.
+
+## 2026-07-29 decision 151: accept the fixed-6-mm recollection as raw evaluation evidence
+
+- The new dataset `stage3-generalization-fixed6mm-20260729-v1` is generated
+  from seed `2026072911` and contains six spin plus six combined-motion sessions
+  with disjoint IDs and parameter tuples. All 12 complete on their first
+  attempt; the durable manifest, per-session results, raw observations and
+  exact-exposure truth are retained outside Git as protected data.
+- The audit exact-joins all 35,554 observation frames. All are native
+  `wide_6mm`, and every durable result records `dual_focal=false`. Overall
+  target-3 coverage is 97.83% versus the previous pipeline's severe admission
+  loss; combined motion reaches 98.36% and spin reaches 97.33%. The residual
+  observation loss is concentrated at the long-range boundary: `spin-02` at
+  about 6.60 m has 86.35% target-3 coverage, while four near/mid spin sessions
+  are at least 99.56%.
+- This validates recollection and the removal of the 16 mm crop as a major
+  recovery, but it is not yet an end-to-end F/V67 metric. Rebuild PnP/history
+  windows and evaluate the complete frozen chain next. Do not train or select
+  a checkpoint on this raw-coverage result, and do not call these inspected
+  sessions an untouched final test split.

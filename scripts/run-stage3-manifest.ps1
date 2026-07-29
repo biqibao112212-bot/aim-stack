@@ -2,7 +2,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$Manifest,
     [Parameter(Mandatory=$true)][string]$EvidenceRoot,
-    [int]$DurationSeconds = 30
+    [int]$DurationSeconds = 30,
+    [switch]$ValidateManifestOnly
 )
 $ErrorActionPreference = 'Continue'
 $runner = Join-Path $PSScriptRoot 'run-stage3-session.ps1'
@@ -33,6 +34,12 @@ foreach ($line in Get-Content -LiteralPath $Manifest -Encoding UTF8) {
     Write-Host "RUN $index $id"
     $oneManifest = Join-Path $EvidenceRoot ('.manifest-' + $id + '.json')
     $manifestObject | ConvertTo-Json -Depth 8 -Compress | Set-Content -LiteralPath $oneManifest -Encoding UTF8
+    if ($ValidateManifestOnly) {
+        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $runner -Manifest $oneManifest -EvidenceRoot $evidence -DurationSeconds $DurationSeconds -ValidateManifestOnly
+        if ($LASTEXITCODE -ne 0) { throw "Stage-3 manifest validation failed: $id" }
+        $index++
+        continue
+    }
     $attempt = 0
     do {
         $attempt++
