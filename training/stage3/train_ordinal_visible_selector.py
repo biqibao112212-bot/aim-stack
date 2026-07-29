@@ -66,6 +66,19 @@ STRONG_GATE = {
 }
 
 
+def reproducible_cache_contract(cache_manifest: dict[str, Any]) -> dict[str, Any]:
+    """Strip wall-clock evidence while retaining every cache identity field."""
+    result: dict[str, Any] = {}
+    for name, value in cache_manifest.items():
+        if name in ("train", "validation") and isinstance(value, dict):
+            result[name] = {
+                key: item for key, item in value.items() if key != "elapsed_s"
+            }
+        else:
+            result[name] = value
+    return result
+
+
 def stratified_capacity_subset(
     dataset: ObservableFuturePnPSFDataset,
     limit: int,
@@ -491,7 +504,9 @@ def train(args: argparse.Namespace) -> Path:
         resume_provenance = resume_payload.get("provenance", {})
         if (
             resume_provenance.get("dataset_manifest_sha256") != dataset_manifest_sha256
-            or resume_provenance.get("frozen_feature_cache") != cache_manifest
+            or reproducible_cache_contract(
+                resume_provenance.get("frozen_feature_cache", {})
+            ) != reproducible_cache_contract(cache_manifest)
         ):
             raise ValueError("ordinal resume data binding mismatch")
         model.selector.load_state_dict(resume_payload["selector"], strict=True)

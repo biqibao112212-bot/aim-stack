@@ -12,6 +12,9 @@ from training.stage3.ordinal_visible_selector import (
     OrdinalVisibleProgressSelector,
     ordinal_visible_selector_loss,
 )
+from training.stage3.train_ordinal_visible_selector import (
+    reproducible_cache_contract,
+)
 
 
 def _batch(batch_size: int = 3, device: str = "cpu") -> dict[str, torch.Tensor]:
@@ -73,6 +76,22 @@ def _state_sha(model: torch.nn.Module) -> str:
         digest.update(name.encode("utf-8"))
         digest.update(tensor.numpy().tobytes())
     return digest.hexdigest()
+
+
+def test_resume_cache_contract_ignores_only_elapsed_time() -> None:
+    first = {
+        "dataset_manifest_sha256": "dataset",
+        "train": {"sha256": "train", "sample_count": 4, "elapsed_s": 1.0},
+        "validation": {"sha256": "val", "sample_count": 2, "elapsed_s": 2.0},
+    }
+    rebuilt = {
+        "dataset_manifest_sha256": "dataset",
+        "train": {"sha256": "train", "sample_count": 4, "elapsed_s": 9.0},
+        "validation": {"sha256": "val", "sample_count": 2, "elapsed_s": 8.0},
+    }
+    assert reproducible_cache_contract(first) == reproducible_cache_contract(rebuilt)
+    rebuilt["train"]["sha256"] = "changed"
+    assert reproducible_cache_contract(first) != reproducible_cache_contract(rebuilt)
 
 
 def test_frozen_trajectory_and_conditional_output_remain_bit_exact() -> None:
