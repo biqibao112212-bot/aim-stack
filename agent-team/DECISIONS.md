@@ -1332,3 +1332,26 @@
   V52 at 363.54 mm hard P95, 83.25% accuracy and 69.02% one-step recall and
   prove conditional/state hashes unchanged. No checkpoint promotion or test
   access is authorized.
+
+## 2026-07-29 decision 146: retain the fixed V66 result without validation tuning
+
+- V66 completes update 2125 and improves the same-validation V52 baseline on
+  hard P95 (358.12 versus 363.54 mm), hard P99 (554.58 versus 560.30 mm),
+  accuracy (83.565% versus 83.255%) and one-step recall (73.095% versus
+  69.021%). Conditional P95 remains 215.85 mm with bit-exact conditional and
+  frozen-trajectory hashes; all 1,978 evaluated query sequences are monotone.
+- The stronger absolute gate remains failed: hard P95 is above 350 mm, hard P99
+  above 550 mm and accuracy below 84%. Epoch 35 happens to score slightly better
+  on some metrics, but it is not promoted because update 2125 was the only
+  predeclared endpoint. No extra epochs, learning-rate sweep or checkpoint
+  selection is justified.
+- Distribution evidence matters more than one tail number: final hard coverage
+  is 52.06/67.98/75.78/79.90/88.26% at 50/100/150/200/300 mm. Correct selections
+  have 212.69 mm hard P95; wrong selections are 2,541/15,461 queries and have
+  412.87 mm hard P95. Error increases mainly with future time, switch count and
+  upstream error; physical yaw-rate trend is flatter.
+- This remains an oracle-associated, adaptively validated diagnostic with
+  legacy Mapper/H mismatch. V66 is useful structural evidence and the best
+  fixed-endpoint selector result measured here, not formal acceptance or a
+  deployable model. The next responsible work is confidence-based fire gating
+  and/or a new untouched evaluation boundary, not further fitting this split.

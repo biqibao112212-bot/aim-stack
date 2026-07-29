@@ -969,6 +969,16 @@
   one-step recall and 254.83 mm hard P95 with zero reversals and bit-exact
   trajectories. The predeclared 95% gate is not marked passed; its 0.96-point
   miss is explicitly manually released for one full diagnostic run.
-- [ ] Active: run the full combined-motion diagnostic to fixed update 2125 on
-  committed source, then generate all predeclared distribution/trend/coverage/
-  conditional-vs-hard figures. V52 remains baseline until full validation.
+- [x] Complete the full run at the only fixed endpoint, update 2125, in 148.8 s
+  of training time. V66 reaches 358.12 mm hard P95, 554.58 mm hard P99,
+  83.565% accuracy and 73.095% one-step recall versus V52 at 363.54/560.30 mm,
+  83.255% and 69.021%. Conditional P95/SHA and the V50 state stay bit-exact;
+  predicted sequence reversals are zero.
+- [x] Replay all 1,985 validation windows and export PDF/PNG training,
+  distribution/CDF/coverage, scatter-and-quantile trends, signed-step confusion,
+  calibration and V50/V52/V64/V66 comparison figures under `figures-r2`.
+- [ ] Do not tune this validation further. V66 improves every V52 relative
+  selector metric but misses the stronger predeclared absolute gate at 350 mm
+  hard P95, 550 mm hard P99 and 84% accuracy, so `gate_passed=false`. The next
+  stage must target confidence/rejection or a new evaluation boundary rather
+  than silently selecting epoch 35 or adding epochs.
