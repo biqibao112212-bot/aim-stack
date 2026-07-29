@@ -1141,6 +1141,26 @@
   query without dropping the window, and never expose future PnP to forward.
   A two-session diagnostic keeps 733/850 windows, 89.19% of their positive-time
   queries and zero signed-step reversals.
-- [ ] Rebuild the complete parent/SF chain without overwriting r1, rerun the
-  frozen ballistic evaluation, and replace the superseded coverage/error
-  conclusions before proposing any combination-motion training.
+- [x] Rebuild the complete parent/SF chain from clean commit `1cc6d1e` without
+  overwriting r1. The accepted r2 chain retains 2,559/3,514 windows (72.82%):
+  992/1,460 rotation (67.95%) and 1,567/2,054 combined (76.29%). Across the
+  retained stream, positive-query retention is 79.70% for rotation and 90.25%
+  for combined, with zero unmasked signed-step reversals. All 955 rejected
+  windows are explained by a coherent suffix shorter than eight events (808)
+  or an observed q0 that cannot seed any adjacent-only positive-time future
+  label (147); q0 observation failure is zero.
+- [x] Run the complete frozen exact-query evaluation on all r2 common-usable
+  windows. Mapper/S/H/V50/V66/V67 hashes remain unchanged, no old training
+  session overlaps the new captures, and test remains unopened. Rotation gives
+  328.92/199.00/1124.99 mm Mean/P50/P95 with 55.80% switch accuracy; combined
+  gives 204.63/97.79/743.76 mm with 68.79%. V67 changes the frozen V66 result
+  by only about 1--2 mm and its residual magnitude is about 14 mm mean, so
+  another final-position refinement is not justified.
+- [ ] Active: agree the structural training boundary before changing weights.
+  The current F encoder compresses the available anonymous four-handle history
+  into one identity-switching primary stream and invalidates same-handle local
+  velocity at switches. The candidate next experiment is an explicit anonymous
+  C4-equivariant vehicle MotionContext shared by trajectory and selection,
+  while S and all accepted checkpoints remain frozen baselines. Do not launch
+  training, reuse a stale truth-nearest ballistic label, or continue selector/
+  V67 epoch tuning until this interface is accepted.

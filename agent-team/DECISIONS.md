@@ -1613,3 +1613,34 @@
   89.19% of positive-time queries and zero unmasked reversals. Proceed to the
   full non-overwriting rebuild only from a clean commit; raw future PnP streams
   remain a later consistency audit, not a blocker for this label definition.
+
+## 2026-07-29 decision 158: accept r2 semantics and retire the old frozen-error conclusion
+
+- The full non-overwriting r2 parent/SF chain is built from clean commit
+  `1cc6d1e`. It retains 2,559/3,514 common-usable windows (72.82%):
+  992/1,460 rotation and 1,567/2,054 combined. Parent `pnp_forward_usable` and
+  SF `pnp_sf_common_usable` agree on every sample; S alone can admit 85 more
+  windows, which are rejected only by the parent history/future contract.
+- Positive-query retention inside accepted windows is 79.70% for rotation and
+  90.25% for combined. Every unmasked target sequence is monotone with zero
+  direction reversals. The remaining window failures are 808 short coherent
+  suffixes and 147 cases where observed q0 cannot seed an adjacent-only future
+  label; there are no q0 observation failures. Validation rotation remains a
+  difficult, imbalanced boundary: only 181/412 windows are usable, mainly
+  because 228 histories have fewer than eight coherent events.
+- The frozen exact-query evaluation is complete over 17,279 queries with all
+  Mapper/S/H/V50/V66/V67 hashes unchanged and test unopened. Overall final
+  Mean/P50/P95/P99 is 251.43/136.25/943.74/1391.56 mm with 63.90% switch
+  accuracy. Rotation is 328.92/199.00/1124.99/1463.31 mm and 55.80%; combined
+  is 204.63/97.79/743.76/1307.20 mm and 68.79%.
+- Therefore the earlier statement that rotation is already good applies only
+  to the superseded strict complete-history subset. Under the accepted actual
+  observation stream, rotation is worse than combined. V67 changes V66 by only
+  about 1--2 mm while its residual magnitude is about 14 mm mean; neither
+  final-position refinement nor more selector epochs can recover motion
+  evidence discarded by the single selected-stream encoder.
+- The old ballistic evaluator still constructs a future role from dense
+  truth-nearest visibility and must not be used with decision 157. Its failed
+  r3 attempt is not a model result. Until an arbitrary-time label is rebuilt
+  from a nearby actual observation, the accepted r2 comparison is exact-query
+  only. No new training architecture is approved by this decision.
