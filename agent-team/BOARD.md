@@ -994,7 +994,11 @@
 - [x] Replace the previous figure suite for this stage with one plain scatter:
   future query time on x and final position error on y. Each dot is one query,
   so the vertical spread at a shared query time is the requested distribution.
-- [ ] Active: commit the reproducible trainer, then run one fixed 10-epoch full
-  combined-motion diagnostic locally in the Windows `yolov8` CUDA environment.
-  Accept only the final endpoint; do not select an intermediate validation
-  checkpoint or add epochs after seeing the result.
+- [x] Commit the reproducible trainer at `acee996`, then complete the fixed
+  10-epoch/430-update full combined-motion diagnostic locally in the Windows
+  `yolov8` CUDA environment. The final endpoint passes its predeclared gate:
+  Mean/P50/P95 improve from 109.67/46.00/358.12 mm to
+  108.75/45.44/351.96 mm; P99 moves from 554.58 to 560.57 mm within the allowed
+  10 mm tail tolerance. The frozen stack is bit-exact and selection accuracy
+  remains 83.565%. No intermediate checkpoint is selected and no epochs are
+  added.

@@ -1378,3 +1378,20 @@
   on the top plot boundary and counted in the title. Numerical Mean/P50/P95/P99
   and coverage remain in the run manifest, but no additional plot family is
   produced.
+
+## 2026-07-29 decision 148: retain the fixed V67 final-position endpoint
+
+- V67 completes the only declared endpoint, epoch 10/update 430, in 32.1 s of
+  measured training time. Against its bit-exact V66 initialization on all
+  15,461 validation queries, Mean improves by 0.92 mm, P50 by 0.56 mm and P95
+  by 6.16 mm. P99 regresses by 5.99 mm, below the declared 10 mm tail tolerance;
+  all gate checks pass and 54.98% of individual queries improve.
+- This is a modest body-distribution gain, not a solved selector. Coverage at
+  50/100/300 mm moves from 52.06/67.98/88.26% to 52.41/68.37/88.78%, while
+  frozen armor selection remains exactly 83.565%. The residual itself has an
+  8.22 mm median and 29.98 mm P95, so it is correcting final XYZ locally rather
+  than replacing the learned trajectory/selection structure.
+- Retain only the fixed final checkpoint as the V67 endpoint; do not promote
+  epoch 2 despite its favorable visible metrics and do not add epochs. The run
+  remains an oracle-associated combined-motion diagnostic on the adaptively
+  observed validation split, with the test split still sealed.
