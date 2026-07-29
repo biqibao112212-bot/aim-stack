@@ -982,3 +982,19 @@
   hard P95, 550 mm hard P99 and 84% accuracy, so `gate_passed=false`. The next
   stage must target confidence/rejection or a new evaluation boundary rather
   than silently selecting epoch 35 or adding epochs.
+
+## 2026-07-29 final future-position residual diagnostic
+
+- [x] Define a zero-initialized final-position residual after the complete
+  Mapper/S/H/V50/V66 chain. Mapper, S, H, trajectory and armor selection remain
+  bit-exact frozen; only the bounded XYZ residual is trainable.
+- [x] Pass six dedicated CPU/CUDA tests for exact zero-init equivalence,
+  frozen-state isolation, query/candidate permutation and finite gradients.
+  Complete a 256-window CUDA smoke run with recovery, metrics and query export.
+- [x] Replace the previous figure suite for this stage with one plain scatter:
+  future query time on x and final position error on y. Each dot is one query,
+  so the vertical spread at a shared query time is the requested distribution.
+- [ ] Active: commit the reproducible trainer, then run one fixed 10-epoch full
+  combined-motion diagnostic locally in the Windows `yolov8` CUDA environment.
+  Accept only the final endpoint; do not select an intermediate validation
+  checkpoint or add epochs after seeing the result.

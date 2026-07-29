@@ -1355,3 +1355,26 @@
   fixed-endpoint selector result measured here, not formal acceptance or a
   deployable model. The next responsible work is confidence-based fire gating
   and/or a new untouched evaluation boundary, not further fitting this split.
+
+## 2026-07-29 decision 147: fine-tune only the complete final position
+
+- The requested next target is the actual future XYZ emitted by the full
+  pipeline, not another local trajectory or selector proxy. Add one causal
+  residual head after frozen V66. It reads frozen history/candidate context,
+  query time and the frozen selected route/confidence, but no future truth,
+  physical plate ID, motion-class label, candidate-wise identity head or
+  hand-written physics decoder.
+- Initialize the final XYZ layer to zero so the untrained system is bit-exact
+  V66. Train against clean absolute future position while the forward path sees
+  only the cached mapped PnP-domain inputs. The residual is bounded to 0.75 m;
+  all upstream states and armor decisions must remain hash-identical.
+- Use a fixed ten full-data epochs rather than extending training until a
+  favorable validation checkpoint appears. A 256-window smoke run showed that
+  the loss and gradient path improve all central/tail metrics early, while
+  continuing on the tiny subset begins to overfit; this is engineering evidence
+  for the fixed short schedule, not a checkpoint-selection rule.
+- For user review, generate only one scatter plot: future time versus final XYZ
+  error, one point per query. Rare errors above the dense 99.5% body are placed
+  on the top plot boundary and counted in the title. Numerical Mean/P50/P95/P99
+  and coverage remain in the run manifest, but no additional plot family is
+  produced.
