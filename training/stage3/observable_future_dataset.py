@@ -212,6 +212,7 @@ def construct_observable_future_sample_from_selected_history(
     query_time_s: np.ndarray,
     rule_query: np.ndarray,
     *,
+    future_targets: dict[str, np.ndarray] | None = None,
     candidate_steps: tuple[int, ...] = DEFAULT_CANDIDATE_STEPS,
     tie_epsilon_m: float = 1e-6,
     query_match_tolerance_s: float = 2e-6,
@@ -264,12 +265,16 @@ def construct_observable_future_sample_from_selected_history(
             history_dt[row] = selected_time[row] - selected_time[row - 1]
     history_relative[-1] = 0.0
 
-    future = construct_future_targets_from_current_source(
-        dense_future_position_m, dense_future_time_s, query_time_s, rule_query,
-        current_source, current_position,
-        candidate_steps=candidate_steps,
-        tie_epsilon_m=tie_epsilon_m,
-        query_match_tolerance_s=query_match_tolerance_s,
+    future = (
+        construct_future_targets_from_current_source(
+            dense_future_position_m, dense_future_time_s, query_time_s,
+            rule_query, current_source, current_position,
+            candidate_steps=candidate_steps,
+            tie_epsilon_m=tie_epsilon_m,
+            query_match_tolerance_s=query_match_tolerance_s,
+        )
+        if future_targets is None
+        else {key: value.copy() for key, value in future_targets.items()}
     )
     return {
         "history_position_rel_m": history_relative,

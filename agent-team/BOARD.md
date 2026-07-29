@@ -1133,7 +1133,14 @@
   use exposure-local PnP horizontal range only. Truth remains limited to
   offline candidate-to-label association and future supervision. Add a direct
   conflict test where truth range and PnP range select different plates;
-  310 Stage3 tests and both repository boundary checks pass.
+  312 Stage3 tests and both repository boundary checks pass.
+- [x] Remove truth-nearest future role selection from the observed-q0 path.
+  Each exact future query now chooses only among its actual PnP candidates by
+  exposure-local range; dense truth supplies the selected role's clean XYZ and
+  signed unwrap/gate only. Sort by tau before unwrapping, mask one incoherent
+  query without dropping the window, and never expose future PnP to forward.
+  A two-session diagnostic keeps 733/850 windows, 89.19% of their positive-time
+  queries and zero signed-step reversals.
 - [ ] Rebuild the complete parent/SF chain without overwriting r1, rerun the
   frozen ballistic evaluation, and replace the superseded coverage/error
   conclusions before proposing any combination-motion training.

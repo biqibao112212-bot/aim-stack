@@ -11,6 +11,7 @@ from training.stage3.observable_future_dataset import DEFAULT_CANDIDATE_STEPS
 from training.stage3.observable_future_pnp_upper_bound import (
     FORWARD_KEYS,
     associate_observed_primary_history,
+    construct_observed_future_targets_from_queries,
     construct_observed_primary_pnp_sample,
     construct_real_pnp_upper_bound_sample,
     model_inputs_from_arrays,
@@ -236,6 +237,77 @@ def test_observed_stream_primary_uses_pnp_range_not_truth_range() -> None:
     )
     assert int(result["selected_source_slot"][-1]) == 1
     assert np.isclose(result["local_horizontal_range_m"][-1, 1], 0.9)
+
+
+def test_future_observed_queries_choose_pnp_role_and_mask_only_bad_query() -> None:
+    dense_time = np.asarray([0.0, 0.1, 0.2], dtype=np.float64)
+    dense = np.asarray([
+        [[1.0, 0.0, 0.0], [0.0, 2.0, 0.1], [-3.0, 0.0, 0.2], [0.0, -4.0, 0.3]],
+        [[0.9, 0.0, 0.0], [0.1, 2.0, 0.1], [-2.9, 0.0, 0.2], [0.1, -4.0, 0.3]],
+        [[0.8, 0.0, 0.0], [0.2, 2.0, 0.1], [-2.8, 0.0, 0.2], [0.2, -4.0, 0.3]],
+    ], dtype=np.float32)
+    future_pnp = dense.copy()
+    future_pnp[0, 1] = [0.0, 0.8, 0.1]
+    future_pnp[1, 1] = [0.0, 0.7, 0.1]
+    future_pnp[2, 2] = [0.0, 0.6, 0.2]
+    mask = np.zeros((3, 4), dtype=np.bool_)
+    mask[0, 1] = True
+    mask[1, 1] = True
+    mask[2, 2] = True
+    result = construct_observed_future_targets_from_queries(
+        dense, dense_time, dense_time.astype(np.float32),
+        np.ones(3, dtype=np.bool_), np.asarray([0, 0, 1]),
+        1, dense[0, 1], future_pnp, mask,
+        np.ones(3, dtype=np.bool_), np.ones(3, dtype=np.bool_),
+        np.asarray([False, True, False]),
+    )
+    assert np.array_equal(result["target_query_mask"], [True, False, True])
+    assert np.array_equal(result["target_switch_count"], [0, 0, 1])
+    assert np.allclose(
+        result["target_visible_delta_m"][2], dense[2, 2] - dense[0, 1]
+    )
+
+
+def test_future_observed_query_labels_are_invariant_to_query_order() -> None:
+    dense_time = np.asarray([0.0, 0.1, 0.2], dtype=np.float64)
+    dense = np.asarray([
+        [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [-3.0, 0.0, 0.0], [0.0, -4.0, 0.0]],
+        [[0.9, 0.0, 0.0], [0.1, 2.0, 0.0], [-2.9, 0.0, 0.0], [0.1, -4.0, 0.0]],
+        [[0.8, 0.0, 0.0], [0.2, 2.0, 0.0], [-2.8, 0.0, 0.0], [0.2, -4.0, 0.0]],
+    ], dtype=np.float32)
+    pnp = dense.copy()
+    mask = np.zeros((3, 4), dtype=np.bool_)
+    mask[0, 0] = True
+    mask[1, 0] = True
+    mask[2, 1] = True
+    kwargs = dict(
+        dense_future_position_m=dense,
+        dense_future_time_s=dense_time,
+        rule_query=np.ones(3, dtype=np.bool_),
+        current_source=0,
+        current_position_m=dense[0, 0],
+        future_observation_frame_available=np.ones(3, dtype=np.bool_),
+        future_observation_frame_usable=np.ones(3, dtype=np.bool_),
+        future_observation_ambiguous=np.zeros(3, dtype=np.bool_),
+    )
+    first = construct_observed_future_targets_from_queries(
+        query_time_s=dense_time.astype(np.float32),
+        reference_switch_count=np.asarray([0, 0, 1]),
+        future_observation_position_m=pnp,
+        future_observation_mask=mask,
+        **kwargs,
+    )
+    order = np.asarray([2, 0, 1])
+    second = construct_observed_future_targets_from_queries(
+        query_time_s=dense_time[order].astype(np.float32),
+        reference_switch_count=np.asarray([0, 0, 1])[order],
+        future_observation_position_m=pnp[order],
+        future_observation_mask=mask[order],
+        **kwargs,
+    )
+    inverse = np.argsort(order)
+    for key in ("target_switch_count", "target_visible_delta_m", "target_query_mask"):
+        assert np.array_equal(first[key], second[key][inverse])
 
 
 def test_observed_stream_masks_incoherent_prefix_instead_of_encoding_opposite() -> None:

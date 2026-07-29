@@ -1587,3 +1587,29 @@
   input to the model. Rebuild to a new non-overwriting dataset and rerun frozen
   acceptance before deciding what to retrain; do not reuse r1 coverage or
   frozen-error numbers as final evidence.
+
+## 2026-07-29 decision 157: future role comes from exact-query PnP, not truth visibility
+
+- The first observed-q0 label path was invalid when PnP and clean visibility
+  chose different q0 roles. All 425 such r1 windows switched back to the clean
+  nearest role at the first 1 ms dense frame, creating a synthetic boundary
+  unrelated to the actual observation stream. Those labels and dependent r1
+  metrics remain superseded.
+- For every exact future query, require an available, usable, non-ambiguous
+  observation frame with at least one actual PnP candidate. PnP horizontal
+  range alone selects the supervised role. The temporary truth slot then
+  supplies that role's physical XYZ target; noisy future PnP coordinates never
+  become a regression target or forward input.
+- Query arrays are sorted by tau before anonymous signed-step unwrapping and
+  restored to their original order afterward. Dense truth may determine only
+  whether the observed role has a unique reachable integer turn count within
+  one adjacent step of the clean reference. It may not replace the PnP-selected
+  role. Direction reversal, opposite/incoherent reachability, missing frames,
+  ties and ambiguous queries mask that query only; a valid history window is
+  retained whenever at least one positive-time query remains.
+- Direct independent future-PnP selection creates direction reversals in
+  42.7% of windows, while the coherent query rule retains 87.3% in the full r1
+  audit. The rebuilt two-session diagnostic retains 733/850 windows (86.24%),
+  89.19% of positive-time queries and zero unmasked reversals. Proceed to the
+  full non-overwriting rebuild only from a clean commit; raw future PnP streams
+  remain a later consistency audit, not a blocker for this label definition.

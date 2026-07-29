@@ -20,6 +20,8 @@ from typing import Any
 import numpy as np
 
 from .observable_future_dataset import (
+    DEFAULT_CANDIDATE_STEPS,
+    _exact_query_indices,
     _select_with_continuity,
     construct_observable_future_sample_from_selected_history,
 )
@@ -46,6 +48,153 @@ FORWARD_KEYS = (
     "candidate_confidence",
     "tau_s",
 )
+
+
+def construct_observed_future_targets_from_queries(
+    dense_future_position_m: np.ndarray,
+    dense_future_time_s: np.ndarray,
+    query_time_s: np.ndarray,
+    rule_query: np.ndarray,
+    reference_switch_count: np.ndarray,
+    current_source: int,
+    current_position_m: np.ndarray,
+    future_observation_position_m: np.ndarray,
+    future_observation_mask: np.ndarray,
+    future_observation_frame_available: np.ndarray,
+    future_observation_frame_usable: np.ndarray,
+    future_observation_ambiguous: np.ndarray,
+    *,
+    candidate_steps: tuple[int, ...] = DEFAULT_CANDIDATE_STEPS,
+    tie_epsilon_m: float = 1e-6,
+    query_match_tolerance_s: float = 2e-6,
+) -> dict[str, np.ndarray]:
+    """Label future branches from exact-query PnP observations.
+
+    PnP horizontal range alone chooses which actually observed role is the
+    target.  Dense truth supplies only that role's clean XYZ and the signed
+    integer unwrap/gate.  An incoherent query is masked without dropping its
+    otherwise usable history window.
+    """
+    dense_position = np.asarray(dense_future_position_m, dtype=np.float32)
+    dense_time = np.asarray(dense_future_time_s, dtype=np.float64)
+    tau = np.asarray(query_time_s, dtype=np.float32)
+    rule = np.asarray(rule_query, dtype=np.bool_)
+    reference = np.asarray(reference_switch_count, dtype=np.int64)
+    current_position = np.asarray(current_position_m, dtype=np.float32)
+    future_observation = np.asarray(
+        future_observation_position_m, dtype=np.float32
+    )
+    future_mask = np.asarray(future_observation_mask, dtype=np.bool_)
+    frame_available = np.asarray(
+        future_observation_frame_available, dtype=np.bool_
+    )
+    frame_usable = np.asarray(future_observation_frame_usable, dtype=np.bool_)
+    ambiguous = np.asarray(future_observation_ambiguous, dtype=np.bool_)
+    steps = np.asarray(candidate_steps, dtype=np.int64)
+    if dense_position.ndim != 3 or dense_position.shape[1:] != (4, 3):
+        raise ValueError("dense future truth must have shape [U,4,3]")
+    if dense_time.shape != dense_position.shape[:1]:
+        raise ValueError("dense future time does not match truth")
+    if tau.ndim != 1 or rule.shape != tau.shape or reference.shape != tau.shape:
+        raise ValueError("future query tensors must have shape [Q]")
+    if future_observation.shape != (tau.size, 4, 3):
+        raise ValueError("future query observations must have shape [Q,4,3]")
+    if future_mask.shape != (tau.size, 4):
+        raise ValueError("future query observation mask must have shape [Q,4]")
+    if any(value.shape != tau.shape for value in (
+        frame_available, frame_usable, ambiguous,
+    )):
+        raise ValueError("future query frame flags must have shape [Q]")
+    if not 0 <= int(current_source) < 4 or current_position.shape != (3,):
+        raise ValueError("observed future current source is invalid")
+    if int(np.count_nonzero(steps == 0)) != 1:
+        raise ValueError("future candidate steps require one zero anchor")
+    if min(tie_epsilon_m, query_match_tolerance_s) < 0:
+        raise ValueError("future observed-stream tolerances must be non-negative")
+    if bool(np.any(future_mask & ~np.isfinite(future_observation).all(axis=-1))):
+        raise ValueError("valid future PnP observations must be finite")
+
+    query_dense_index = _exact_query_indices(
+        dense_time, tau, query_match_tolerance_s
+    )
+    zero_queries = np.flatnonzero(tau == 0.0)
+    if zero_queries.size < 1 or not bool(rule[zero_queries].all()):
+        raise ValueError("future queries require an eligible exact q0")
+    reference_nonzero = reference[rule & (reference != 0)]
+    direction = int(np.sign(reference_nonzero[-1])) if reference_nonzero.size else 0
+    if reference_nonzero.size and bool(np.any(np.sign(reference_nonzero) != direction)):
+        raise ValueError("future truth unwrap reverses direction")
+    target_switch = np.zeros(tau.size, dtype=np.int64)
+    target_delta = np.zeros((tau.size, 3), dtype=np.float32)
+    target_mask = np.zeros(tau.size, dtype=np.bool_)
+    previous_step = 0
+    for query in np.argsort(tau, kind="stable"):
+        if not bool(rule[query]):
+            continue
+        if not bool(
+            frame_available[query] and frame_usable[query]
+            and not ambiguous[query]
+        ):
+            continue
+        slots = np.flatnonzero(future_mask[query])
+        if slots.size == 0:
+            continue
+        ranges = np.linalg.norm(
+            future_observation[query, slots, :2], axis=-1
+        )
+        order = np.argsort(ranges, kind="stable")
+        if (
+            order.size > 1
+            and float(ranges[order[1]] - ranges[order[0]]) <= tie_epsilon_m
+        ):
+            continue
+        slot = int(slots[int(order[0])])
+        residue = (slot - int(current_source)) % 4
+        options = steps[np.remainder(steps, 4) == residue]
+        if direction > 0:
+            options = options[(options >= 0) & (options >= previous_step)]
+        elif direction < 0:
+            options = options[(options <= 0) & (options <= previous_step)]
+        else:
+            options = options[options == 0]
+        if options.size == 0:
+            continue
+        distance = np.abs(options - int(reference[query]))
+        best_distance = int(distance.min())
+        if best_distance > 1:
+            continue
+        best_options = options[distance == best_distance]
+        step = int(best_options[np.argmin(np.abs(best_options - previous_step))])
+        if tau[query] == 0.0 and (slot != int(current_source) or step != 0):
+            raise ValueError("future q0 PnP primary disagrees with history q0")
+        target_switch[query] = step
+        target_delta[query] = (
+            dense_position[query_dense_index[query], slot] - current_position
+        )
+        target_mask[query] = True
+        previous_step = step
+    if not bool(target_mask[zero_queries].all()) or bool(np.any(target_switch[zero_queries] != 0)):
+        raise ValueError("future observed queries lost their q0 label")
+
+    q0_all = dense_position[query_dense_index[int(zero_queries[0])]]
+    candidate_relation = np.stack([
+        q0_all[(int(current_source) + int(step)) % 4] - current_position
+        for step in steps
+    ]).astype(np.float32, copy=False)
+    candidate_relation[int(np.flatnonzero(steps == 0)[0])] = 0.0
+    target_onehot = steps[None, :] == target_switch[:, None]
+    target_onehot &= target_mask[:, None]
+    return {
+        "candidate_relation_m": candidate_relation,
+        "candidate_step": steps.copy(),
+        "candidate_mask": np.ones(steps.size, dtype=np.bool_),
+        "candidate_confidence": np.ones(steps.size, dtype=np.float32),
+        "tau_s": tau,
+        "target_switch_count": target_switch,
+        "target_candidate_onehot": target_onehot,
+        "target_visible_delta_m": target_delta,
+        "target_query_mask": target_mask,
+    }
 
 
 def rebase_tracker_points_to_anchor(
@@ -360,6 +509,11 @@ def construct_observed_primary_pnp_sample(
     anchor_origin_world_m: np.ndarray,
     anchor_tracker_to_world_rotation: np.ndarray,
     *,
+    future_observation_position_m: np.ndarray | None = None,
+    future_observation_mask: np.ndarray | None = None,
+    future_observation_frame_available: np.ndarray | None = None,
+    future_observation_frame_usable: np.ndarray | None = None,
+    future_observation_ambiguous: np.ndarray | None = None,
     minimum_history_events: int = 8,
     tie_epsilon_m: float = 1e-6,
     primary_switch_hysteresis_m: float = 0.02,
@@ -388,12 +542,43 @@ def construct_observed_primary_pnp_sample(
 
     if q0_associated:
         try:
+            future_inputs = (
+                future_observation_position_m,
+                future_observation_mask,
+                future_observation_frame_available,
+                future_observation_frame_usable,
+                future_observation_ambiguous,
+            )
+            if any(value is not None for value in future_inputs) and not all(
+                value is not None for value in future_inputs
+            ):
+                raise ValueError("future PnP query labels must be supplied together")
+            future_targets = None
+            if all(value is not None for value in future_inputs):
+                future_targets = construct_observed_future_targets_from_queries(
+                    dense_future_position_m, dense_future_time_s,
+                    query_time_s, rule_query,
+                    clean_fallback_sample["target_switch_count"],
+                    int(selected_slot[-1]),
+                    physical_history_position_m[
+                        int(association["valid_event_index"][-1]),
+                        int(selected_slot[-1]),
+                    ],
+                    np.asarray(future_observation_position_m),
+                    np.asarray(future_observation_mask),
+                    np.asarray(future_observation_frame_available),
+                    np.asarray(future_observation_frame_usable),
+                    np.asarray(future_observation_ambiguous),
+                    tie_epsilon_m=tie_epsilon_m,
+                    query_match_tolerance_s=query_match_tolerance_s,
+                )
             clean = construct_observable_future_sample_from_selected_history(
                 physical_history_position_m,
                 association["valid_event_index"], selected_slot, selected_mask,
                 physical_event_time_s,
                 dense_future_position_m, dense_future_time_s,
                 query_time_s, rule_query,
+                future_targets=future_targets,
                 tie_epsilon_m=tie_epsilon_m,
                 query_match_tolerance_s=query_match_tolerance_s,
             )
@@ -405,6 +590,11 @@ def construct_observed_primary_pnp_sample(
             clean = {
                 key: value.copy() for key, value in clean_fallback_sample.items()
             }
+        if not bool(np.any(
+            clean["target_query_mask"] & (clean["tau_s"] > 0)
+        )):
+            future_coherent = False
+            usable = False
     else:
         clean = {key: value.copy() for key, value in clean_fallback_sample.items()}
 

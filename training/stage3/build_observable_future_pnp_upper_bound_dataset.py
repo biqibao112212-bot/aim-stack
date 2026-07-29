@@ -216,6 +216,21 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             event_rotations,
             np.asarray(anchor_frame.gimbal_origin_world_m, dtype=np.float64),
             _rotation_matrix(anchor_frame.chassis_quaternion_world_wxyz),
+            future_observation_position_m=observation[
+                "future_observation_position"
+            ][observation_row],
+            future_observation_mask=observation[
+                "future_observation_mask"
+            ][observation_row],
+            future_observation_frame_available=observation[
+                "future_observation_frame_available"
+            ][observation_row],
+            future_observation_frame_usable=observation[
+                "future_observation_frame_usable"
+            ][observation_row],
+            future_observation_ambiguous=observation[
+                "future_observation_ambiguous"
+            ][observation_row],
             minimum_history_events=int(task["minimum_history_events"]),
             tie_epsilon_m=float(task["tie_epsilon_m"]),
             primary_switch_hysteresis_m=float(
@@ -528,8 +543,9 @@ def build(args: argparse.Namespace) -> Path:
             "all step modulo 4 equals 0 relations are bit-exact zero"
         ),
         "target_policy": (
-            "future truth replay seeded by the actual-observed q0 handle; "
-            "PnP delta recomputed from PnP current"
+            "actual future PnP candidate chooses each supervised role; dense "
+            "truth only unwraps/gates its signed step and supplies clean XYZ; "
+            "incoherent queries are masked without dropping the window"
         ),
         "clean_dataset": str(clean_dir),
         "clean_dataset_manifest_sha256": _sha256(clean_manifest_path),
