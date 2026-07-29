@@ -1509,3 +1509,28 @@
   combined. Fixed 6 mm repaired detector continuity but did not by itself
   repair strict association/history admission. This admission boundary and the
   combined selector are separate next-stage problems.
+
+## 2026-07-29 decision 154: define admission around the actual observed stream
+
+- The old PnP gate answered the wrong question: it required all 32 exposures
+  to contain the plate preselected by a clean-truth nearest-range rule. All
+  22,857 rejected history events still contain one or more PnP candidates, so
+  those failures are semantic mismatches, not missing observations.
+- The v2 history primary is chosen from actual PnP candidates. q0 uses the
+  truth-nearest actually observed candidate; past events are smoothed backward
+  through temporary oracle-associated handles and permit only same or adjacent
+  cyclic transitions in one rotation direction. A 20 mm switching hysteresis
+  prevents PnP/range jitter from becoming a false cut. When older observations
+  are incompatible, the coherent recent suffix is retained and the older
+  prefix is masked. At least eight active events are required, matching the
+  existing upstream minimum rather than inventing a new count threshold.
+- Temporary truth handles exist only during offline construction. The saved
+  neural contract remains anonymous relative positions, masks and signed
+  steps; the S sidecar retains the per-window C4 shift/direction reversal and
+  does not export a physical armor ID. All q0, history, candidate and future
+  labels are rebuilt from the same actually observed q0 handle.
+- This is an input/label definition change, not authorization to retrain.
+  Mapper, S, H, trajectory, selector and final refiner remain frozen until the
+  complete v2 dataset is evaluated. Retraining will be considered only if the
+  larger coherent coverage exposes a systematic frozen-model degradation, and
+  then only the responsible partition will be changed.

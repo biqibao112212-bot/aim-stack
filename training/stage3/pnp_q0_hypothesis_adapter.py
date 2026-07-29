@@ -18,7 +18,10 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset
 
-from .build_observable_future_pnp_sf_upper_bound_dataset import SCHEMA_VERSION
+from .build_observable_future_pnp_sf_upper_bound_dataset import (
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+)
 from .cyclic_track_model import CyclicMessageBlock
 from .observable_future_pnp_ab import sha256_file, state_dict_sha256
 from .pnp_observation_mapper import (
@@ -100,7 +103,9 @@ class PnPQ0HypothesisDataset(Dataset):
         manifest_path = self.dataset_dir / "dataset_manifest.json"
         self.manifest_sha256 = sha256_file(manifest_path)
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if self.manifest.get("schema_version") != SCHEMA_VERSION:
+        if self.manifest.get("schema_version") not in {
+            SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+        }:
             raise ValueError("H dataset schema mismatch")
         if bool(self.manifest.get("test_accessed", True)):
             raise ValueError("H dataset accessed test")
@@ -489,13 +494,26 @@ def compose_hypothesis_for_f(
     obs_mask: torch.Tensor,
     primary_mask: torch.Tensor,
     candidate_step: torch.Tensor,
+    event_mask: torch.Tensor | None = None,
 ) -> dict[str, torch.Tensor]:
     """Build F inputs solely from corrected observations and H hypotheses."""
     if corrected_obs_m.ndim != 4 or corrected_obs_m.shape[2:] != (4, 3):
         raise ValueError("H compose observations must have shape [B,T,4,3]")
+    if event_mask is None:
+        active = torch.ones(
+            corrected_obs_m.shape[:2], dtype=torch.bool,
+            device=corrected_obs_m.device,
+        )
+    else:
+        if event_mask.shape != corrected_obs_m.shape[:2]:
+            raise ValueError("H compose event mask must have shape [B,T]")
+        active = event_mask.to(torch.bool)
     primary_observed = primary_mask.to(torch.bool) & obs_mask.to(torch.bool)
-    if bool(torch.any(primary_observed.sum(dim=2) != 1)):
-        raise ValueError("H compose requires one corrected primary per event")
+    primary_count = primary_observed.sum(dim=2)
+    if bool(torch.any(active & (primary_count != 1))):
+        raise ValueError("H compose requires one corrected primary per active event")
+    if bool(torch.any(~active & (primary_count != 0))):
+        raise ValueError("H compose inactive events cannot contain a primary")
     selected_absolute = (
         corrected_obs_m * primary_observed.unsqueeze(-1).to(corrected_obs_m.dtype)
     ).sum(dim=2)
@@ -514,6 +532,10 @@ def compose_hypothesis_for_f(
     confidence = h_output["confidence_for_f"].gather(1, handle)
     supported = h_output["evidence_supported"].gather(1, handle)
     support_class = h_output["support_class"].gather(1, handle)
+    history_relative = selected_absolute - current[:, None]
+    history_relative = torch.where(
+        active.unsqueeze(-1), history_relative, torch.zeros_like(history_relative)
+    )
     return {
         "current_position_m": current,
         "candidate_relation_m": relation,
@@ -521,8 +543,11 @@ def compose_hypothesis_for_f(
         "candidate_supported": supported,
         "candidate_support_class": support_class,
         "candidate_handle": handle,
-        "history_position_rel_m": selected_absolute - current[:, None],
-        "selected_history_absolute_m": selected_absolute,
+        "history_position_rel_m": history_relative,
+        "selected_history_absolute_m": torch.where(
+            active.unsqueeze(-1), selected_absolute,
+            torch.zeros_like(selected_absolute),
+        ),
     }
 
 

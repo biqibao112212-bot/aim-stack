@@ -1,12 +1,12 @@
-"""Build the anonymous four-handle PnP sidecar required by the S->F B arm.
+"""Build the observed-stream anonymous PnP sidecar required by S->F.
 
-The parent paired dataset already contains the strict selected-target PnP arm.
-This builder reopens only the same train/validation windows and adds the
-oracle-associated, virtual-visible four-handle history consumed by V19 S.
+The parent paired dataset contains an actual-observed-primary PnP arm.  This
+builder reopens only the same train/validation windows and adds the associated
+actual-observation handle history consumed by V19 S.
 Every window receives an independent C4 origin and optional direction reversal;
 the exported handles therefore have no stable physical identity across windows.
 This remains a non-deployable upper bound because past truth performs the
-same-exposure association and supplies the primary/switch supervision.
+same-exposure association and supplies the temporary primary/switch labels.
 """
 
 from __future__ import annotations
@@ -35,15 +35,16 @@ from .build_truth_history_dataset import (
     _resolve_truth,
     _rotation_matrix,
 )
-from .cyclic_track_dataset import construct_cyclic_visibility, cyclic_relabel
+from .cyclic_track_dataset import cyclic_relabel
 from .observable_future_pnp_upper_bound import (
-    oracle_injective_assignment,
-    rebase_tracker_points_to_anchor,
+    OBSERVED_STREAM_SCHEMA_VERSION as PARENT_SCHEMA_VERSION,
+    associate_observed_primary_history,
 )
 
 
-SCHEMA_VERSION = "stage3-observable-future-real-pnp-sf-upper-bound-v1"
-EXPERIMENT_KIND = "real_pnp_oracle_association_anonymous_sf_upper_bound"
+SCHEMA_VERSION = "stage3-observable-future-real-pnp-sf-observed-stream-v2"
+LEGACY_SCHEMA_VERSION = "stage3-observable-future-real-pnp-sf-upper-bound-v1"
+EXPERIMENT_KIND = "real_pnp_observed_primary_anonymous_sf_upper_bound"
 SIGNED_FIELDS = (
     "history_switch_step",
     "pnp_history_switch_step",
@@ -80,6 +81,7 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
     primary_event_count = 0
     associated_primary_count = 0
     ambiguous_event_count = 0
+    pruned_candidate_count_total = 0
     usable_count = 0
     common_usable_count = 0
     for parent_row, (session_raw, t0_raw) in enumerate(zip(
@@ -129,45 +131,66 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         clean_full = source["history_position_m"][source_row, valid_events].astype(
             np.float32, copy=True
         )
-        event_mask = np.ones(32, dtype=np.bool_)
-        visible, primary, switch_step = construct_cyclic_visibility(
-            clean_full, event_mask,
-            secondary_gap_ratio=float(task["secondary_gap_ratio"]),
-        )
-        pnp_handle = np.zeros((32, 4, 3), dtype=np.float32)
-        associated = np.zeros((32, 4), dtype=np.bool_)
-        ambiguous = np.zeros(32, dtype=np.bool_)
         obs = observation["obs"][observation_row, :, :, :3]
         obs_mask = observation["obs_mask"][observation_row]
         truth_obs = truth["truth_obs"][truth_row]
         truth_mask = truth["truth_obs_mask"][truth_row]
-        for local_row, event in enumerate(valid_events):
-            if not bool(truth_mask[event].all()):
-                continue
-            row_mask = obs_mask[event]
-            rebased = rebase_tracker_points_to_anchor(
-                obs[event, row_mask], event_origins[local_row],
-                event_rotations[local_row], anchor_origin, anchor_rotation,
+        association = associate_observed_primary_history(
+            source["event_mask"][source_row], event_time,
+            truth_obs, truth_mask, obs, obs_mask,
+            event_origins, event_rotations, anchor_origin, anchor_rotation,
+            primary_tie_epsilon_m=float(task["primary_tie_epsilon_m"]),
+            primary_switch_hysteresis_m=float(
+                task["primary_switch_hysteresis_m"]
+            ),
+            association_ambiguity_epsilon_m=float(
+                task["association_ambiguity_epsilon_m"]
+            ),
+        )
+        if not np.array_equal(association["valid_event_index"], valid_events):
+            raise ValueError("S/F association selected different history events")
+        event_mask = association["selected_event_mask"].copy()
+        selected_slot = association["selected_source_slot"]
+        pnp_handle = association["handle_position_m"].copy()
+        pnp_handle[~event_mask] = 0.0
+        associated = association["handle_mask"] & event_mask[:, None]
+        ambiguous = association["ambiguous_event_mask"].copy()
+        primary = np.zeros((32, 4), dtype=np.bool_)
+        active_rows = np.flatnonzero(event_mask)
+        primary[active_rows, selected_slot[active_rows]] = True
+
+        # S accepts one primary and at most one observed adjacent secondary.
+        # Rare extra/contradictory candidates are pruned locally rather than
+        # rejecting an otherwise coherent window.
+        pnp_mask = np.zeros((32, 4), dtype=np.bool_)
+        pruned_candidate_count = 0
+        local_range = association["local_horizontal_range_m"]
+        for local_row in active_rows:
+            primary_slot = int(selected_slot[local_row])
+            pnp_mask[local_row, primary_slot] = True
+            secondary = [
+                int(slot) for slot in np.flatnonzero(associated[local_row])
+                if (int(slot) - primary_slot) % 4 in (1, 3)
+            ]
+            if secondary:
+                chosen = min(
+                    secondary,
+                    key=lambda slot: (
+                        float(local_range[local_row, slot]),
+                        tuple(float(x) for x in pnp_handle[local_row, slot]),
+                    ),
+                )
+                pnp_mask[local_row, chosen] = True
+            pruned_candidate_count += int(associated[local_row].sum()) - int(
+                pnp_mask[local_row].sum()
             )
-            match = oracle_injective_assignment(
-                rebased, truth_obs[event],
-                ambiguity_epsilon_m=float(task["association_ambiguity_epsilon_m"]),
-            )
-            if match is None:
-                continue
-            _, assignment, is_ambiguous = match
-            ambiguous[local_row] = bool(is_ambiguous)
-            if is_ambiguous:
-                continue
-            for handle in np.flatnonzero(visible[local_row]):
-                handle_int = int(handle)
-                if handle_int in assignment:
-                    pnp_handle[local_row, handle_int] = rebased[assignment[handle_int]]
-                    associated[local_row, handle_int] = True
-        pnp_mask = visible & associated
-        primary_associated = (pnp_mask & primary).sum(axis=1) == 1
-        q0_associated = bool(primary_associated[-1])
-        sf_usable = bool(primary_associated.all() and not ambiguous.any())
+        primary_associated = event_mask.copy()
+        q0_associated = bool(event_mask[-1])
+        active_count = int(event_mask.sum())
+        sf_usable = bool(
+            q0_associated
+            and active_count >= int(task["minimum_history_events"])
+        )
         parent_usable = bool(parent["pnp_forward_usable"][parent_row])
         common_usable = sf_usable and parent_usable
         primary_event_count += 32
@@ -175,10 +198,24 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         ambiguous_event_count += int(ambiguous.sum())
         usable_count += int(sf_usable)
         common_usable_count += int(common_usable)
+        pruned_candidate_count_total += pruned_candidate_count
 
-        clean_obs = np.where(visible[..., None], clean_full, 0.0).astype(
-            np.float32, copy=False
-        )
+        clean_obs = np.where(
+            pnp_mask[..., None], truth_obs[valid_events], 0.0
+        ).astype(np.float32, copy=False)
+        visible = pnp_mask.copy()
+        switch_step = np.zeros(32, dtype=np.int64)
+        for local_row in active_rows[1:]:
+            delta = (
+                int(selected_slot[local_row])
+                - int(selected_slot[local_row - 1])
+            ) % 4
+            if delta == 1:
+                switch_step[local_row] = 1
+            elif delta == 3:
+                switch_step[local_row] = -1
+            elif delta != 0:
+                raise ValueError("observed primary path contains an opposite jump")
         pair = str(parent["pair_id"][parent_row])
         if pair != _pair_id(session_id, t0_ns):
             raise ValueError("parent pair_id no longer matches session/t0")
@@ -231,6 +268,9 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             "pnp_sf_common_usable": np.asarray(common_usable, dtype=np.bool_),
             "pnp_s_window_shift": np.asarray(shift, dtype=np.int64),
             "pnp_s_direction_sign": np.asarray(direction_sign, dtype=np.int64),
+            "pnp_s_pruned_candidate_count": np.asarray(
+                pruned_candidate_count, dtype=np.int64
+            ),
         })
         if common_usable:
             q0_primary = int(np.flatnonzero(primary[-1])[0])
@@ -263,6 +303,7 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "primary_event_count": primary_event_count,
         "associated_primary_count": associated_primary_count,
         "ambiguous_event_count": ambiguous_event_count,
+        "pruned_candidate_count": pruned_candidate_count_total,
         "sha256": _sha256(output_path),
         "bytes": output_path.stat().st_size,
     }
@@ -276,9 +317,14 @@ def build(args: argparse.Namespace) -> Path:
     parent_manifest_path = parent_dir / "dataset_manifest.json"
     parent_manifest = json.loads(parent_manifest_path.read_text(encoding="utf-8"))
     if (
-        parent_manifest.get("schema_version")
-        != "stage3-observable-future-real-pnp-upper-bound-v1"
-        or not bool(parent_manifest.get("qualification_passed", False))
+        parent_manifest.get("schema_version") != PARENT_SCHEMA_VERSION
+        or (
+            not bool(parent_manifest.get("qualification_passed", False))
+            and not (
+                args.session_limit > 0
+                and bool(parent_manifest.get("diagnostic_subset", False))
+            )
+        )
         or bool(parent_manifest.get("test_accessed", True))
     ):
         raise ValueError("S/F sidecar requires the qualified sealed paired PnP parent")
@@ -346,9 +392,17 @@ def build(args: argparse.Namespace) -> Path:
             ),
             "split": split,
             "session_id": session_id,
-            "secondary_gap_ratio": float(args.secondary_gap_ratio),
             "association_ambiguity_epsilon_m": float(
                 parent_manifest["association_ambiguity_epsilon_m"]
+            ),
+            "primary_tie_epsilon_m": float(
+                parent_manifest["primary_tie_epsilon_m"]
+            ),
+            "primary_switch_hysteresis_m": float(
+                parent_manifest["primary_switch_hysteresis_m"]
+            ),
+            "minimum_history_events": int(
+                parent_manifest["minimum_history_events"]
             ),
         })
         split_count[split] += 1
@@ -383,6 +437,7 @@ def build(args: argparse.Namespace) -> Path:
     primary_events = sum(int(item["primary_event_count"]) for item in results)
     associated_primary = sum(int(item["associated_primary_count"]) for item in results)
     ambiguous_events = sum(int(item["ambiguous_event_count"]) for item in results)
+    pruned_candidates = sum(int(item["pruned_candidate_count"]) for item in results)
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "experiment_kind": EXPERIMENT_KIND,
@@ -393,11 +448,16 @@ def build(args: argparse.Namespace) -> Path:
         "deployable_pipeline": False,
         "oracle_association": True,
         "oracle_primary_and_switch": True,
+        "observed_primary_stream": True,
         "future_truth_in_model_input": False,
         "physical_identity_exported": False,
         "handle_identity": "window-local C4-shifted and optionally direction-reversed",
         "mandatory_anonymization": "pair-id hash C4 origin plus direction reversal",
         "pnp_feature_contract": "xyz and validity only",
+        "observed_handle_policy": (
+            "one selected actual primary plus at most one nearest observed "
+            "adjacent secondary per active event; inactive prefix is zero"
+        ),
         "candidate_mask_semantics": (
             "all signed-step hypotheses exist; S confidence zero marks unsupported roles"
         ),
@@ -420,9 +480,13 @@ def build(args: argparse.Namespace) -> Path:
         "associated_primary_count": associated_primary,
         "associated_primary_fraction": associated_primary / primary_events,
         "ambiguous_event_count": ambiguous_events,
+        "pruned_candidate_count": pruned_candidates,
         "history_events": 32,
+        "minimum_history_events": int(parent_manifest["minimum_history_events"]),
+        "primary_switch_hysteresis_m": float(
+            parent_manifest["primary_switch_hysteresis_m"]
+        ),
         "candidate_steps": list(parent_manifest["candidate_steps"]),
-        "secondary_gap_ratio": float(args.secondary_gap_ratio),
         "builder_source_sha256": _sha256(Path(__file__)),
         "shards": [{
             "path": str(Path(item["path"]).relative_to(output_dir)),
@@ -444,12 +508,8 @@ def main() -> None:
     parser.add_argument("--output", required=True)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--session-limit", type=int, default=0)
-    parser.add_argument("--secondary-gap-ratio", type=float, default=0.25)
     args = parser.parse_args()
-    if (
-        args.workers < 1 or args.session_limit < 0
-        or not 0.0 <= args.secondary_gap_ratio <= 1.0
-    ):
+    if args.workers < 1 or args.session_limit < 0:
         parser.error("S/F sidecar arguments are invalid")
     print(build(args))
 

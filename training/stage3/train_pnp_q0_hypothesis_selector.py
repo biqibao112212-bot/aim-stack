@@ -292,7 +292,7 @@ def compose_a3_batch(
     return compose_hypothesis_for_f(
         h_output, s_output["primary_index"], mapped["corrected_obs_m"],
         batch["pnp_s_obs_mask"], batch["pnp_s_primary_mask"],
-        batch["pnp_candidate_step"],
+        batch["pnp_candidate_step"], batch["pnp_s_event_mask"],
     )
 
 

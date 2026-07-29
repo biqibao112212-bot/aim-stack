@@ -300,7 +300,7 @@ def evaluate(args: argparse.Namespace) -> Path:
         mapped_h_compose = compose_hypothesis_for_f(
             mapped_h, mapped_s["primary_index"], mapped["corrected_obs_m"],
             batch["pnp_s_obs_mask"], batch["pnp_s_primary_mask"],
-            batch["pnp_candidate_step"],
+            batch["pnp_candidate_step"], batch["pnp_s_event_mask"],
         )
         for name, composed in (
             ("mapper_s0_f", mapped_s_compose),
@@ -333,7 +333,7 @@ def evaluate(args: argparse.Namespace) -> Path:
         clean_h_compose = compose_hypothesis_for_f(
             clean_h, clean_s["primary_index"], batch["clean_s_obs_m"],
             batch["clean_s_obs_mask"], batch["clean_s_primary_mask"],
-            batch["candidate_step"],
+            batch["candidate_step"], batch["clean_s_event_mask"],
         )
         for name, composed in (
             ("clean_s0_f", clean_s_compose),

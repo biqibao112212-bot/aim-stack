@@ -39,6 +39,20 @@ def test_stationary_ballistic_label_uses_causal_model_range_only_for_tau() -> No
     assert label["target_switch_count"] == 0
     assert np.array_equal(label["target_visible_delta_m"], np.zeros(3, dtype=np.float32))
 
+    observed_stream = _ballistic_label(
+        state,
+        np.asarray([4.4, 0.0, 0.0], dtype=np.float32),
+        truth_current_position_m=q0[1],
+        reverse_direction=False,
+        bullet_speed_mps=22.0,
+        dense_step_s=0.001,
+    )
+    assert np.isclose(observed_stream["truth_distance_m"], np.linalg.norm(q0[1]))
+    assert observed_stream["target_switch_count"] == -1
+    assert np.allclose(
+        q0[1] + observed_stream["target_visible_delta_m"], q0[0]
+    )
+
 
 def test_distance_table_uses_fixed_one_metre_bins() -> None:
     queries = {

@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from training.stage3.build_observable_future_pnp_sf_upper_bound_dataset import (
+    LEGACY_SCHEMA_VERSION,
     SCHEMA_VERSION,
 )
 from training.stage3.pnp_observation_mapper import (
@@ -300,6 +301,12 @@ def test_mapping_dataset_exposes_only_allowlisted_fields(tmp_path: Path) -> None
     assert "pnp_s_truth_q0_m" not in dataset.tensors
     assert "target_switch_count" not in dataset.tensors
     assert "motion_class" not in dataset.tensors
+    manifest["schema_version"] = LEGACY_SCHEMA_VERSION
+    (tmp_path / "dataset_manifest.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+    legacy = PnPObservationMappingDataset(tmp_path, "train")
+    assert len(legacy) == len(dataset)
 
 
 def test_mapping_dataset_selection_fields_never_reach_model_item(tmp_path: Path) -> None:

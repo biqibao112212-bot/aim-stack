@@ -140,7 +140,7 @@ def _student_pipeline(
     composed = compose_hypothesis_for_f(
         h_output, s_output["primary_index"], mapped["corrected_obs_m"],
         batch["pnp_s_obs_mask"], batch["pnp_s_primary_mask"],
-        batch["pnp_candidate_step"],
+        batch["pnp_candidate_step"], batch["pnp_s_event_mask"],
     )
     prediction = f_forward(
         f_model, batch, prefix="pnp_",
@@ -168,7 +168,7 @@ def _clean_teacher_pipeline(
     composed = compose_hypothesis_for_f(
         h_output, s_output["primary_index"], batch["clean_s_obs_m"],
         batch["clean_s_obs_mask"], batch["clean_s_primary_mask"],
-        batch["candidate_step"],
+        batch["candidate_step"], batch["clean_s_event_mask"],
     )
     prediction = f_forward(
         f_model, batch,

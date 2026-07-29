@@ -1,10 +1,11 @@
-"""Build a hash-bound clean/PnP paired upper-bound dataset for frozen F.
+"""Build a hash-bound actual-observed-primary PnP dataset for frozen F.
 
 The builder replays the accepted observable-r6 construction bit-exact before
 attaching real PnP histories.  Unordered PnP rows are associated with
 same-exposure past truth only, after every point is rebased into the q0 anchor
-tracker frame.  This oracle association and the truth-S candidate set make the
-artifact an explicitly non-deployable upper bound.
+tracker frame.  The actual observed q0 role seeds history and future labels;
+temporary assignments are never exported.  Oracle association and the truth-S
+candidate set keep this an explicitly non-deployable upper bound.
 """
 
 from __future__ import annotations
@@ -35,9 +36,9 @@ from .observable_future_dataset import (
     construct_observable_future_sample,
 )
 from .observable_future_pnp_upper_bound import (
-    EXPERIMENT_KIND,
-    SCHEMA_VERSION,
-    construct_real_pnp_upper_bound_sample,
+    OBSERVED_STREAM_EXPERIMENT_KIND as EXPERIMENT_KIND,
+    OBSERVED_STREAM_SCHEMA_VERSION as SCHEMA_VERSION,
+    construct_observed_primary_pnp_sample,
 )
 
 
@@ -198,11 +199,15 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             _rotation_matrix(frames[int(index)].chassis_quaternion_world_wxyz)
             for index in event_frame_index
         ])
-        pnp = construct_real_pnp_upper_bound_sample(
+        pnp = construct_observed_primary_pnp_sample(
             clean_replay,
             source["history_position_m"][source_index],
             source["event_mask"][source_index],
             source["event_time_s"][source_index],
+            dense_position,
+            dense_time,
+            tau,
+            source["rule_query"][source_index],
             truth["truth_obs"][truth_row],
             truth["truth_obs_mask"][truth_row],
             observation["obs"][observation_row, :, :, :3],
@@ -211,13 +216,17 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             event_rotations,
             np.asarray(anchor_frame.gimbal_origin_world_m, dtype=np.float64),
             _rotation_matrix(anchor_frame.chassis_quaternion_world_wxyz),
+            minimum_history_events=int(task["minimum_history_events"]),
             tie_epsilon_m=float(task["tie_epsilon_m"]),
+            primary_switch_hysteresis_m=float(
+                task["primary_switch_hysteresis_m"]
+            ),
+            query_match_tolerance_s=float(task["query_tolerance_s"]),
             association_ambiguity_epsilon_m=float(
                 task["association_ambiguity_epsilon_m"]
             ),
         )
-        row = {key: value.copy() for key, value in clean_replay.items()}
-        row.update(pnp)
+        row = {key: value.copy() for key, value in pnp.items()}
         row["motion_class"] = np.asarray(
             clean["motion_class"][clean_index], dtype=np.int64
         )
@@ -250,6 +259,18 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
     ambiguous_events = arrays["pnp_history_ambiguous_mask"].astype(
         np.bool_, copy=False
     )
+    candidate_events = arrays["pnp_history_candidate_count"].astype(
+        np.int64, copy=False
+    ) > 0
+    active_count = arrays["pnp_history_active_count"].astype(
+        np.int64, copy=False
+    )
+    track_break = arrays["pnp_history_track_break_count"].astype(
+        np.int64, copy=False
+    )
+    future_coherent = arrays["pnp_future_label_coherent"].astype(
+        np.bool_, copy=False
+    )
     return {
         "path": str(output_path),
         "split": task["split"],
@@ -261,6 +282,16 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "history_event_count": int(associated_events.size),
         "history_event_associated_count": int(associated_events.sum()),
         "history_event_ambiguous_count": int(ambiguous_events.sum()),
+        "history_observation_candidate_event_count": int(candidate_events.sum()),
+        "history_active_count": int(active_count.sum()),
+        "history_track_break_count": int(track_break.sum()),
+        "future_label_coherent_count": int(future_coherent.sum()),
+        "minimum_active_history_count": int(active_count.min(initial=32)),
+        "maximum_active_history_count": int(active_count.max(initial=0)),
+        "failure_code_count": {
+            str(code): int(np.count_nonzero(arrays["pnp_failure_code"] == code))
+            for code in range(4)
+        },
         "maximum_rollout_error_m": maximum_rollout_error_m,
         "sha256": _sha256(output_path),
         "bytes": output_path.stat().st_size,
@@ -393,6 +424,10 @@ def build(args: argparse.Namespace) -> Path:
             "association_ambiguity_epsilon_m": float(
                 args.association_ambiguity_epsilon_m
             ),
+            "minimum_history_events": int(args.minimum_history_events),
+            "primary_switch_hysteresis_m": float(
+                args.primary_switch_hysteresis_m
+            ),
         })
         split_count[split] += 1
     if not selected or not all(split_count.values()):
@@ -436,6 +471,23 @@ def build(args: argparse.Namespace) -> Path:
     event_ambiguous = sum(
         int(item["history_event_ambiguous_count"]) for item in results
     )
+    candidate_event_count = sum(
+        int(item["history_observation_candidate_event_count"])
+        for item in results
+    )
+    active_count = sum(int(item["history_active_count"]) for item in results)
+    track_break_count = sum(
+        int(item["history_track_break_count"]) for item in results
+    )
+    future_coherent_count = sum(
+        int(item["future_label_coherent_count"]) for item in results
+    )
+    failure_code_count = {
+        str(code): sum(
+            int(item["failure_code_count"][str(code)]) for item in results
+        )
+        for code in range(4)
+    }
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "experiment_kind": EXPERIMENT_KIND,
@@ -450,17 +502,31 @@ def build(args: argparse.Namespace) -> Path:
         "truth_s_candidates": True,
         "future_truth_in_model_input": False,
         "physical_identity_exported": False,
-        "strict_complete_32_event_history": True,
+        "strict_complete_32_event_history": False,
+        "observed_primary_stream": True,
+        "history_admission_policy": (
+            "q0 truth-nearest among actual PnP observations; maximum coherent "
+            "contiguous suffix with same/adjacent anonymous-handle transitions, "
+            "one switch direction and range hysteresis"
+        ),
+        "failure_code_semantics": {
+            "0": "usable",
+            "1": "q0 has no unambiguous actual observation",
+            "2": "coherent history suffix has fewer than the minimum events",
+            "3": "observed q0 cannot seed an adjacent-only future label",
+        },
+        "minimum_history_events": int(args.minimum_history_events),
         "coordinate_policy": (
             "each PnP point event-tracker -> world -> q0-anchor-tracker"
         ),
-        "current_policy": "q0 oracle-associated PnP selected target",
+        "current_policy": "q0 truth-nearest among actual PnP observations",
         "candidate_policy": (
             "truth-S q0 candidates with current role replaced by PnP current; "
             "all step modulo 4 equals 0 relations are bit-exact zero"
         ),
         "target_policy": (
-            "same physical future visible target; PnP delta recomputed from PnP current"
+            "future truth replay seeded by the actual-observed q0 handle; "
+            "PnP delta recomputed from PnP current"
         ),
         "clean_dataset": str(clean_dir),
         "clean_dataset_manifest_sha256": _sha256(clean_manifest_path),
@@ -483,12 +549,27 @@ def build(args: argparse.Namespace) -> Path:
         "history_event_associated_count": event_associated,
         "history_event_associated_fraction": event_associated / event_count,
         "history_event_ambiguous_count": event_ambiguous,
+        "history_observation_candidate_event_count": candidate_event_count,
+        "history_observation_candidate_event_fraction": (
+            candidate_event_count / event_count
+        ),
+        "history_active_count": active_count,
+        "history_active_fraction": active_count / event_count,
+        "history_track_break_count": track_break_count,
+        "future_label_coherent_count": future_coherent_count,
+        "future_label_coherent_fraction": future_coherent_count / sample_count,
+        "failure_code_count": failure_code_count,
         "history_events": 32,
         "candidate_steps": list(DEFAULT_CANDIDATE_STEPS),
         "association_ambiguity_epsilon_m": float(
             args.association_ambiguity_epsilon_m
         ),
-        "clean_replay_bit_exact": True,
+        "primary_tie_epsilon_m": float(args.tie_epsilon_m),
+        "primary_switch_hysteresis_m": float(
+            args.primary_switch_hysteresis_m
+        ),
+        "source_clean_replay_bit_exact": True,
+        "output_clean_reanchored_to_observed_q0": True,
         "maximum_endpoint_rollout_error_m": max(
             float(item["maximum_rollout_error_m"]) for item in results
         ),
@@ -524,11 +605,15 @@ def main() -> None:
     parser.add_argument("--query-tolerance-us", type=float, default=2.0)
     parser.add_argument("--tie-epsilon-m", type=float, default=1e-6)
     parser.add_argument("--association-ambiguity-epsilon-m", type=float, default=1e-6)
+    parser.add_argument("--minimum-history-events", type=int, default=8)
+    parser.add_argument("--primary-switch-hysteresis-m", type=float, default=0.02)
     args = parser.parse_args()
     if (
         args.workers < 1 or args.session_limit < 0
         or args.query_tolerance_us < 0 or args.tie_epsilon_m < 0
         or args.association_ambiguity_epsilon_m < 0
+        or not 2 <= args.minimum_history_events <= 32
+        or args.primary_switch_hysteresis_m < 0
     ):
         parser.error("paired PnP builder arguments are invalid")
     print(build(args))
@@ -536,4 +621,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

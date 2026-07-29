@@ -23,7 +23,10 @@ from .evaluate_final_visible_position_generalization import (
     _manifest_sessions,
     _source_coverage,
 )
-from .observable_future_dataset import construct_observable_future_sample
+from .observable_future_dataset import (
+    construct_future_targets_from_current_source,
+    construct_observable_future_sample,
+)
 from .observable_future_pnp_ab import (
     ObservableFuturePnPSFDataset,
     sha256_file,
@@ -144,6 +147,7 @@ def _ballistic_label(
     state: TruthState,
     model_current_position_m: np.ndarray,
     *,
+    truth_current_position_m: np.ndarray | None = None,
     reverse_direction: bool,
     bullet_speed_mps: float,
     dense_step_s: float,
@@ -159,20 +163,34 @@ def _ballistic_label(
         state.yaw_rate_rad_s,
         dense_time,
     )
-    sample = construct_observable_future_sample(
-        state.history_position_m,
-        state.event_mask,
-        state.event_time_s,
-        dense_position,
-        dense_time,
-        query,
-        np.ones(2, dtype=np.bool_),
-        query_match_tolerance_s=1e-6,
-    )
+    if truth_current_position_m is None:
+        sample = construct_observable_future_sample(
+            state.history_position_m,
+            state.event_mask,
+            state.event_time_s,
+            dense_position,
+            dense_time,
+            query,
+            np.ones(2, dtype=np.bool_),
+            query_match_tolerance_s=1e-6,
+        )
+        truth_current = sample["current_position_m"].astype(
+            np.float32, copy=False
+        )
+    else:
+        truth_current = np.asarray(truth_current_position_m, dtype=np.float32)
+        q0_error = np.linalg.norm(dense_position[0] - truth_current[None, :], axis=1)
+        current_source = int(np.argmin(q0_error))
+        if float(q0_error[current_source]) > 5e-5:
+            raise ValueError("ballistic observed-stream q0 does not match truth")
+        sample = construct_future_targets_from_current_source(
+            dense_position, dense_time, query, np.ones(2, dtype=np.bool_),
+            current_source, truth_current,
+            query_match_tolerance_s=1e-6,
+        )
     switch_count = int(sample["target_switch_count"][1])
     if reverse_direction:
         switch_count *= -1
-    truth_current = sample["current_position_m"].astype(np.float32, copy=False)
     delta = sample["target_visible_delta_m"][1].astype(np.float32, copy=False)
     return {
         "estimated_distance_m": estimated_distance_m,
@@ -204,6 +222,7 @@ def _dynamic_cache(
         _ballistic_label(
             truth_states[(sessions[row], t0_values[row])],
             model_current[row],
+            truth_current_position_m=cached_truth_current[row],
             reverse_direction=bool((int(pair_ids[row][:16], 16) >> 2) & 1),
             bullet_speed_mps=bullet_speed_mps,
             dense_step_s=dense_step_s,

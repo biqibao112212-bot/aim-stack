@@ -1,10 +1,11 @@
-"""Real-PnP, oracle-associated upper-bound inputs for observable F.
+"""Real-PnP, oracle-associated inputs for observable F.
 
 This module intentionally does *not* define a deployable PnP tracker.  It uses
-same-exposure physical truth at ``t <= q0`` to associate unordered PnP rows to
-the already-qualified anonymous clean history.  The resulting artifact only
-answers a narrower question: how much does the frozen clean F degrade when its
-position stream and q0 anchor contain real PnP measurement noise?
+same-exposure physical truth at ``t <= q0`` to associate unordered PnP rows.
+The legacy v1 path requires the clean-rule primary at all 32 events.  The v2
+path instead builds a coherent anonymous track through actually observed
+plates, masks an incoherent older prefix, and rebuilds all labels from the same
+observed q0 role.
 
 All PnP points must first be rebased from their exposure tracker frame into the
 q0 anchor tracker frame.  Future truth is never used while constructing model
@@ -18,11 +19,20 @@ from typing import Any
 
 import numpy as np
 
-from .observable_future_dataset import _select_with_continuity
+from .observable_future_dataset import (
+    _select_with_continuity,
+    construct_observable_future_sample_from_selected_history,
+)
 
 
 SCHEMA_VERSION = "stage3-observable-future-real-pnp-upper-bound-v1"
+OBSERVED_STREAM_SCHEMA_VERSION = (
+    "stage3-observable-future-real-pnp-observed-stream-v2"
+)
 EXPERIMENT_KIND = "real_pnp_oracle_association_truth_s_upper_bound"
+OBSERVED_STREAM_EXPERIMENT_KIND = (
+    "real_pnp_oracle_association_observed_primary_stream"
+)
 FORWARD_KEYS = (
     "history_position_rel_m",
     "history_time_s",
@@ -63,6 +73,25 @@ def rebase_tracker_points_to_anchor(
         raise ValueError("tracker rebase inputs must be finite")
     world = position @ event_rotation.T + event_origin[None, :]
     return ((world - anchor_origin[None, :]) @ anchor_rotation).astype(
+        np.float32, copy=False
+    )
+
+
+def _anchor_points_to_event_tracker(
+    position_m: np.ndarray,
+    event_origin_world_m: np.ndarray,
+    event_tracker_to_world_rotation: np.ndarray,
+    anchor_origin_world_m: np.ndarray,
+    anchor_tracker_to_world_rotation: np.ndarray,
+) -> np.ndarray:
+    """Express q0-anchor tracker points in one exposure's tracker frame."""
+    position = np.asarray(position_m, dtype=np.float64)
+    event_origin = np.asarray(event_origin_world_m, dtype=np.float64)
+    event_rotation = np.asarray(event_tracker_to_world_rotation, dtype=np.float64)
+    anchor_origin = np.asarray(anchor_origin_world_m, dtype=np.float64)
+    anchor_rotation = np.asarray(anchor_tracker_to_world_rotation, dtype=np.float64)
+    world = position @ anchor_rotation.T + anchor_origin[None, :]
+    return ((world - event_origin[None, :]) @ event_rotation).astype(
         np.float32, copy=False
     )
 
@@ -131,6 +160,360 @@ def _selected_history_slots(
         )
         selected[row] = previous
     return valid, selected
+
+
+def associate_observed_primary_history(
+    physical_event_mask: np.ndarray,
+    physical_event_time_s: np.ndarray,
+    truth_history_position_m: np.ndarray,
+    truth_history_mask: np.ndarray,
+    observation_position_m: np.ndarray,
+    observation_mask: np.ndarray,
+    event_origins_world_m: np.ndarray,
+    event_tracker_to_world_rotation: np.ndarray,
+    anchor_origin_world_m: np.ndarray,
+    anchor_tracker_to_world_rotation: np.ndarray,
+    *,
+    primary_tie_epsilon_m: float = 1e-6,
+    primary_switch_hysteresis_m: float = 0.02,
+    association_ambiguity_epsilon_m: float = 1e-6,
+) -> dict[str, np.ndarray]:
+    """Associate a coherent anonymous suffix through actually observed plates.
+
+    The q0 primary is the nearest real PnP observation in its exposure-local
+    tracker frame.  Earlier primaries are selected by a minimum-range dynamic
+    program constrained to same/adjacent cyclic transitions.  If no coherent
+    predecessor exists, older history is masked instead of inventing a
+    two-plate jump.  Truth slots are temporary construction handles only.
+    """
+    event_mask = np.asarray(physical_event_mask, dtype=np.bool_)
+    event_time = np.asarray(physical_event_time_s, dtype=np.float32)
+    valid_events = np.flatnonzero(
+        event_mask & np.isfinite(event_time) & (event_time <= 1e-6)
+    )
+    if valid_events.size < 32:
+        raise ValueError("observed primary association requires the last 32 events")
+    valid_events = valid_events[-32:]
+    truth = np.asarray(truth_history_position_m, dtype=np.float32)
+    truth_mask = np.asarray(truth_history_mask, dtype=np.bool_)
+    observation = np.asarray(observation_position_m, dtype=np.float32)
+    obs_mask = np.asarray(observation_mask, dtype=np.bool_)
+    origins = np.asarray(event_origins_world_m, dtype=np.float64)
+    rotations = np.asarray(event_tracker_to_world_rotation, dtype=np.float64)
+    if truth.ndim != 3 or truth.shape[1:] != (4, 3):
+        raise ValueError("truth history must have shape [T,4,3]")
+    if truth_mask.shape != truth.shape[:2]:
+        raise ValueError("truth history mask must have shape [T,4]")
+    if observation.ndim != 3 or observation.shape[1:] != (4, 3):
+        raise ValueError("observation positions must have shape [T,4,3]")
+    if obs_mask.shape != observation.shape[:2]:
+        raise ValueError("observation mask must have shape [T,4]")
+    if origins.shape != (32, 3) or rotations.shape != (32, 3, 3):
+        raise ValueError("event rebase poses must cover the selected 32 events")
+    if primary_tie_epsilon_m < 0 or primary_switch_hysteresis_m < 0:
+        raise ValueError("primary selection tolerances must be non-negative")
+
+    handle_position = np.zeros((32, 4, 3), dtype=np.float32)
+    handle_mask = np.zeros((32, 4), dtype=np.bool_)
+    local_range = np.full((32, 4), np.inf, dtype=np.float64)
+    selection_range = np.full((32, 4), np.inf, dtype=np.float64)
+    association_error = np.zeros((32, 4), dtype=np.float32)
+    ambiguous = np.zeros(32, dtype=np.bool_)
+    candidate_count = np.zeros(32, dtype=np.int64)
+    for row, event in enumerate(valid_events):
+        if not bool(truth_mask[event].all()):
+            continue
+        row_mask = obs_mask[event]
+        candidate_count[row] = int(row_mask.sum())
+        local = observation[event, row_mask]
+        rebased = rebase_tracker_points_to_anchor(
+            local, origins[row], rotations[row],
+            anchor_origin_world_m, anchor_tracker_to_world_rotation,
+        )
+        match = oracle_injective_assignment(
+            rebased, truth[event],
+            ambiguity_epsilon_m=association_ambiguity_epsilon_m,
+        )
+        if match is None:
+            continue
+        _, assignment, is_ambiguous = match
+        ambiguous[row] = bool(is_ambiguous)
+        if is_ambiguous:
+            continue
+        active_rows = np.flatnonzero(row_mask)
+        truth_event_local = _anchor_points_to_event_tracker(
+            truth[event], origins[row], rotations[row],
+            anchor_origin_world_m, anchor_tracker_to_world_rotation,
+        )
+        for slot, compact_row in assignment.items():
+            slot_int = int(slot)
+            compact_int = int(compact_row)
+            handle_position[row, slot_int] = rebased[compact_int]
+            handle_mask[row, slot_int] = True
+            local_range[row, slot_int] = float(np.linalg.norm(
+                observation[event, int(active_rows[compact_int]), :2]
+            ))
+            selection_range[row, slot_int] = float(np.linalg.norm(
+                truth_event_local[slot_int, :2]
+            ))
+            association_error[row, slot_int] = np.float32(np.linalg.norm(
+                rebased[compact_int] - truth[event, slot_int]
+            ))
+
+    selected_slot = np.full(32, -1, dtype=np.int64)
+    selected_mask = np.zeros(32, dtype=np.bool_)
+    q0_slots = np.flatnonzero(handle_mask[-1])
+    q0_tied = False
+    if q0_slots.size:
+        order = q0_slots[np.argsort(
+            selection_range[-1, q0_slots], kind="stable"
+        )]
+        q0_tied = bool(
+            order.size > 1
+            and selection_range[-1, order[1]] - selection_range[-1, order[0]]
+            <= primary_tie_epsilon_m
+        )
+        if not q0_tied:
+            q0 = int(order[0])
+            # State is (temporary handle, established switch direction).  A
+            # nonzero direction cannot reverse inside one coherent suffix.
+            next_cost: dict[tuple[int, int], float] = {(q0, 0): 0.0}
+            next_choice: list[
+                dict[tuple[int, int], tuple[int, int]]
+            ] = [dict() for _ in range(32)]
+            start = 31
+            for row in range(30, -1, -1):
+                slots = np.flatnonzero(handle_mask[row])
+                if slots.size == 0:
+                    break
+                minimum_range = float(selection_range[row, slots].min())
+                current_cost: dict[tuple[int, int], float] = {}
+                for slot_raw in slots:
+                    slot = int(slot_raw)
+                    for (next_slot, next_direction), cost in next_cost.items():
+                        delta = (next_slot - slot) % 4
+                        if delta == 0:
+                            step = 0
+                        elif delta == 1:
+                            step = 1
+                        elif delta == 3:
+                            step = -1
+                        else:
+                            continue
+                        if step and next_direction not in (0, step):
+                            continue
+                        direction = step if step else next_direction
+                        state = (slot, direction)
+                        candidate_cost = (
+                            cost
+                            + float(selection_range[row, slot] - minimum_range)
+                            + primary_switch_hysteresis_m * int(step != 0)
+                        )
+                        previous_cost = current_cost.get(state)
+                        if previous_cost is None or candidate_cost < previous_cost - 1e-12:
+                            current_cost[state] = candidate_cost
+                            next_choice[row][state] = (next_slot, next_direction)
+                        elif abs(candidate_cost - previous_cost) <= 1e-12:
+                            previous_next = next_choice[row][state]
+                            candidate_key = tuple(
+                                float(x) for x in handle_position[row + 1, next_slot]
+                            )
+                            previous_key = tuple(
+                                float(x) for x in handle_position[
+                                    row + 1, previous_next[0]
+                                ]
+                            )
+                            if candidate_key < previous_key:
+                                next_choice[row][state] = (
+                                    next_slot, next_direction
+                                )
+                if not current_cost:
+                    break
+                next_cost = current_cost
+                start = row
+
+            first_state = min(
+                next_cost,
+                key=lambda value: (
+                    next_cost[value],
+                    tuple(
+                        float(x) for x in handle_position[start, value[0]]
+                    ),
+                ),
+            )
+            selected_slot[start] = int(first_state[0])
+            selected_mask[start] = True
+            state = first_state
+            for row in range(start, 31):
+                state = next_choice[row][state]
+                selected_slot[row + 1] = int(state[0])
+                selected_mask[row + 1] = True
+
+    selected_error = np.zeros(32, dtype=np.float32)
+    active = np.flatnonzero(selected_mask)
+    if active.size:
+        selected_error[active] = association_error[
+            active, selected_slot[active]
+        ]
+    return {
+        "valid_event_index": valid_events.astype(np.int64, copy=False),
+        "handle_position_m": handle_position,
+        "handle_mask": handle_mask,
+        "local_horizontal_range_m": local_range,
+        "selection_horizontal_range_m": selection_range,
+        "selected_source_slot": selected_slot,
+        "selected_event_mask": selected_mask,
+        "selected_association_error_m": selected_error,
+        "ambiguous_event_mask": ambiguous,
+        "candidate_count": candidate_count,
+        "q0_tied": np.asarray(q0_tied, dtype=np.bool_),
+    }
+
+
+def construct_observed_primary_pnp_sample(
+    clean_fallback_sample: dict[str, np.ndarray],
+    physical_history_position_m: np.ndarray,
+    physical_event_mask: np.ndarray,
+    physical_event_time_s: np.ndarray,
+    dense_future_position_m: np.ndarray,
+    dense_future_time_s: np.ndarray,
+    query_time_s: np.ndarray,
+    rule_query: np.ndarray,
+    truth_history_position_m: np.ndarray,
+    truth_history_mask: np.ndarray,
+    observation_position_m: np.ndarray,
+    observation_mask: np.ndarray,
+    event_origins_world_m: np.ndarray,
+    event_tracker_to_world_rotation: np.ndarray,
+    anchor_origin_world_m: np.ndarray,
+    anchor_tracker_to_world_rotation: np.ndarray,
+    *,
+    minimum_history_events: int = 8,
+    tie_epsilon_m: float = 1e-6,
+    primary_switch_hysteresis_m: float = 0.02,
+    query_match_tolerance_s: float = 2e-6,
+    association_ambiguity_epsilon_m: float = 1e-6,
+) -> dict[str, np.ndarray]:
+    """Build a paired clean/PnP sample around the actual observed q0 plate."""
+    if minimum_history_events < 2 or minimum_history_events > 32:
+        raise ValueError("minimum observed history must be within [2,32]")
+    association = associate_observed_primary_history(
+        physical_event_mask, physical_event_time_s,
+        truth_history_position_m, truth_history_mask,
+        observation_position_m, observation_mask,
+        event_origins_world_m, event_tracker_to_world_rotation,
+        anchor_origin_world_m, anchor_tracker_to_world_rotation,
+        primary_tie_epsilon_m=tie_epsilon_m,
+        primary_switch_hysteresis_m=primary_switch_hysteresis_m,
+        association_ambiguity_epsilon_m=association_ambiguity_epsilon_m,
+    )
+    selected_mask = association["selected_event_mask"]
+    selected_slot = association["selected_source_slot"]
+    active_count = int(selected_mask.sum())
+    q0_associated = bool(selected_mask[-1])
+    usable = q0_associated and active_count >= minimum_history_events
+    future_coherent = q0_associated
+
+    if q0_associated:
+        try:
+            clean = construct_observable_future_sample_from_selected_history(
+                physical_history_position_m,
+                association["valid_event_index"], selected_slot, selected_mask,
+                physical_event_time_s,
+                dense_future_position_m, dense_future_time_s,
+                query_time_s, rule_query,
+                tie_epsilon_m=tie_epsilon_m,
+                query_match_tolerance_s=query_match_tolerance_s,
+            )
+        except ValueError as error:
+            if "opposite source slot" not in str(error):
+                raise
+            future_coherent = False
+            usable = False
+            clean = {
+                key: value.copy() for key, value in clean_fallback_sample.items()
+            }
+    else:
+        clean = {key: value.copy() for key, value in clean_fallback_sample.items()}
+
+    pnp_history_position = np.zeros((32, 3), dtype=np.float32)
+    pnp_current = np.zeros(3, dtype=np.float32)
+    pnp_candidate_relation = np.zeros_like(
+        clean["candidate_relation_m"], dtype=np.float32
+    )
+    pnp_target_delta = np.zeros_like(
+        clean["target_visible_delta_m"], dtype=np.float32
+    )
+    if q0_associated:
+        pnp_handle = association["handle_position_m"]
+        pnp_current = pnp_handle[-1, int(selected_slot[-1])].copy()
+        active = np.flatnonzero(selected_mask)
+        pnp_history_position[active] = (
+            pnp_handle[active, selected_slot[active]] - pnp_current[None, :]
+        )
+        pnp_history_position[-1] = 0.0
+        anchor_shift = clean["current_position_m"] - pnp_current
+        pnp_candidate_relation = (
+            clean["candidate_relation_m"] + anchor_shift[None, :]
+        ).astype(np.float32, copy=False)
+        current_role = np.remainder(clean["candidate_step"], 4) == 0
+        pnp_candidate_relation[current_role] = 0.0
+        future_absolute = (
+            clean["current_position_m"][None, :]
+            + clean["target_visible_delta_m"]
+        )
+        pnp_target_delta = (future_absolute - pnp_current[None, :]).astype(
+            np.float32, copy=False
+        )
+
+    failure_code = (
+        0 if usable else 1 if not q0_associated
+        else 3 if not future_coherent else 2
+    )
+    full_history = bool(active_count == 32)
+    return {
+        **clean,
+        "pnp_history_position_rel_m": pnp_history_position,
+        "pnp_history_time_s": clean["history_time_s"].astype(
+            np.float32, copy=True
+        ),
+        "pnp_history_dt_s": clean["history_dt_s"].astype(np.float32, copy=True),
+        "pnp_history_switch_step": clean["history_switch_step"].astype(
+            np.int64, copy=True
+        ),
+        "pnp_history_mask": selected_mask.copy(),
+        "pnp_current_position_m": pnp_current,
+        "pnp_candidate_relation_m": pnp_candidate_relation,
+        "pnp_candidate_step": clean["candidate_step"].astype(np.int64, copy=True),
+        "pnp_candidate_mask": clean["candidate_mask"].astype(np.bool_, copy=True),
+        "pnp_candidate_confidence": clean["candidate_confidence"].astype(
+            np.float32, copy=True
+        ),
+        "pnp_tau_s": clean["tau_s"].astype(np.float32, copy=True),
+        "pnp_target_visible_delta_m": pnp_target_delta,
+        "pnp_forward_usable": np.asarray(usable, dtype=np.bool_),
+        "pnp_q0_associated": np.asarray(q0_associated, dtype=np.bool_),
+        "pnp_full_history_associated": np.asarray(full_history, dtype=np.bool_),
+        "pnp_failure_code": np.asarray(failure_code, dtype=np.int64),
+        "pnp_history_associated_mask": selected_mask.copy(),
+        "pnp_history_ambiguous_mask": association["ambiguous_event_mask"].copy(),
+        "pnp_history_candidate_count": association["candidate_count"].copy(),
+        "pnp_history_association_error_m": association[
+            "selected_association_error_m"
+        ].copy(),
+        "pnp_q0_anchor_error_m": np.asarray(
+            association["selected_association_error_m"][-1]
+            if q0_associated else 0.0,
+            dtype=np.float32,
+        ),
+        "pnp_history_active_count": np.asarray(active_count, dtype=np.int64),
+        "pnp_history_track_break_count": np.asarray(
+            int(q0_associated and active_count < 32), dtype=np.int64
+        ),
+        "pnp_future_label_coherent": np.asarray(
+            future_coherent, dtype=np.bool_
+        ),
+    }
 
 
 def construct_real_pnp_upper_bound_sample(
@@ -314,4 +697,3 @@ def model_inputs_from_arrays(
 ) -> dict[str, Any]:
     """Select only the eleven public F forward tensors from a paired batch."""
     return {key: arrays[f"{prefix}{key}"] for key in FORWARD_KEYS}
-

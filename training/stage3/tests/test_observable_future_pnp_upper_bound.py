@@ -10,11 +10,39 @@ from training.stage3.build_observable_future_pnp_upper_bound_dataset import (
 from training.stage3.observable_future_dataset import DEFAULT_CANDIDATE_STEPS
 from training.stage3.observable_future_pnp_upper_bound import (
     FORWARD_KEYS,
+    construct_observed_primary_pnp_sample,
     construct_real_pnp_upper_bound_sample,
     model_inputs_from_arrays,
     oracle_injective_assignment,
     rebase_tracker_points_to_anchor,
 )
+
+
+def _observed_stream_sample(
+    clean: dict[str, np.ndarray], inputs: dict[str, np.ndarray],
+    *, minimum_history_events: int = 8,
+) -> dict[str, np.ndarray]:
+    physical = inputs["physical_history_position_m"]
+    dense = np.stack((physical[-1], physical[-1]), axis=0)
+    return construct_observed_primary_pnp_sample(
+        clean,
+        physical,
+        inputs["physical_event_mask"],
+        inputs["physical_event_time_s"],
+        dense,
+        np.asarray([0.0, 0.1], dtype=np.float64),
+        clean["tau_s"],
+        np.ones(clean["tau_s"].shape, dtype=np.bool_),
+        inputs["truth_history_position_m"],
+        inputs["truth_history_mask"],
+        inputs["observation_position_m"],
+        inputs["observation_mask"],
+        inputs["event_origins_world_m"],
+        inputs["event_tracker_to_world_rotation"],
+        inputs["anchor_origin_world_m"],
+        inputs["anchor_tracker_to_world_rotation"],
+        minimum_history_events=minimum_history_events,
+    )
 
 
 def _fixture() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
@@ -177,6 +205,62 @@ def test_missing_pnp_q0_is_explicitly_ineligible() -> None:
     )
 
 
+def test_observed_stream_keeps_an_adjacent_plate_when_old_primary_is_missing() -> None:
+    clean, inputs = _fixture()
+    inputs["observation_mask"][:] = False
+    inputs["observation_mask"][:, 1] = True
+    result = _observed_stream_sample(clean, inputs)
+    assert bool(result["pnp_forward_usable"])
+    assert int(result["pnp_history_active_count"]) == 32
+    assert np.allclose(result["current_position_m"], [0.0, 2.0, 0.1])
+    assert np.allclose(result["pnp_current_position_m"], [0.0, 2.0, 0.1])
+    assert np.array_equal(result["history_switch_step"], np.zeros(32))
+    assert np.array_equal(result["target_switch_count"], [0, -1])
+
+
+def test_observed_stream_masks_incoherent_prefix_instead_of_encoding_opposite() -> None:
+    clean, inputs = _fixture()
+    inputs["observation_mask"][:] = False
+    inputs["observation_mask"][:20, 2] = True
+    inputs["observation_mask"][20:, 0] = True
+    result = _observed_stream_sample(clean, inputs)
+    assert bool(result["pnp_forward_usable"])
+    assert int(result["pnp_history_active_count"]) == 12
+    assert not bool(result["history_mask"][:20].any())
+    assert bool(result["history_mask"][20:].all())
+    assert set(result["history_switch_step"].tolist()) == {0}
+    assert not any(
+        token in key for key in result
+        for token in ("physical_id", "armor_id", "source_slot", "handle_id")
+    )
+
+
+def test_observed_stream_never_reverses_switch_direction_inside_suffix() -> None:
+    clean, inputs = _fixture()
+    inputs["observation_mask"][:] = False
+    inputs["observation_mask"][:, 0] = True
+    inputs["observation_mask"][1] = False
+    inputs["observation_mask"][1, 1] = True
+    result = _observed_stream_sample(clean, inputs)
+    assert bool(result["pnp_forward_usable"])
+    active_switch = result["history_switch_step"][result["history_mask"]]
+    nonzero = active_switch[active_switch != 0]
+    assert nonzero.size <= 1 or bool(np.all(nonzero == nonzero[0]))
+    assert not np.any(active_switch[:-1] * active_switch[1:] == -1)
+
+
+def test_observed_stream_is_invariant_to_observation_row_permutation() -> None:
+    clean, inputs = _fixture()
+    first = _observed_stream_sample(clean, inputs)
+    order = np.asarray([2, 0, 3, 1])
+    permuted = copy.deepcopy(inputs)
+    permuted["observation_position_m"] = inputs["observation_position_m"][:, order]
+    permuted["observation_mask"] = inputs["observation_mask"][:, order]
+    second = _observed_stream_sample(clean, permuted)
+    for key in first:
+        assert np.array_equal(first[key], second[key]), key
+
+
 def test_model_input_filter_excludes_targets_and_pair_metadata() -> None:
     clean, _ = _fixture()
     batch = {key: np.expand_dims(value, 0) for key, value in clean.items()}
@@ -202,4 +286,3 @@ def test_clean_replay_check_is_bit_exact() -> None:
         assert "bit-exact" in str(error)
     else:
         raise AssertionError("clean replay check accepted a changed tensor")
-

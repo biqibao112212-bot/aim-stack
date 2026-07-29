@@ -18,7 +18,10 @@ from torch import nn
 
 from .observable_future_dataset import EXPERT_TO_MOTION_CLASS
 from .observable_future_model import AnonymousCandidateFutureExpert
-from .observable_future_pnp_upper_bound import SCHEMA_VERSION
+from .observable_future_pnp_upper_bound import (
+    OBSERVED_STREAM_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -183,7 +186,9 @@ def evaluate(args: argparse.Namespace) -> Path:
         raise FileExistsError(f"refusing to overwrite PnP evaluation: {output_dir}")
     manifest_path = dataset_dir / "dataset_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    if manifest.get("schema_version") not in {
+        SCHEMA_VERSION, OBSERVED_STREAM_SCHEMA_VERSION,
+    }:
         raise ValueError("paired PnP dataset schema mismatch")
     if not bool(manifest.get("qualification_passed", False)):
         raise ValueError("formal evaluation requires the complete qualified paired dataset")
@@ -511,4 +516,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

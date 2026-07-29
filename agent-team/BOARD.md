@@ -1078,3 +1078,29 @@
   decision must separate the low 25.90% PnP/S/F admission rate from the
   combined selector's 131 wrong choices; do not train the V67 residual or tune
   a distance threshold from this inspected diagnostic.
+
+## 2026-07-29 observed-primary history admission
+
+- [x] Audit all 112,448 history events. Every previously rejected event still
+  has at least one PnP candidate; the 25.90% gate was rejecting a different
+  actually observed plate because it did not match the truth rule's prechosen
+  primary, rather than measuring detector availability.
+- [x] Implement a new non-overwriting v2 paired dataset. Anchor q0 on the
+  truth-nearest member of the actual PnP candidate set, associate the maximum
+  coherent historical suffix using same/adjacent anonymous-handle transitions,
+  one rotation direction and 20 mm switching hysteresis, mask older
+  incompatible history, require at least eight active events, and rebuild all
+  clean/PnP labels from the same q0 handle.
+- [x] Feed S the actually associated observed handle set, with one primary and
+  at most one adjacent secondary. Keep the window-local C4 shift and optional
+  reversal; no physical slot or armor ID enters the loader/model schema.
+  Inactive history is zeroed before composition so it cannot become a
+  `-current` pseudo-observation.
+- [x] Pass the focused compatibility/association tests and diagnostic chain.
+  A two-session build retains 738/850 combined windows (86.82%); all 27,200
+  events contain a PnP candidate, every usable history has at least eight
+  events, and no usable window reverses switch direction. Old v1 loaders remain
+  operational. No network weight has changed.
+- [ ] Build the complete nine-session v2 parent and S/F datasets from the
+  committed source, then run one fully frozen ballistic-time evaluation before
+  deciding whether any Mapper/S/H/F/selector component needs retraining.

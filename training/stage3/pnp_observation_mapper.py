@@ -18,7 +18,10 @@ import torch
 from torch import nn
 from torch.utils.data import Dataset
 
-from .build_observable_future_pnp_sf_upper_bound_dataset import SCHEMA_VERSION
+from .build_observable_future_pnp_sf_upper_bound_dataset import (
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
+)
 from .observable_future_model import MaskedCausalResidualBlock
 from .observable_future_pnp_ab import sha256_file
 from .split_audit import build_split_audit
@@ -51,7 +54,9 @@ class PnPObservationMappingDataset(Dataset):
         manifest_path = self.dataset_dir / "dataset_manifest.json"
         self.manifest_sha256 = sha256_file(manifest_path)
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        if self.manifest.get("schema_version") != SCHEMA_VERSION:
+        if self.manifest.get("schema_version") not in {
+            SCHEMA_VERSION, LEGACY_SCHEMA_VERSION,
+        }:
             raise ValueError("PnP mapping dataset schema mismatch")
         if bool(self.manifest.get("test_accessed", True)):
             raise ValueError("PnP mapping dataset accessed test")

@@ -466,6 +466,24 @@ def test_compose_signature_has_no_raw_or_batch_fallback() -> None:
     assert not any("raw" in name or name.startswith("pnp_") for name in names)
 
 
+def test_h_compose_masks_inactive_prefix_without_negative_current_artifact() -> None:
+    source = _s_output(batch=1)
+    h = hypothesis_forward(_model().eval(), source)
+    corrected = torch.randn(1, 3, 4, 3)
+    obs_mask = torch.zeros(1, 3, 4, dtype=torch.bool)
+    primary_mask = torch.zeros_like(obs_mask)
+    event_mask = torch.tensor([[False, True, True]])
+    obs_mask[:, 1:, 0] = True
+    primary_mask[:, 1:, 0] = True
+    step = torch.arange(-6, 7).view(1, 13)
+    output = compose_hypothesis_for_f(
+        h, source["primary_index"], corrected, obs_mask, primary_mask, step,
+        event_mask,
+    )
+    assert torch.count_nonzero(output["history_position_rel_m"][:, 0]) == 0
+    assert torch.count_nonzero(output["selected_history_absolute_m"][:, 0]) == 0
+
+
 def test_pnp_selector_changes_only_switch_heads_and_keeps_trajectory_bit_exact() -> None:
     torch.manual_seed(17)
     trajectory = AnonymousCandidateFutureExpert(
