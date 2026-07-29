@@ -3,8 +3,10 @@ from __future__ import annotations
 import numpy as np
 
 from training.stage3.evaluate_final_visible_position_ballistic import (
+    DISPLAY_BODY_PERCENTILE,
     TruthState,
     _ballistic_label,
+    _plot,
     _table_rows,
 )
 
@@ -52,3 +54,15 @@ def test_distance_table_uses_fixed_one_metre_bins() -> None:
     assert np.isclose(two_to_three["p50_error_mm"], 100.0)
     assert np.isclose(two_to_three["coverage_le_100mm"], 0.5)
     assert overall["count"] == 3
+
+
+def test_plot_caps_the_tail_at_the_declared_body_percentile(tmp_path) -> None:
+    queries = {
+        "truth_distance_m": np.linspace(2.0, 6.5, 100, dtype=np.float32),
+        "final_error_m": np.linspace(0.0, 1.0, 100, dtype=np.float32),
+    }
+    output = tmp_path / "scatter.png"
+    audit = _plot(output, "rotation", queries)
+    assert output.is_file()
+    assert audit["display_body_percentile"] == DISPLAY_BODY_PERCENTILE
+    assert audit["overflow_count"] == 5

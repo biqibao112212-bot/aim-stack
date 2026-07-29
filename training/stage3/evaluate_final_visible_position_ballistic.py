@@ -47,6 +47,7 @@ from .train_pnp_window_mapper_distillation import _atomic_json
 EVALUATION_SCHEMA = "stage3-final-position-ballistic-generalization-v1"
 FLIGHT_TIME_FORMULA = "norm(frozen_upstream_current_position_m)/bullet_speed_mps"
 DISTANCE_EDGES_M = tuple(float(value) for value in range(1, 8))
+DISPLAY_BODY_PERCENTILE = 95.0
 
 
 @dataclass(frozen=True)
@@ -399,7 +400,7 @@ def _plot(path: Path, motion_name: str, queries: dict[str, np.ndarray]) -> dict[
 
     distance = queries["truth_distance_m"].astype(np.float64)
     error_mm = queries["final_error_m"].astype(np.float64) * 1000.0
-    cap_mm = max(50.0, float(np.percentile(error_mm, 99.5)))
+    cap_mm = max(50.0, float(np.percentile(error_mm, DISPLAY_BODY_PERCENTILE)))
     overflow = error_mm > cap_mm
     plotted = np.minimum(error_mm, cap_mm)
     figure, axis = plt.subplots(figsize=(9.2, 5.6), constrained_layout=True)
@@ -411,7 +412,7 @@ def _plot(path: Path, motion_name: str, queries: dict[str, np.ndarray]) -> dict[
         axis.scatter(
             distance[overflow], plotted[overflow], s=28, alpha=0.9,
             marker="^", color="#D62728", linewidths=0,
-            label=f">99.5% display cap (n={int(overflow.sum())})",
+            label=f">P{DISPLAY_BODY_PERCENTILE:g} display cap (n={int(overflow.sum())})",
         )
     centers: list[float] = []
     medians: list[float] = []
@@ -440,6 +441,7 @@ def _plot(path: Path, motion_name: str, queries: dict[str, np.ndarray]) -> dict[
         "path": str(path),
         "sha256": sha256_file(path),
         "display_cap_mm": cap_mm,
+        "display_body_percentile": DISPLAY_BODY_PERCENTILE,
         "overflow_count": int(overflow.sum()),
     }
 
