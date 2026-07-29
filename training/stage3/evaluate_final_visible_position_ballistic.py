@@ -421,9 +421,9 @@ def _plot(path: Path, motion_name: str, queries: dict[str, np.ndarray]) -> dict[
         if bool(mask.any()):
             centers.append(0.5 * (left + right))
             medians.append(float(np.median(error_mm[mask])))
-    axis.plot(
-        centers, medians, color="#F28E2B", marker="o", linewidth=2.0,
-        markersize=5, label="1 m-bin median",
+    axis.scatter(
+        centers, medians, color="#F28E2B", marker="D", s=42,
+        linewidths=0, label="1 m-bin median",
     )
     axis.set_xlim(1.0, 7.0)
     axis.set_ylim(0.0, cap_mm * 1.04)
