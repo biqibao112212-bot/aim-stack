@@ -1547,7 +1547,9 @@
   paths by requiring adjacent active events and adds a prefix regression. All
   309 Stage3 tests plus architecture and consumer-boundary checks pass. A clean
   rerun changes the aggregate mean by only 0.10 mm, proving this bug was real
-  but not the source of the large frozen-model error.
+  but not the source of the large frozen-model error. The final sidecar audit
+  covers 1,232 partial-history windows and finds zero non-contiguous suffixes,
+  zero first-active/valid-delta anomalies and zero S/F mask mismatches.
 - The clean frozen rerun at one range-derived ballistic query per window keeps
   all Mapper/S/H/V50/V66/V67 state hashes unchanged. Rotation reaches
   290.57/272.26/681.71 mm Mean/P50/P95 with 45.17% selection; combined reaches
