@@ -930,3 +930,23 @@
 - [ ] Commit the new source/protocol, replay mapper on that exact commit, then
   require cache field equality and at least 2.5x amortized speedup before
   restarting formal H from scratch. Never resume v59 under the new contract.
+
+## 2026-07-29 joint future-visible selection diagnostic
+
+- [x] Train the independent history-dynamics selector for 500 updates, then
+  jointly update it with the PnP-domain trajectory path through update 3000.
+  The Windows RTX 4060 run completed in 293 s with no stderr and retained the
+  immutable update-3000 checkpoint under the protected Stage-3 model store.
+- [x] Re-evaluate all 1,985 combined-motion validation windows (15,461 future
+  queries) from the final checkpoint. The conditional tensor SHA-256 and
+  conditional/hard P95 match the training record exactly; test remains sealed.
+- [x] Export reproducible PDF/PNG figures for training dynamics, conditional
+  versus hard distributions, coverage thresholds, time/yaw-rate/distance/
+  switch/upstream-error trends, signed-step confusion and selector calibration.
+  Exact physical distance and yaw rate are joined only after inference.
+- [x] Compare on the same diagnostic validation. V64 ends at 217.95/413.83 mm
+  conditional/hard P95, 78.16% selection accuracy and 61.96% one-step recall;
+  V52 remains better at 215.85/363.54 mm, 83.25% and 69.02% respectively.
+- [ ] Active: user review of the retained `figures-r2` evidence. Do not promote
+  V64 or start another training run before deciding whether to keep the staged
+  selector boundary or redesign the selector objective/representation.

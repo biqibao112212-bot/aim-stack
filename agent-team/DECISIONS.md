@@ -1280,3 +1280,30 @@
   (target 3x or better) without metric/state divergence. H-forward fusion,
   larger batches, AMP, TF32 and `torch.compile` remain deferred because they
   alter numeric execution or training semantics.
+
+## 2026-07-29 decision 144: joint selector/trajectory training does not replace the staged baseline
+
+- V64 tests a materially different selector: it owns a temporal history encoder
+  and scores anonymous candidate future paths conditioned on observed dynamics
+  and query time. It contains no permanent armor ID, physical slot embedding,
+  motion-class input or hand-authored switch time. After a 500-update selector
+  warmup, both the selector and PnP trajectory parameters train through a
+  probabilistic mixture objective; the obsolete trajectory selector stays
+  frozen and hash-unchanged.
+- The fixed 3000-update combined-motion diagnostic completed normally, but it
+  does not beat the same-validation staged V52 selector. Conditional P95 moves
+  from 215.85 to 217.95 mm, hard P95 from 363.54 to 413.83 mm, selection
+  accuracy from 83.25% to 78.16%, and one-step recall from 69.02% to 61.96%.
+  Therefore V64 is retained as negative structural evidence and is not the new
+  baseline; V52 remains the best current diagnostic selector result.
+- The full distribution confirms two simultaneous effects. Correctly selected
+  queries have hard P95 220.61 mm, while incorrectly selected queries have
+  604.82 mm and constitute 3,377/15,461 queries. Error also rises strongly with
+  future time, absolute switch count and large Mapper/S/H or raw-PnP input
+  error. Physical yaw rate alone has a substantially flatter conditional trend
+  than these horizon/input-quality variables.
+- The analysis is not independent acceptance evidence: it covers only
+  `motion_class=3`, uses oracle association, and reuses an adaptively observed
+  validation split. Exact truth distance/yaw rate are post-inference analysis
+  labels only. No translation/rotation/stationary comparison, deployable claim
+  or untouched-test claim may be inferred from these figures.
