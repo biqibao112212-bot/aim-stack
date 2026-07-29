@@ -1463,3 +1463,21 @@
   windows and evaluate the complete frozen chain next. Do not train or select
   a checkpoint on this raw-coverage result, and do not call these inspected
   sessions an untouched final test split.
+
+## 2026-07-29 decision 152: evaluate one causal range-derived flight-time query
+
+- Replace the earlier presentation-only future-time scatter with a true
+  fire-timing diagnostic. For every common-usable window, take the current
+  visible-armor range produced by the frozen Mapper/S/H chain and compute
+  `tau = range / 22 m/s`. Pass only this continuous `tau` through the existing
+  F/V66/V67 query interface. Bullet speed and ballistic metadata are not added
+  to history, candidate or refiner features.
+- Build the target at that exact `tau` from the qualified constant-motion truth
+  state and the existing 1 ms anonymous visibility rollout. Truth determines
+  only the offline label and the plot's exact q0 distance axis; it never
+  determines the causal query time and never enters model forward.
+- Report rotation and combined motion separately. Each output owns one
+  distance/error scatter and one fixed 1 m-bin CSV table over `[1,7)` with
+  central/tail metrics and coverage. Bins below 100 windows remain visible but
+  are explicitly descriptive. Retain three standard-split sessions unopened
+  by the derived/evaluation chain and do not update or select any model.

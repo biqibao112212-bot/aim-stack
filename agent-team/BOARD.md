@@ -1061,9 +1061,12 @@
   Every frame is native `wide_6mm` with dual focal disabled. Overall valid-any,
   target-3, empty and valid-wrong-only rates are 98.82%, 97.83%, 1.18% and
   0.98%; target-3 coverage is 97.33% for spin and 98.36% for combined motion.
-- [ ] Next: rebuild the derived PnP/history windows from this capture and run
-  the complete frozen Mapper/S/H/V50/V66/V67 chain without updating weights or
-  choosing thresholds. Report end-to-end admission coverage and one plain
-  future-time/error scatter before deciding whether any training change is
-  justified. Treat this as an observation-recovery/frozen-evaluation set, not
-  as a still-sealed final test set.
+- [x] Rebuild the qualified v3/truth-history/observation/causal/observable/PnP
+  S/F chain. The standard 60/20/20 split keeps three sessions out of this pass;
+  all downstream builders keep `test_accessed=false`.
+- [ ] Active: evaluate the complete Mapper/S/H/V50/V66/V67 chain at one causal
+  ballistic query per eligible window. Use the frozen upstream current visible
+  armor range divided by the configured 22 m/s bullet speed as continuous
+  query time. Produce separate distance/error scatter plots and 1 m-bin tables
+  for rotation and combined motion; no weight, threshold or checkpoint may
+  change.
