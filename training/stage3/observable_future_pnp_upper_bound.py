@@ -77,25 +77,6 @@ def rebase_tracker_points_to_anchor(
     )
 
 
-def _anchor_points_to_event_tracker(
-    position_m: np.ndarray,
-    event_origin_world_m: np.ndarray,
-    event_tracker_to_world_rotation: np.ndarray,
-    anchor_origin_world_m: np.ndarray,
-    anchor_tracker_to_world_rotation: np.ndarray,
-) -> np.ndarray:
-    """Express q0-anchor tracker points in one exposure's tracker frame."""
-    position = np.asarray(position_m, dtype=np.float64)
-    event_origin = np.asarray(event_origin_world_m, dtype=np.float64)
-    event_rotation = np.asarray(event_tracker_to_world_rotation, dtype=np.float64)
-    anchor_origin = np.asarray(anchor_origin_world_m, dtype=np.float64)
-    anchor_rotation = np.asarray(anchor_tracker_to_world_rotation, dtype=np.float64)
-    world = position @ anchor_rotation.T + anchor_origin[None, :]
-    return ((world - event_origin[None, :]) @ event_rotation).astype(
-        np.float32, copy=False
-    )
-
-
 def oracle_injective_assignment(
     observation_position_m: np.ndarray,
     truth_position_m: np.ndarray,
@@ -216,7 +197,6 @@ def associate_observed_primary_history(
     handle_position = np.zeros((32, 4, 3), dtype=np.float32)
     handle_mask = np.zeros((32, 4), dtype=np.bool_)
     local_range = np.full((32, 4), np.inf, dtype=np.float64)
-    selection_range = np.full((32, 4), np.inf, dtype=np.float64)
     association_error = np.zeros((32, 4), dtype=np.float32)
     ambiguous = np.zeros(32, dtype=np.bool_)
     candidate_count = np.zeros(32, dtype=np.int64)
@@ -241,10 +221,6 @@ def associate_observed_primary_history(
         if is_ambiguous:
             continue
         active_rows = np.flatnonzero(row_mask)
-        truth_event_local = _anchor_points_to_event_tracker(
-            truth[event], origins[row], rotations[row],
-            anchor_origin_world_m, anchor_tracker_to_world_rotation,
-        )
         for slot, compact_row in assignment.items():
             slot_int = int(slot)
             compact_int = int(compact_row)
@@ -252,9 +228,6 @@ def associate_observed_primary_history(
             handle_mask[row, slot_int] = True
             local_range[row, slot_int] = float(np.linalg.norm(
                 observation[event, int(active_rows[compact_int]), :2]
-            ))
-            selection_range[row, slot_int] = float(np.linalg.norm(
-                truth_event_local[slot_int, :2]
             ))
             association_error[row, slot_int] = np.float32(np.linalg.norm(
                 rebased[compact_int] - truth[event, slot_int]
@@ -266,11 +239,11 @@ def associate_observed_primary_history(
     q0_tied = False
     if q0_slots.size:
         order = q0_slots[np.argsort(
-            selection_range[-1, q0_slots], kind="stable"
+            local_range[-1, q0_slots], kind="stable"
         )]
         q0_tied = bool(
             order.size > 1
-            and selection_range[-1, order[1]] - selection_range[-1, order[0]]
+            and local_range[-1, order[1]] - local_range[-1, order[0]]
             <= primary_tie_epsilon_m
         )
         if not q0_tied:
@@ -286,7 +259,7 @@ def associate_observed_primary_history(
                 slots = np.flatnonzero(handle_mask[row])
                 if slots.size == 0:
                     break
-                minimum_range = float(selection_range[row, slots].min())
+                minimum_range = float(local_range[row, slots].min())
                 current_cost: dict[tuple[int, int], float] = {}
                 for slot_raw in slots:
                     slot = int(slot_raw)
@@ -306,7 +279,7 @@ def associate_observed_primary_history(
                         state = (slot, direction)
                         candidate_cost = (
                             cost
-                            + float(selection_range[row, slot] - minimum_range)
+                            + float(local_range[row, slot] - minimum_range)
                             + primary_switch_hysteresis_m * int(step != 0)
                         )
                         previous_cost = current_cost.get(state)
@@ -360,7 +333,6 @@ def associate_observed_primary_history(
         "handle_position_m": handle_position,
         "handle_mask": handle_mask,
         "local_horizontal_range_m": local_range,
-        "selection_horizontal_range_m": selection_range,
         "selected_source_slot": selected_slot,
         "selected_event_mask": selected_mask,
         "selected_association_error_m": selected_error,

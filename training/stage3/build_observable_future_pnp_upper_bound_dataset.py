@@ -505,7 +505,7 @@ def build(args: argparse.Namespace) -> Path:
         "strict_complete_32_event_history": False,
         "observed_primary_stream": True,
         "history_admission_policy": (
-            "q0 truth-nearest among actual PnP observations; maximum coherent "
+            "q0 PnP-range-nearest among actual observations; maximum coherent "
             "contiguous suffix with same/adjacent anonymous-handle transitions, "
             "one switch direction and range hysteresis"
         ),
@@ -519,7 +519,10 @@ def build(args: argparse.Namespace) -> Path:
         "coordinate_policy": (
             "each PnP point event-tracker -> world -> q0-anchor-tracker"
         ),
-        "current_policy": "q0 truth-nearest among actual PnP observations",
+        "current_policy": (
+            "q0 nearest by exposure-local PnP horizontal range among actual "
+            "observations; truth is association/label-only"
+        ),
         "candidate_policy": (
             "truth-S q0 candidates with current role replaced by PnP current; "
             "all step modulo 4 equals 0 relations are bit-exact zero"

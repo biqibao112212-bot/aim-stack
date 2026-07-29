@@ -1086,7 +1086,7 @@
   actually observed plate because it did not match the truth rule's prechosen
   primary, rather than measuring detector availability.
 - [x] Implement a new non-overwriting v2 paired dataset. Anchor q0 on the
-  truth-nearest member of the actual PnP candidate set, associate the maximum
+  PnP-range-nearest member of the actual candidate set, associate the maximum
   coherent historical suffix using same/adjacent anonymous-handle transitions,
   one rotation direction and 20 mm switching hysteresis, mask older
   incompatible history, require at least eight active events, and rebuild all
@@ -1122,3 +1122,18 @@
   336.40/281.62/895.04 mm and 29.41%. Partial histories and changed observed-q0
   roles are an unseen input/label distribution; selector-only or V67-only
   tuning cannot repair it.
+
+## 2026-07-29 observation-only primary correction
+
+- [x] Supersede the first v2 build/evaluation as an association diagnostic.
+  Although every candidate came from actual PnP observations, the q0 and DP
+  range costs still read truth-reprojected distance and therefore could not be
+  reproduced by the inference observation stream.
+- [x] Change q0 selection, ties, transition costs and switching hysteresis to
+  use exposure-local PnP horizontal range only. Truth remains limited to
+  offline candidate-to-label association and future supervision. Add a direct
+  conflict test where truth range and PnP range select different plates;
+  310 Stage3 tests and both repository boundary checks pass.
+- [ ] Rebuild the complete parent/SF chain without overwriting r1, rerun the
+  frozen ballistic evaluation, and replace the superseded coverage/error
+  conclusions before proposing any combination-motion training.

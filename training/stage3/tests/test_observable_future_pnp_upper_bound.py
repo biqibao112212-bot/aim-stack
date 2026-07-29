@@ -10,6 +10,7 @@ from training.stage3.build_observable_future_pnp_upper_bound_dataset import (
 from training.stage3.observable_future_dataset import DEFAULT_CANDIDATE_STEPS
 from training.stage3.observable_future_pnp_upper_bound import (
     FORWARD_KEYS,
+    associate_observed_primary_history,
     construct_observed_primary_pnp_sample,
     construct_real_pnp_upper_bound_sample,
     model_inputs_from_arrays,
@@ -216,6 +217,25 @@ def test_observed_stream_keeps_an_adjacent_plate_when_old_primary_is_missing() -
     assert np.allclose(result["pnp_current_position_m"], [0.0, 2.0, 0.1])
     assert np.array_equal(result["history_switch_step"], np.zeros(32))
     assert np.array_equal(result["target_switch_count"], [0, -1])
+
+
+def test_observed_stream_primary_uses_pnp_range_not_truth_range() -> None:
+    _, inputs = _fixture()
+    # Truth slot zero is nearer, while PnP reports slot one as nearer.  The
+    # primary rule must be reproducible from observations and choose slot one.
+    inputs["observation_position_m"][:, 0] = [1.2, 0.0, 0.0]
+    inputs["observation_position_m"][:, 1] = [0.0, 0.9, 0.1]
+    result = associate_observed_primary_history(
+        inputs["physical_event_mask"], inputs["physical_event_time_s"],
+        inputs["truth_history_position_m"], inputs["truth_history_mask"],
+        inputs["observation_position_m"], inputs["observation_mask"],
+        inputs["event_origins_world_m"],
+        inputs["event_tracker_to_world_rotation"],
+        inputs["anchor_origin_world_m"],
+        inputs["anchor_tracker_to_world_rotation"],
+    )
+    assert int(result["selected_source_slot"][-1]) == 1
+    assert np.isclose(result["local_horizontal_range_m"][-1, 1], 0.9)
 
 
 def test_observed_stream_masks_incoherent_prefix_instead_of_encoding_opposite() -> None:

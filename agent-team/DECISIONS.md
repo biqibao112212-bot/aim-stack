@@ -1517,7 +1517,7 @@
   22,857 rejected history events still contain one or more PnP candidates, so
   those failures are semantic mismatches, not missing observations.
 - The v2 history primary is chosen from actual PnP candidates. q0 uses the
-  truth-nearest actually observed candidate; past events are smoothed backward
+  PnP-range-nearest actually observed candidate; past events are smoothed backward
   through temporary oracle-associated handles and permit only same or adjacent
   cyclic transitions in one rotation direction. A 20 mm switching hysteresis
   prevents PnP/range jitter from becoming a false cut. When older observations
@@ -1571,3 +1571,19 @@
   insufficient. The next stage must explicitly adapt the history/trajectory
   representation and selector to the v2 stream; keep V67 frozen until that
   upstream contract is repaired.
+
+## 2026-07-29 decision 156: primary choice must be reproducible from PnP observations
+
+- Decision 155's r1 metrics are retained as a superseded diagnostic, not an
+  accepted training baseline. The r1 candidate set was observation-derived,
+  but q0 ordering and the backward DP range cost used truth coordinates
+  reprojected into each exposure. That rule cannot run when truth is absent.
+- The primary stream now uses only each associated PnP observation's
+  exposure-local horizontal range for q0 choice, ties, historical DP costs and
+  switching hysteresis. Oracle truth is still permitted offline to associate
+  unordered PnP rows with anonymous supervision handles and to construct
+  future labels; it no longer chooses the forward history role.
+- This correction does not add physical identity, a physics decoder or truth
+  input to the model. Rebuild to a new non-overwriting dataset and rerun frozen
+  acceptance before deciding what to retrain; do not reuse r1 coverage or
+  frozen-error numbers as final evidence.
