@@ -21,6 +21,7 @@ from training.stage3.pnp_observation_mapper import (
     CausalPnPObservationMapper,
     PnPObservationMappingDataset,
     WindowPnPObservationMapper,
+    _masked_event_time_and_delta,
     compose_corrected_observations,
 )
 from training.stage3.pnp_q0_hypothesis_adapter import load_frozen_pnp_mapper
@@ -56,6 +57,14 @@ def _window_model() -> WindowPnPObservationMapper:
         torch.tensor((1.5, 0.8, 0.01)),
         channels=16, dropout=0.0,
     )
+
+
+def test_masked_event_delta_does_not_cross_inactive_prefix() -> None:
+    event_time = torch.tensor(((-0.31, -0.30, -0.29, -0.28),))
+    valid_event = torch.tensor(((False, False, True, True),))
+    clean_time, dt = _masked_event_time_and_delta(event_time, valid_event)
+    assert torch.equal(clean_time, torch.tensor(((0.0, 0.0, -0.29, -0.28),)))
+    assert torch.allclose(dt, torch.tensor(((0.0, 0.0, 0.0, 0.01),)), atol=1e-7)
 
 
 def test_mapper_zero_initialization_preserves_valid_pnp() -> None:

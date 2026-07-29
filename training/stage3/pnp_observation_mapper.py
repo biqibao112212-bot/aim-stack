@@ -36,6 +36,22 @@ INPUT_FIELDS = (
 LABEL_FIELDS = ("clean_s_obs_m", "pnp_s_primary_mask")
 
 
+def _masked_event_time_and_delta(
+    event_time_s: torch.Tensor,
+    valid_event: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Mask time features without forming a delta across an inactive prefix."""
+    clean_time = torch.where(valid_event, event_time_s, torch.zeros_like(event_time_s))
+    dt = torch.zeros_like(clean_time)
+    adjacent_valid = valid_event[:, 1:] & valid_event[:, :-1]
+    dt[:, 1:] = torch.where(
+        adjacent_valid,
+        event_time_s[:, 1:] - event_time_s[:, :-1],
+        torch.zeros_like(event_time_s[:, 1:]),
+    )
+    return clean_time, dt
+
+
 class PnPObservationMappingDataset(Dataset):
     """Read only the allowlisted paired observation fields from train/val."""
 
@@ -263,10 +279,7 @@ class CausalPnPObservationMapper(nn.Module):
         event_min = torch.where(valid_event.unsqueeze(-1), event_min, torch.zeros_like(event_min))
         event_max = torch.where(valid_event.unsqueeze(-1), event_max, torch.zeros_like(event_max))
         event_mean = torch.where(valid_event.unsqueeze(-1), event_mean, torch.zeros_like(event_mean))
-        clean_time = torch.where(valid_event, event_time_s, torch.zeros_like(event_time_s))
-        dt = torch.zeros_like(clean_time)
-        dt[:, 1:] = clean_time[:, 1:] - clean_time[:, :-1]
-        dt = torch.where(valid_event, dt, torch.zeros_like(dt))
+        clean_time, dt = _masked_event_time_and_delta(event_time_s, valid_event)
         event_feature = torch.cat((
             event_mean, event_min, event_max,
             (count.squeeze(-1).to(clean.dtype) / 4.0).unsqueeze(-1),
@@ -419,10 +432,7 @@ class WindowPnPObservationMapper(nn.Module):
         event_mean = torch.where(
             valid_event.unsqueeze(-1), event_mean, torch.zeros_like(event_mean)
         )
-        clean_time = torch.where(valid_event, event_time_s, torch.zeros_like(event_time_s))
-        dt = torch.zeros_like(clean_time)
-        dt[:, 1:] = clean_time[:, 1:] - clean_time[:, :-1]
-        dt = torch.where(valid_event, dt, torch.zeros_like(dt))
+        clean_time, dt = _masked_event_time_and_delta(event_time_s, valid_event)
         visibility = count.squeeze(-1).to(clean.dtype) / 4.0
         token = torch.cat((
             clean, clean.square(),
