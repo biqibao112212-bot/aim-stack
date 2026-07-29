@@ -321,11 +321,19 @@ def _evaluate(
     truth_step = dataset.tensors["target_switch_count"].numpy().reshape(-1)
     if refined_m.size != len(dataset):
         raise RuntimeError("ballistic evaluation must produce one query per window")
+    correct_selection = predicted_step == truth_step
     metrics = {
         "final_position": _position_metrics(refined_m),
         "frozen_v66_baseline": _position_metrics(baseline_m),
         "position_residual": _position_metrics(residual_m),
-        "frozen_switch_accuracy": float(np.mean(predicted_step == truth_step)),
+        "frozen_switch_accuracy": float(np.mean(correct_selection)),
+        "selection_stratified_final_position": {
+            "correct": _position_metrics(refined_m[correct_selection]),
+            "wrong": (
+                _position_metrics(refined_m[~correct_selection])
+                if bool((~correct_selection).any()) else None
+            ),
+        },
         "selected_probability": {
             "mean": float(probability.mean()),
             "p50": float(np.percentile(probability, 50)),
