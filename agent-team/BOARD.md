@@ -1064,9 +1064,17 @@
 - [x] Rebuild the qualified v3/truth-history/observation/causal/observable/PnP
   S/F chain. The standard 60/20/20 split keeps three sessions out of this pass;
   all downstream builders keep `test_accessed=false`.
-- [ ] Active: evaluate the complete Mapper/S/H/V50/V66/V67 chain at one causal
+- [x] Evaluate the complete Mapper/S/H/V50/V66/V67 chain at one causal
   ballistic query per eligible window. Use the frozen upstream current visible
   armor range divided by the configured 22 m/s bullet speed as continuous
   query time. Produce separate distance/error scatter plots and 1 m-bin tables
   for rotation and combined motion; no weight, threshold or checkpoint may
   change.
+- [x] Retain the clean-commit r4 result over 910 common-usable windows. Rotation
+  reaches 65.72/25.98/180.03/189.51 mm Mean/P50/P95/P99 with 99.62% selection
+  accuracy. Combined reaches 87.33/33.18/330.24/865.45 mm with 79.75%
+  selection accuracy. All Mapper/S/H/V50/V66/V67 hashes remain unchanged.
+- [ ] Await user review of the two distance/error plots and tables. The next
+  decision must separate the low 25.90% PnP/S/F admission rate from the
+  combined selector's 131 wrong choices; do not train the V67 residual or tune
+  a distance threshold from this inspected diagnostic.

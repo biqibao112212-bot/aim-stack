@@ -1481,3 +1481,31 @@
   central/tail metrics and coverage. Bins below 100 windows remain visible but
   are explicitly descriptive. Retain three standard-split sessions unopened
   by the derived/evaluation chain and do not update or select any model.
+
+## 2026-07-29 decision 153: retain the fixed-6-mm ballistic r4 diagnostic
+
+- The r4 evaluation runs from clean commit `f36acc4` and evaluates exactly one
+  query per common-usable window at `tau = frozen upstream current range /
+  22 m/s`. All 910 label q0 positions reconstruct bit-exactly, test remains
+  unopened, and Mapper/S/H/V50/V66/V67 state hashes are unchanged before and
+  after evaluation.
+- Rotation has 263 windows from four sessions and reaches
+  65.72/25.98/180.03/189.51 mm Mean/P50/P95/P99. Selection is correct in
+  262/263 windows; the eligible 3--4, 5--6 and 6--7 m bins have P50 error
+  21.40, 49.09 and 174.74 mm. The range trend is therefore real on this
+  eligible subset and is not mainly a selector failure.
+- Combined motion has 647 windows from five sessions and reaches
+  87.33/33.18/330.24/865.45 mm. Selection is correct in 516/647 windows:
+  correct-selection Mean/P50/P95 is 52.12/27.21/138.98 mm, while wrong-selection
+  Mean/P50/P95 is 226.03/197.50/660.12 mm. Combined hard error remains strongly
+  selection-dominated, and distance alone is not a monotone error predictor.
+- V67 does not improve this ballistic-query endpoint over frozen V66 overall:
+  Mean/P50/P95/P99 is 81.09/31.12/312.75/605.93 mm versus
+  80.96/27.20/312.34/598.95 mm. Retain V67 as the earlier fixed validation
+  endpoint, but do not train or promote another final-position residual from
+  this diagnostic.
+- Raw target-3 observation coverage was 97.83%, yet only 910/3,514 physical
+  windows are PnP/S/F common usable: 25.90% overall, 18.01% spin and 31.50%
+  combined. Fixed 6 mm repaired detector continuity but did not by itself
+  repair strict association/history admission. This admission boundary and the
+  combined selector are separate next-stage problems.
