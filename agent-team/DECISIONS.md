@@ -1534,3 +1534,38 @@
   complete v2 dataset is evaluated. Retraining will be considered only if the
   larger coherent coverage exposes a systematic frozen-model degradation, and
   then only the responsible partition will be changed.
+
+## 2026-07-29 decision 155: accept observed-stream admission and require distribution adaptation
+
+- The complete v2 build retains 2,627/3,514 windows (74.76%), compared with
+  910/3,514 (25.90%) under the old gate. Rotation rises from 263 to 994 usable
+  windows and combined from 647 to 1,633. This is the intended recovery: actual
+  observed candidates are retained, an incompatible older prefix is masked,
+  and no physical armor ID becomes a model input or saved label.
+- A final reviewer found that the two PnP mappers formed a delta between a
+  zeroed inactive time and the first active event. Commit `ae20bb7` fixes both
+  paths by requiring adjacent active events and adds a prefix regression. All
+  309 Stage3 tests plus architecture and consumer-boundary checks pass. A clean
+  rerun changes the aggregate mean by only 0.10 mm, proving this bug was real
+  but not the source of the large frozen-model error.
+- The clean frozen rerun at one range-derived ballistic query per window keeps
+  all Mapper/S/H/V50/V66/V67 state hashes unchanged. Rotation reaches
+  290.57/272.26/681.71 mm Mean/P50/P95 with 45.17% selection; combined reaches
+  235.54/126.84/804.15 mm with 48.74%. V67's position residual remains small
+  (13.30 mm rotation mean, 13.03 mm combined mean), so final-position residual
+  tuning is not the responsible intervention.
+- The degradation is distributional, not evidence that the previously trained
+  trajectory suddenly forgot the old task. On the old strict subset, rotation
+  remains 65.72/25.98/180.06 mm and 99.62% selection; combined remains
+  81.84/27.90/336.10 mm and 78.21%. On new-only windows those become
+  371.46/358.47/715.57 mm with 25.58% selection and
+  336.40/281.62/895.04 mm with 29.41%, respectively.
+- Partial suffixes are the largest directly observed split. Full 32-event
+  histories give rotation/combined means of 185.76/112.38 mm and selection of
+  70.64%/67.09%; 8--15-event suffixes give 377.41/455.92 mm and
+  21.75%/21.98%. Changed observed-q0 roles are also poor: 408.26/401.62 mm mean
+  and 12.71%/28.04% selection. Because correct-selection errors also rise to
+  179.96 mm rotation and 108.52 mm combined, selector-only training is
+  insufficient. The next stage must explicitly adapt the history/trajectory
+  representation and selector to the v2 stream; keep V67 frozen until that
+  upstream contract is repaired.

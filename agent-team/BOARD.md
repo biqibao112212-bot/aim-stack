@@ -1101,6 +1101,24 @@
   events contain a PnP candidate, every usable history has at least eight
   events, and no usable window reverses switch direction. Old v1 loaders remain
   operational. No network weight has changed.
-- [ ] Build the complete nine-session v2 parent and S/F datasets from the
-  committed source, then run one fully frozen ballistic-time evaluation before
-  deciding whether any Mapper/S/H/F/selector component needs retraining.
+- [x] Build the complete nine-session v2 parent and S/F datasets from committed
+  source. Common end-to-end admission rises from 910/3,514 (25.90%) to
+  2,627/3,514 (74.76%): rotation is 994/1,460 (68.08%) and combined is
+  1,633/2,054 (79.50%). Every retained window has a coherent active suffix and
+  the same observed q0 source for history, candidates and future labels.
+- [x] Close the final partial-history review finding: both frozen PnP mappers
+  now form `dt` only when the current and previous events are active, so the
+  first event after an inactive prefix receives zero rather than a spurious
+  negative delta. The inactive-prefix regression and all 309 Stage3 tests pass;
+  architecture and consumer-boundary checks pass.
+- [x] Run the complete frozen ballistic-time evaluation from clean commit
+  `ae20bb7`. All Mapper/S/H/V50/V66/V67 hashes remain unchanged. The expanded
+  stream gives rotation 290.57/272.26/681.71 mm Mean/P50/P95 with 45.17%
+  selection accuracy, and combined 235.54/126.84/804.15 mm with 48.74%.
+- [ ] Discuss retraining scope before changing weights. The old strict subset
+  still gives rotation 65.72/25.98/180.06 mm and 99.62% selection, while the
+  newly admitted samples give 371.46/358.47/715.57 mm and 25.58%. Combined has
+  the same split: old strict 81.84/27.90/336.10 mm and 78.21%, new-only
+  336.40/281.62/895.04 mm and 29.41%. Partial histories and changed observed-q0
+  roles are an unseen input/label distribution; selector-only or V67-only
+  tuning cannot repair it.
