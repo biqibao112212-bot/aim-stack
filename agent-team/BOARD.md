@@ -1002,3 +1002,25 @@
   10 mm tail tolerance. The frozen stack is bit-exact and selection accuracy
   remains 83.565%. No intermediate checkpoint is selected and no epochs are
   added.
+
+## 2026-07-29 disjoint simulator generalization evaluation
+
+- [x] Generate a new-seed manifest with six random spin and six random
+  linear-plus-spin sessions. Collect all 12 through Simulator 1.0.1/SDK 1.0.0
+  for 20 seconds each; every accepted session completes on its first attempt.
+  Failed pre-build attempts are retained but have no `session_result.json` and
+  are excluded by canonical-source discovery.
+- [x] Build a qualified independent v3/PnP/S/F evaluation chain without
+  touching the three newly reserved test sessions. Original V67 and new
+  train/validation session overlap is exactly zero. V67 and all Mapper/S/H/
+  V50/V66 states remain hash-identical and receive no updates.
+- [x] Evaluate 477 common-usable windows (3,741 future queries). On new
+  combined motion, V67 reaches 79.06/38.92/310.41/385.92 mm
+  Mean/P50/P95/P99 and 86.24% selection accuracy; the old combined validation
+  result was 108.75/45.44/351.96/560.57 mm and 83.57%. New rotation reaches
+  41.92/13.51/265.62/347.85 mm, but only 68 windows from two sessions qualify.
+- [ ] Active conclusion: do not tune V67 from these results. End-to-end input
+  availability falls from 59.54% on the old paired dataset to 38.01% on the new
+  one; spin is only 12.45% usable and two far combined sessions are almost
+  empty. Diagnose PnP/history continuity and strict 32-event availability
+  before changing trajectory or selector structure.

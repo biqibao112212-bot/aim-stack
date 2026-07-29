@@ -1395,3 +1395,28 @@
   epoch 2 despite its favorable visible metrics and do not add epochs. The run
   remains an oracle-associated combined-motion diagnostic on the adaptively
   observed validation split, with the test split still sealed.
+
+## 2026-07-29 decision 149: new simulator data validates the eligible model, not the whole input pipeline
+
+- The disjoint capture uses seed `2026072902`, new session IDs and new random
+  distance/phase/direction/speed/yaw-rate tuples. Six spin and six combined
+  sessions complete through the locked public Release/SDK; the original V67
+  dataset has zero session overlap. The new dataset's three test sessions stay
+  unopened, while seven internally named train and two validation sessions are
+  combined strictly for frozen evaluation.
+- Among PnP/S/F-common-usable inputs, generalization is not the current model
+  failure. New combined V67 Mean/P50/P95/P99 is
+  79.06/38.92/310.41/385.92 mm with 86.24% correct selection, and V67 improves
+  the same new queries over V66 at Mean/P50/P99. Pure rotation is also accurate
+  on its small eligible subset. No weight, threshold or checkpoint is selected
+  from the new data.
+- The decisive weakness is admission coverage. Only 477/1,255 physical windows
+  are common usable (38.01%) versus 59.54% in the old paired dataset. Spin is
+  68/546 (12.45%); combined is 409/709 (57.69%). The 5.18 m and 7.56 m combined
+  sessions have only 1/85 and 0/50 usable windows, and two of four evaluated
+  spin sessions have zero. This strict subset selection makes the favorable
+  network metrics conditional rather than an end-to-end success claim.
+- Therefore freeze V67 and investigate observation availability, detector/PnP
+  continuity, association and the complete-32-event gate on the retained raw
+  sessions. Do not respond by adding F epochs or changing the selector until
+  the missing-input mechanism is separated from true prediction error.
