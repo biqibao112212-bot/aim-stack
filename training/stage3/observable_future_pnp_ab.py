@@ -168,6 +168,10 @@ class ObservableFuturePnPSFDataset(Dataset):
             for name, value in numpy_arrays.items()
         }
         self.pair_ids = tuple(str(value) for value in pair_array)
+        # Kept as metadata rather than a forward tensor.  Diagnostic samplers
+        # may balance sessions without ever exposing session identity to a
+        # model or changing the public training sample schema.
+        self.session_ids = tuple(str(value) for value in session_array)
         self.motion_class = int(motion_class)
         self.split = split
         (

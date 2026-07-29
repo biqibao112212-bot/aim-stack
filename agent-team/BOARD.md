@@ -950,3 +950,25 @@
 - [ ] Active: user review of the retained `figures-r2` evidence. Do not promote
   V64 or start another training run before deciding whether to keep the staged
   selector boundary or redesign the selector objective/representation.
+
+## 2026-07-29 ordered crossing-time selector diagnostic
+
+- [x] Audit V52/V64 errors: V52 wrong choices are 96.14% adjacent and truth
+  switch sequences are monotone in all 5,424 train and 1,978 audited
+  validation windows. Preserve the staged boundary and freeze Mapper/S/H/V50.
+- [x] Reject the first single-progress curve after an exact capacity audit:
+  positive monotone bases force a concave progress curve and can express every
+  label in only 194/256 train and 187/256 validation windows. More epochs cannot
+  remove this structural limit.
+- [x] Implement sample-conditioned T1<...<T6 crossing times, a separate shared
+  direction, stratified capacity sampling and immutable per-epoch recovery.
+  There is no candidate-wise head, physical ID, future path, global fixed switch
+  time or position decoder.
+- [x] Pass 30 related Stage3 regression tests and an independent P0 review. The
+  fixed 400-update capacity result reaches 94.04% train accuracy, 90.68%
+  one-step recall and 254.83 mm hard P95 with zero reversals and bit-exact
+  trajectories. The predeclared 95% gate is not marked passed; its 0.96-point
+  miss is explicitly manually released for one full diagnostic run.
+- [ ] Active: run the full combined-motion diagnostic to fixed update 2125 on
+  committed source, then generate all predeclared distribution/trend/coverage/
+  conditional-vs-hard figures. V52 remains baseline until full validation.

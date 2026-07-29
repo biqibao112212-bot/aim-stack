@@ -1307,3 +1307,28 @@
   validation split. Exact truth distance/yaw rate are post-inference analysis
   labels only. No translation/rotation/stationary comparison, deployable claim
   or untouched-test claim may be inferred from these figures.
+
+## 2026-07-29 decision 145: replace flat selection with ordered crossing times
+
+- Keep V50 trajectories and Mapper/S/H bit-exact frozen. V64 showed that a new
+  history encoder plus candidate-future compatibility and joint trajectory
+  updates degrade the accepted staged baseline. The new selector reuses frozen
+  V50 history/candidate summaries and never reads future candidate paths.
+- Reject the single signed progress curve before full training. Although truth
+  sequences are ordered, its positive linear/saturating basis forced concavity;
+  exact feasibility showed roughly one quarter of windows require locally
+  accelerating crossing intervals and cannot satisfy that structure.
+- Predict six positive sample-conditioned intervals and cumulatively form
+  T1<...<T6. Query time is compared with those learned times; direction is a
+  separate shared sign. Windows may therefore have different angular speed,
+  phase and successive intervals. These are learned outputs, not a global
+  schedule, permanent plate identity or physics decoder.
+- Balance capacity data by direction, maximum switch count and session inside
+  each existing split. Labels/session used for sampling never enter forward.
+  The fixed capacity result misses the 95% accuracy gate at 94.04% but passes
+  90% one-step recall and has zero reversals; record a manual diagnostic release,
+  never an automatic pass or deployment claim.
+- The full run has one fixed endpoint at update 2125. It must compare against
+  V52 at 363.54 mm hard P95, 83.25% accuracy and 69.02% one-step recall and
+  prove conditional/state hashes unchanged. No checkpoint promotion or test
+  access is authorized.
