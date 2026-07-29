@@ -3715,7 +3715,7 @@ int main(int argc, char **argv) {
       argDouble(argc, argv, "--talos-pitch-neutral", 65.0);
   config.enable_fire = argBool(argc, argv, "--enable-fire", true);
   config.publish_no_target = true;
-  config.dual_focal_enabled = argBool(argc, argv, "--dual-focal", true);
+  config.dual_focal_enabled = argBool(argc, argv, "--dual-focal", false);
   config.wide_focal_mm = argDouble(argc, argv, "--wide-focal-mm", 6.0);
   config.precision_focal_mm =
       argDouble(argc, argv, "--precision-focal-mm", 16.0);

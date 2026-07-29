@@ -79,7 +79,9 @@ struct AimBridgeConfig
     double sim_pitch_neutral_deg = 65.0;
     bool enable_fire = true;
     bool publish_no_target = true;
-    bool dual_focal_enabled = true;
+    // The deployed and collection default is the native 6 mm full frame.
+    // Precision cropping remains an explicit diagnostic opt-in only.
+    bool dual_focal_enabled = false;
     double wide_focal_mm = 6.0;
     double precision_focal_mm = 16.0;
     double precision_enter_distance_m = 3.2;

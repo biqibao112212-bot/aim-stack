@@ -1024,3 +1024,24 @@
   one; spin is only 12.45% usable and two far combined sessions are almost
   empty. Diagnose PnP/history continuity and strict 32-event availability
   before changing trajectory or selector structure.
+
+## 2026-07-29 fixed-6-mm observation recovery
+
+- [x] Separate the apparent observation loss by camera profile on the nine
+  unsealed disjoint sessions. Below 7 m, `wide_6mm` has 14,686 frames and
+  98.19% valid solved observations; `precision_16mm` has 4,280 frames and only
+  23.74%. Sampled bridge diagnostics show missing precision frames at
+  `det=0, solved=0`, so this is not an F/V67 error or a PnP-only rejection.
+- [x] Make single-focal native 6 mm the default in the shared autoaim config,
+  Talos CLI, WSL launcher and ROS 2 bridge. Stage-3 capture also exports the
+  setting explicitly and records it in `session_result.json`; 16 mm remains an
+  explicit diagnostic opt-in, not a default path.
+- [x] Add fail-closed random-trajectory admission: nominal distance at most
+  6.5 m (0.5 m camera reserve), full reciprocal path plus the existing 0.10 s
+  collection-command lead within the range envelope, at least 0.75 m forward,
+  and at most 75 degrees horizontal yaw. Unsafe session 0276 is rejected;
+  a safe combined manifest passes.
+- [x] Complete a new independent 4.4 m / 9 rad/s / 8 s fixed-6-mm smoke
+  capture. All 1,050 frames are `wide_6mm`; valid solved observation coverage
+  is 100%, target-3 coverage is 99.90%, and empty coverage is 0%. All four WSL
+  CTest targets pass. Do not add this smoke-only session to training data.

@@ -1420,3 +1420,26 @@
   continuity, association and the complete-32-event gate on the retained raw
   sessions. Do not respond by adding F epochs or changing the selector until
   the missing-input mechanism is separated from true prediction error.
+
+## 2026-07-29 decision 150: default to native 6 mm and constrain capture paths
+
+- The apparent missing-input problem is primarily a preprocessing policy
+  failure, not evidence that the 6 mm armor detector or final trajectory model
+  cannot generalize. On the same unsealed frames below 7 m, native `wide_6mm`
+  solves 98.19% while the virtual `precision_16mm` crop solves only 23.74%.
+  The crop repeatedly loses the target and falls back to wide acquisition,
+  producing the long discontinuities that defeat the complete-history gate.
+- All autoaim B entry points now default to one native 6 mm focal profile.
+  Dual focal remains callable only as an explicit diagnostic override. Stage-3
+  capture makes the choice explicit and records it in the durable result; no
+  truth, focal-profile flag or crop state is added to any neural input.
+- Random capture parameters must describe an admissible full reciprocal path,
+  not merely an admissible initial distance. Keep a 0.5 m reserve under the
+  requested 7 m camera range, include the collection-only 0.10 s command lead,
+  and reject paths below 0.75 m forward or above 75 degrees horizontal yaw.
+  Rejection causes resampling; it never changes labels or network inference.
+- A new 1,050-frame fixed-6-mm smoke run at 4.4 m and 9 rad/s has no empty
+  observation frames and 99.90% target-3 coverage. This is a collection-path
+  acceptance test only and is excluded from training. The next dataset should
+  be recollected under these defaults before judging end-to-end availability
+  or changing Mapper/S/F/V66/V67.

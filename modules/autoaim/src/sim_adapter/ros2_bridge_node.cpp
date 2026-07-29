@@ -100,7 +100,7 @@ public:
             declare_parameter<double>("sim_pitch_neutral_deg", 65.0);
         config_.enable_fire = declare_parameter<bool>("enable_fire", true);
         config_.publish_no_target = declare_parameter<bool>("publish_no_target", true);
-        config_.dual_focal_enabled = declare_parameter<bool>("dual_focal_enabled", true);
+        config_.dual_focal_enabled = declare_parameter<bool>("dual_focal_enabled", false);
         config_.wide_focal_mm = declare_parameter<double>("wide_focal_mm", 6.0);
         config_.precision_focal_mm = declare_parameter<double>("precision_focal_mm", 16.0);
         config_.precision_enter_distance_m =

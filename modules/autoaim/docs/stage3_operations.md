@@ -46,6 +46,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File `
 前等待两条数据流就绪；模拟器、桥接器、Scene Control ACK 或写盘任一
 失败都会 fail-closed，失败 session 不得进入训练。
 
+Stage 3 与自瞄 B 默认固定使用原生 `wide_6mm` 全图，关闭 16 mm 虚拟
+裁切。`session_result.json` 必须记录 `camera_profile=wide_6mm` 和
+`dual_focal=false`。随机 manifest 可先加 `-ValidateManifestOnly` 做无副作用
+校验；runner 会拒绝初始距离大于 6.5 m，以及整段往返轨迹超出 7 m
+相机距离预留、进入云台后方或超过 75 度安全水平转角的样本。被拒绝的
+随机参数应重新采样，不得缩短采集时间来绕过门禁。
+
 ## 4. 正式 manifest 串行采集
 
 ```powershell

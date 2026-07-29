@@ -5,7 +5,8 @@ param(
     [int]$DurationSeconds = 30,
     [switch]$Visible,
     [switch]$RebuildBridge,
-    [switch]$DebugTelemetry
+    [switch]$DebugTelemetry,
+    [switch]$ValidateManifestOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,9 +24,56 @@ foreach ($field in $required) {
     if ($null -eq $manifestObject.$field) { throw "Manifest missing $field" }
 }
 if ($manifestObject.mode -notin @('stationary','linear','spin','linear_and_spin')) { throw 'Invalid Stage3 mode.' }
-if ([double]$manifestObject.distance_m -lt 1 -or [double]$manifestObject.distance_m -gt 8) { throw 'distance_m must be in [1,8].' }
+if ([double]$manifestObject.distance_m -lt 1 -or [double]$manifestObject.distance_m -gt 6.5) { throw 'distance_m must be in [1,6.5] so the camera-to-target range stays below 7 m.' }
 if ([double]$manifestObject.linear_speed_mps -lt 0 -or [double]$manifestObject.linear_speed_mps -gt 3) { throw 'linear_speed_mps must be in [0,3].' }
+if ([double]$manifestObject.linear_span_m -lt 0 -or [double]$manifestObject.linear_span_m -gt 8) { throw 'linear_span_m must be in [0,8].' }
 if ([math]::Abs([double]$manifestObject.spin_rad_s) -gt 15) { throw 'spin_rad_s must have abs <=15.' }
+
+function Assert-Stage3CaptureEnvelope($manifest) {
+    if ($manifest.mode -notin @('linear','linear_and_spin')) { return }
+
+    # Manifest distance is chassis-referenced while collection quality is
+    # camera-referenced. Keep a conservative 0.5 m reserve below the requested
+    # 7 m camera limit, and include the existing 0.10 s truth-velocity gimbal
+    # lead when checking both ends of the reciprocal path.
+    $distance = [double]$manifest.distance_m
+    $halfExtent = 0.5 * [double]$manifest.linear_span_m
+    $commandLeadExtent = 0.10 * [double]$manifest.linear_speed_mps
+    $extent = $halfExtent + $commandLeadExtent
+    $heading = [double]$manifest.direction_deg * [math]::PI / 180.0
+    $axisLateral = [math]::Sin($heading)
+    $axisForward = [math]::Cos($heading)
+    $maxNominalRangeM = 0.0
+    $minForwardM = [double]::PositiveInfinity
+    $maxAbsYawDeg = 0.0
+
+    foreach ($sign in @(-1.0, 1.0)) {
+        $lateral = $sign * $extent * $axisLateral
+        $forward = $distance + $sign * $extent * $axisForward
+        $range = [math]::Sqrt($lateral * $lateral + $forward * $forward)
+        $yawDeg = if ($forward -gt 0.0) {
+            [math]::Abs([math]::Atan2($lateral, $forward) * 180.0 / [math]::PI)
+        } else {
+            180.0
+        }
+        $maxNominalRangeM = [math]::Max($maxNominalRangeM, $range)
+        $minForwardM = [math]::Min($minForwardM, $forward)
+        $maxAbsYawDeg = [math]::Max($maxAbsYawDeg, $yawDeg)
+    }
+
+    if ($maxNominalRangeM -gt 6.5 -or $minForwardM -lt 0.75 -or $maxAbsYawDeg -gt 75.0) {
+        $message = 'Stage3 trajectory leaves the safe 6 mm capture envelope: ' +
+            'max_nominal_range_m={0:F3} (limit 6.5), min_forward_m={1:F3} (limit 0.75), ' +
+            'max_abs_yaw_deg={2:F3} (limit 75). Resample direction/distance/span.'
+        throw ($message -f $maxNominalRangeM, $minForwardM, $maxAbsYawDeg)
+    }
+}
+
+Assert-Stage3CaptureEnvelope $manifestObject
+if ($ValidateManifestOnly) {
+    Write-Output ('stage3_manifest_ok session={0} camera=wide_6mm dual_focal=false' -f [string]$manifestObject.session_id)
+    return
+}
 
 function Convert-ToWslPath([string]$path) {
     $savedEncoding = [Console]::OutputEncoding
@@ -159,7 +207,7 @@ Stop-StaleStage3LinuxBridges
 Assert-PortFree TCP ([int]$lock.simulator.tcp_image_port)
 Assert-PortFree UDP ([int]$lock.simulator.scene_control_port)
 $oldEnv = @{}
-foreach ($name in 'BEVY_ASSET_ROOT','TALOS_IPC_DIR','DAEDALUS_SCENE_CONTROL_BIND','DAEDALUS_SCENE_MODE','DAEDALUS_RANGE_ACTIVE_TARGET_NUMBER','DAEDALUS_RANGE_TARGET_DISTANCE_M','DAEDALUS_RANGE_TARGET3_INITIAL_YAW_RAD','DAEDALUS_RANGE_TARGET3_INITIAL_YAW_DEG','DAEDALUS_STATS_JSON','AIM_SIM_STAGE3_SESSION_ID','AIM_SIM_STAGE3_OBSERVATIONS','AIM_SIM_STAGE3_TRUTH','AIM_SIM_STAGE3_DISTANCE_M','AIM_SIM_STAGE3_TRUTH_GIMBAL','AIM_SIM_SCENE_CONTROL_MODE','AIM_SIM_SCENE_CONTROL_HOST','AIM_SIM_IMAGE_TRANSPORT','AIM_SIM_DEBUG_BRIDGE_JSON','AIM_SIM_DEBUG_BRIDGE_JSONL','AIM_SIM_DEBUG_PIPELINE_JSON','AIM_SIM_DEBUG_PIPELINE_JSONL','DAEDALUS_BRIDGE_TOKEN','AIM_SIM_ARMOR_ENGINE','DAEDALUS_PERF_DISABLE_UI','WGPU_BACKEND','DAEDALUS_PREVIEW_ENABLED','DAEDALUS_PREVIEW_MAX_HZ') {
+foreach ($name in 'BEVY_ASSET_ROOT','TALOS_IPC_DIR','DAEDALUS_SCENE_CONTROL_BIND','DAEDALUS_SCENE_MODE','DAEDALUS_RANGE_ACTIVE_TARGET_NUMBER','DAEDALUS_RANGE_TARGET_DISTANCE_M','DAEDALUS_RANGE_TARGET3_INITIAL_YAW_RAD','DAEDALUS_RANGE_TARGET3_INITIAL_YAW_DEG','DAEDALUS_STATS_JSON','AIM_SIM_STAGE3_SESSION_ID','AIM_SIM_STAGE3_OBSERVATIONS','AIM_SIM_STAGE3_TRUTH','AIM_SIM_STAGE3_DISTANCE_M','AIM_SIM_STAGE3_TRUTH_GIMBAL','AIM_SIM_DUAL_FOCAL','AIM_SIM_SCENE_CONTROL_MODE','AIM_SIM_SCENE_CONTROL_HOST','AIM_SIM_IMAGE_TRANSPORT','AIM_SIM_DEBUG_BRIDGE_JSON','AIM_SIM_DEBUG_BRIDGE_JSONL','AIM_SIM_DEBUG_PIPELINE_JSON','AIM_SIM_DEBUG_PIPELINE_JSONL','DAEDALUS_BRIDGE_TOKEN','AIM_SIM_ARMOR_ENGINE','DAEDALUS_PERF_DISABLE_UI','WGPU_BACKEND','DAEDALUS_PREVIEW_ENABLED','DAEDALUS_PREVIEW_MAX_HZ') {
     $oldEnv[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 $simulator = $null; $bridge = $null; $started = $false
@@ -196,6 +244,7 @@ export AIM_SIM_STAGE3_OBSERVATIONS='$obsWsl'
 export AIM_SIM_STAGE3_TRUTH='$truthWsl'
 export AIM_SIM_STAGE3_DISTANCE_M='$distance'
 export AIM_SIM_STAGE3_TRUTH_GIMBAL=1
+export AIM_SIM_DUAL_FOCAL=false
 export AIM_SIM_ARMOR_ENGINE='$(Convert-ToWslPath (Join-Path $workspace 'models\engines\armor.engine'))'
 export DAEDALUS_BRIDGE_TOKEN='$bridgeToken'
 $debugExports
@@ -251,7 +300,7 @@ exec bash scripts/run_talos_bridge_wsl.sh armor >'$(Convert-ToWslPath $bridgeLog
     }
     if (-not (Test-Path -LiteralPath $obsPath) -or (Get-Item -LiteralPath $obsPath).Length -eq 0) { throw 'Stage3 observation JSONL is missing or empty.' }
     if (-not (Test-Path -LiteralPath $truthPath) -or (Get-Item -LiteralPath $truthPath).Length -eq 0) { throw 'Stage3 truth JSONL is missing or empty.' }
-    [ordered]@{ session_id=[string]$manifestObject.session_id; control_session_id=$controlSessionId; duration_s=$DurationSeconds; observations=$obsPath; truth=$truthPath; debug_telemetry=[bool]$DebugTelemetry; scene_ack=($ack -join "`n") } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'session_result.json') -Encoding UTF8
+    [ordered]@{ session_id=[string]$manifestObject.session_id; control_session_id=$controlSessionId; duration_s=$DurationSeconds; observations=$obsPath; truth=$truthPath; camera_profile='wide_6mm'; dual_focal=$false; debug_telemetry=[bool]$DebugTelemetry; scene_ack=($ack -join "`n") } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $EvidenceRoot 'session_result.json') -Encoding UTF8
 } finally {
     Stop-LinuxBridgeByToken $bridgeToken
     if ($null -ne $bridge) { Stop-ProcessTree ([int]$bridge.Id) }
