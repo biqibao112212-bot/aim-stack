@@ -43,6 +43,79 @@ function Convert-Stage3Int64Scalar($value, [string]$name) {
     catch { throw "$name is not a valid Int64: $($items[0])" }
 }
 
+function Get-Stage3LatestCompleteTruthTimestamp([string]$path) {
+    # A JSONL record is committed only by its trailing LF. Snapshot the file
+    # length once, discard any unterminated append fragment, and decode exactly
+    # the last committed record in file order. Never fall back past a corrupt
+    # committed line.
+    $stream = [IO.File]::Open(
+        $path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::ReadWrite
+    )
+    try {
+        $snapshotLength = [long]$stream.Length
+        if ($snapshotLength -le 0) { throw 'Truth JSONL is empty.' }
+        $windowLength = [int][Math]::Min([long](1024 * 1024), $snapshotLength)
+        $windowOffset = $snapshotLength - $windowLength
+        [void]$stream.Seek($windowOffset, [IO.SeekOrigin]::Begin)
+        $buffer = New-Object byte[] $windowLength
+        $bytesRead = 0
+        while ($bytesRead -lt $windowLength) {
+            $count = $stream.Read($buffer, $bytesRead, $windowLength - $bytesRead)
+            if ($count -eq 0) { break }
+            $bytesRead += $count
+        }
+        if ($bytesRead -ne $windowLength) {
+            throw "Truth JSONL snapshot was truncated while reading ($bytesRead/$windowLength bytes)."
+        }
+    } finally {
+        $stream.Dispose()
+    }
+
+    $recordEnd = -1
+    for ($index = $bytesRead - 1; $index -ge 0; $index--) {
+        if ($buffer[$index] -eq 10) { $recordEnd = $index; break }
+    }
+    if ($recordEnd -lt 0) { throw 'Truth JSONL has no LF-committed record in its final 1 MiB.' }
+    $recordStart = 0
+    for ($index = $recordEnd - 1; $index -ge 0; $index--) {
+        if ($buffer[$index] -eq 10) { $recordStart = $index + 1; break }
+    }
+    if ($recordStart -eq 0 -and $windowOffset -ne 0) {
+        throw 'The final committed truth record exceeds the 1 MiB validation window.'
+    }
+    $recordLength = $recordEnd - $recordStart
+    if ($recordLength -gt 0 -and $buffer[$recordEnd - 1] -eq 13) { $recordLength-- }
+    if ($recordLength -le 0) { throw 'The final committed truth JSONL record is empty.' }
+
+    $strictUtf8 = New-Object Text.UTF8Encoding($false, $true)
+    try { $recordText = $strictUtf8.GetString($buffer, $recordStart, $recordLength) }
+    catch { throw 'The final committed truth JSONL record is not valid UTF-8.' }
+    try { $candidateTruth = $recordText | ConvertFrom-Json -ErrorAction Stop }
+    catch { throw 'The final committed truth JSONL record is not valid JSON.' }
+    if ($candidateTruth -isnot [pscustomobject]) {
+        throw 'The final committed truth JSONL record must be a JSON object.'
+    }
+    $timestampProperty = $candidateTruth.PSObject.Properties['timestamp_ns']
+    if ($null -eq $timestampProperty) {
+        throw 'The final committed truth JSONL record is missing timestamp_ns.'
+    }
+    $timestampValue = $timestampProperty.Value
+    $integerTypeCodes = @(
+        [TypeCode]::SByte, [TypeCode]::Byte,
+        [TypeCode]::Int16, [TypeCode]::UInt16,
+        [TypeCode]::Int32, [TypeCode]::UInt32,
+        [TypeCode]::Int64, [TypeCode]::UInt64
+    )
+    if ($null -eq $timestampValue -or
+        [Type]::GetTypeCode($timestampValue.GetType()) -notin $integerTypeCodes) {
+        throw 'truth.timestamp_ns must be an integer scalar JSON value.'
+    }
+    return Convert-Stage3Int64Scalar $timestampValue 'truth.timestamp_ns'
+}
+
 $distanceM = Convert-Stage3FiniteDouble $manifestObject.distance_m 'distance_m'
 $initialYawRad = Convert-Stage3FiniteDouble $manifestObject.initial_yaw_rad 'initial_yaw_rad'
 if ($distanceM -lt 1 -or $distanceM -gt 6.5) {
@@ -494,11 +567,21 @@ exec bash scripts/run_talos_bridge_wsl.sh armor >'$(Convert-ToWslPath $bridgeLog
             scene_ack = $ack.raw_stdout
         }
     }
+    # Stop the sole JSONL writer before snapshotting and sealing the result.
+    # The finally block remains an idempotent fallback for all failure paths.
+    Stop-LinuxBridgeByToken $bridgeToken
+    if ($null -ne $bridge) {
+        if (-not $bridge.HasExited -and -not $bridge.WaitForExit(5000)) {
+            Stop-ProcessTree ([int]$bridge.Id)
+            [void]$bridge.WaitForExit(5000)
+        }
+        if (-not $bridge.HasExited) { throw 'Stage3 bridge did not stop before result sealing.' }
+        $bridge.Dispose()
+        $bridge = $null
+    }
     if (-not (Test-Path -LiteralPath $obsPath) -or (Get-Item -LiteralPath $obsPath).Length -eq 0) { throw 'Stage3 observation JSONL is missing or empty.' }
     if (-not (Test-Path -LiteralPath $truthPath) -or (Get-Item -LiteralPath $truthPath).Length -eq 0) { throw 'Stage3 truth JSONL is missing or empty.' }
-    $lastTruthLine = Get-Content -LiteralPath $truthPath -Tail 1 -Encoding UTF8
-    $lastTruth = $lastTruthLine | ConvertFrom-Json
-    $captureEndTimestampNs = Convert-Stage3Int64Scalar $lastTruth.timestamp_ns 'truth.timestamp_ns'
+    $captureEndTimestampNs = Get-Stage3LatestCompleteTruthTimestamp $truthPath
     $lastAckTimestampNs = Convert-Stage3Int64Scalar $segmentResults[-1].applied_timestamp_ns 'last_motion_ack.applied_timestamp_ns'
     if ($captureEndTimestampNs -le $lastAckTimestampNs) {
         throw 'Final truth timestamp does not extend beyond the final motion ACK.'

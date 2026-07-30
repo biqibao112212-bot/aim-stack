@@ -2096,3 +2096,27 @@
 - All subsequent compute remains local in the Windows `yolov8` CUDA
   environment. The rented RTX 3090 instance stays powered off but retained and
   must not be released.
+
+## 2026-07-30 decision 169: formal capture source changes require a full recapture
+
+- The first source-bound formal capture (`stage3-multistate-fixed6mm-20260730-v1`)
+  accepted four sessions before the batch was stopped. While the bridge was
+  appending the exact-truth JSONL, Windows PowerShell could return two pipeline
+  objects for `Get-Content -Tail 1`; piping both through `ConvertFrom-Json`
+  produced an object array and made scalar timestamp validation fail. The raw
+  JSONL records themselves remained individually valid and ordered.
+- Final result sealing must stop and join the bridge writer, snapshot the truth
+  file length and parse only the file-order last LF-committed record. Bytes
+  after the last LF are an uncommitted append fragment; malformed committed
+  UTF-8/JSON or a `timestamp_ns` that is absent, non-scalar, non-integer or
+  outside Int64 remains a hard error with no fallback to an older record. The
+  committed timestamp must still extend beyond the final motion ACK. This
+  changes only consumer capture orchestration and does not modify the
+  simulator, SDK or Release.
+- The v1 capture root, contract, logs, four accepted session results and all
+  failed raw attempts are protected diagnostic evidence. They are neither
+  deleted nor admitted to training. Because the formal contract binds the
+  source commit, the repaired runner requires a new v2 contract and a complete
+  24-session recapture; no pre-fix result is carried across the source boundary.
+- The rented RTX 3090 remains powered off and retained. Capture, derivation and
+  training continue locally in the Windows `yolov8` environment.

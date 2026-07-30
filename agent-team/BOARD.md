@@ -1301,7 +1301,17 @@
   that run and restarts the whole session under a new run/control identity.
   Before capture, freeze the exact 24-session/12-segment/3-second manifest SHA
   and 14/5/5 split hash with the formal capture contract. All 421 Stage3 tests
-  and both boundary checks must pass before the formal capture.
+  and both boundary checks passed before the first formal capture. Formal v1
+  was stopped after four accepted sessions and one interrupted fifth session:
+  the still-running bridge could make `Get-Content -Tail 1` yield two complete
+  truth records while the result was sealed. The complete v1 root is retained
+  as protected diagnostic evidence and is not eligible for training. The
+  consumer runner now stops the bridge writer before sealing and parses only
+  the file-order last LF-committed truth record from a fixed-length snapshot.
+  An unterminated append fragment is excluded; malformed committed JSON or a
+  non-integer timestamp fails closed. After regression and clean-commit validation, freeze a
+  new source-bound v2 contract and recapture all 24 sessions from scratch; do
+  not reuse the four v1 results under the new source commit.
 - [ ] After coverage audit, derive truth-history, observation, causal-physical
   and observed-stream PnP/SF artifacts without opening the formal test split.
   Do not count planned segments as coverage: emit a per-segment survival table
