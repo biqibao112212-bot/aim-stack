@@ -3,9 +3,16 @@ from __future__ import annotations
 import copy
 
 import numpy as np
+import pytest
 
 from training.stage3.build_observable_future_pnp_upper_bound_dataset import (
     _assert_clean_replay,
+    _assert_segment_audit_join,
+    _consume_exact_row,
+    _key_index,
+)
+from training.stage3.build_observable_future_pnp_sf_upper_bound_dataset import (
+    _assert_sf_segment_bounds,
 )
 from training.stage3.observable_future_dataset import DEFAULT_CANDIDATE_STEPS
 from training.stage3.observable_future_pnp_upper_bound import (
@@ -101,6 +108,55 @@ def _fixture() -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
         "anchor_tracker_to_world_rotation": np.eye(3, dtype=np.float64),
     }
     return clean, inputs
+
+
+def _segment_audit_fixture() -> dict[str, np.ndarray]:
+    return {
+        "motion_command_epoch": np.asarray([3], dtype=np.int64),
+        "motion_segment_start_ns": np.asarray([1_000_000], dtype=np.int64),
+        "motion_segment_end_ns": np.asarray([10_000_000], dtype=np.int64),
+        "history_start_ns": np.asarray([1_002_000], dtype=np.int64),
+        "future_end_ns": np.asarray([9_997_999], dtype=np.int64),
+        "window_constant_motion": np.asarray([True], dtype=np.bool_),
+        "rule_query": np.ones((1, 4), dtype=np.bool_),
+    }
+
+
+def test_segment_audit_join_is_exact_and_fail_closed() -> None:
+    source = _segment_audit_fixture()
+    peer = {name: value.copy() for name, value in source.items()}
+    assert _assert_segment_audit_join(source, 0, (("peer", peer, 0),))
+    peer["motion_command_epoch"][0] = 4
+    with pytest.raises(ValueError, match="motion_command_epoch"):
+        _assert_segment_audit_join(source, 0, (("peer", peer, 0),))
+    missing = {name: value.copy() for name, value in source.items()}
+    missing.pop("motion_segment_end_ns")
+    with pytest.raises(ValueError, match="missing"):
+        _assert_segment_audit_join(source, 0, (("peer", missing, 0),))
+
+
+def test_observable_clean_join_uses_exact_key_not_row_order() -> None:
+    arrays = {
+        "session_id": np.asarray(["s", "s"]),
+        "t0_ns": np.asarray([20, 10], dtype=np.int64),
+    }
+    index = _key_index(arrays, "observable-clean")
+    consumed: set[tuple[str, int]] = set()
+    assert _consume_exact_row(index, ("s", 10), consumed, "observable-clean") == 1
+    assert _consume_exact_row(index, ("s", 20), consumed, "observable-clean") == 0
+    with pytest.raises(ValueError, match="missing exact"):
+        _consume_exact_row(index, ("s", 30), consumed, "observable-clean")
+    with pytest.raises(ValueError, match="consumed twice"):
+        _consume_exact_row(index, ("s", 10), consumed, "observable-clean")
+
+
+def test_sf_last_32_events_must_stay_inside_the_segment() -> None:
+    source = _segment_audit_fixture()
+    timestamps = np.linspace(1_002_000, 9_000_000, 32, dtype=np.int64)
+    assert _assert_sf_segment_bounds(source, 0, timestamps)
+    timestamps[0] = 1_001_999
+    with pytest.raises(ValueError, match="last-32"):
+        _assert_sf_segment_bounds(source, 0, timestamps)
 
 
 def test_rebase_tracker_points_uses_event_and_anchor_poses() -> None:

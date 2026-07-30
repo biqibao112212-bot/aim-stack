@@ -2016,3 +2016,83 @@
   conditional/hard future errors and session macro. Ten focused v5 tests and
   all 406 Stage3 tests pass before CUDA work begins. The rented RTX 3090 stays
   shut down but retained; v5 runs locally in the Windows `yolov8` environment.
+
+## 2026-07-30 decision 168: break the session shortcut with ACK-bound multistate data
+
+- The completed v5 endpoint isolates the remaining failure. Train versus
+  heldout physical-state error is 0.155 versus 0.950 m/s for velocity and 0.46
+  versus 6.984 rad/s for yaw rate. Heldout conditional future Mean is 267.53
+  mm, but the identical learned decoder reaches 141.74 mm when evaluated with
+  truth state. More v5 epochs, loss-weight tuning and another small encoder
+  edit are rejected; the next controlled variable is the data distribution.
+- Existing captures bind almost every session to one active `(v,omega)` state
+  plus startup stationary frames. V5 can therefore map session-specific PnP,
+  range and phase fingerprints to the label without learning a reusable
+  motion estimator. The new formal capture keeps distance, 6 mm camera and
+  environment fixed within a session while applying 12 independently sampled
+  continuous motion blocks. There are 12 rotation-family and 12 combined-
+  family sessions, one stationary block per session, continuous signed omega,
+  and continuous direction/speed/span values inside the existing 6 mm safety
+  envelope.
+- This is a consumer-orchestration change using the locked Scene Control v1
+  SDK, not a simulator change. One control session is created once. Segment
+  zero uses `--stage3`; later segments use `--stage3-update` and only call
+  `setRangeTargetMotion`. The simulator repository, SDK and Release remain
+  read-only, so `SIMULATOR_CHANGE_APPROVAL_REQUIRED` is not triggered.
+- Every successful motion ACK creates a consumer-owned monotonically numbered
+  `motion_command_epoch`. `applied_frame_seq` and `applied_timestamp_ns` must
+  increase; SDK `command_id` is recorded but is client-local and may restart
+  because every CLI invocation creates a new SDK client. Segment intervals are
+  half-open `[ack_timestamp,next_ack_timestamp)`, with the final end bound by
+  the last exact truth frame. Results are reusable only when the captured
+  manifest hash, segment count and complete ACK plan match exactly.
+- Scene Control v1 has no idempotency token, so an update is attempted exactly
+  once inside a control session. A command/ACK failure invalidates the entire
+  run; only the outer runner may recapture the session from a fresh simulator,
+  raw run directory and control-session identity. The formal capture is frozen
+  before execution: exactly 24 sessions (12 rotation, 12 combined), 12 segments
+  per session (1 stationary, 11 active), 3 seconds per segment, wide 6 mm only,
+  plus immutable manifest SHA and 14/5/5 session split hash. The dataset builder
+  must bind that capture-contract SHA and exact split.
+- The v2 dataset builder admits a row only when its entire retained observation
+  history and every matched future query lie inside one epoch. Exact truth must
+  also satisfy constant velocity, constant yaw rate, constant-twist position/
+  yaw residual and producer/target/geometry identity across the full history-
+  to-future interval. This is row rejection, not query masking. It rejects a
+  boundary even when adjacent commands have identical numeric parameters.
+  Segment metadata is audit-only and is explicitly excluded from model forward.
+- Motion class belongs to the active ACK segment, not the session's rotation or
+  combined family. The stationary control block is class 0 and is intentionally
+  excluded by the unchanged first v5 A/B loader, while the eleven active
+  continuous states per session provide the anti-shortcut supervision. A 2 us
+  history/future boundary guard protects later float event-time reconstruction.
+  Segment epoch/start/end, full-window bounds, constant-motion flag and complete
+  rule-query mask are hash-bound and exact-joined through observable-clean,
+  paired PnP and PnP/SF datasets; the S/F last 32 events must also remain inside
+  the same segment. Derived manifests record zero join mismatches and the source
+  manifest hash. These audit tensors remain outside every model forward input.
+- Planned segment count is not acceptance evidence. Before the v5 A/B, produce
+  actual per-segment survival counts through base, truth-history, observable,
+  paired PnP and PnP/SF data; each heldout session must retain at least 8 of 11
+  active segments. Raw records must be scanned for wide_6mm-only provenance.
+  Report state and final-position metrics separately for rotation and combined;
+  include a session/nuisance-only shortcut baseline and session-bootstrap
+  uncertainty so aggregate window counts cannot hide a remaining shortcut.
+- A 2-session, 4-segment native smoke verified init/update ordering, stream
+  growth, strictly increasing ACK frame/time, crash-safe result hashing and
+  deterministic rerun skipping. Its strict tensorization admitted 60 rotation
+  and 16 combined samples from intentionally short 1-second blocks; the
+  formal 3-second blocks provide larger stable interiors. The smoke dataset is
+  diagnostic and not a formal training source. All 412 Stage3 tests, the WSL
+  consumer CLI build, architecture check and consumer-boundary check pass.
+- The first retraining A/B freezes the exact v5 architecture, loss, update
+  counts, initialization policy and Mapper/S/H checkpoints. Predeclared
+  heldout targets are velocity error <=0.35 m/s, yaw-rate error <=1.5 rad/s,
+  normalized state error <=0.08, conditional future Mean <=190 mm, predicted-
+  state versus truth-state conditional gap <=40 mm, and combined modulo-four
+  role accuracy >=55%. Failure of state metrics redirects work to explicit
+  multi-scale robust state estimation; success with a remaining decoder gap
+  redirects work to the decoder/role selector.
+- All subsequent compute remains local in the Windows `yolov8` CUDA
+  environment. The rented RTX 3090 instance stays powered off but retained and
+  must not be released.

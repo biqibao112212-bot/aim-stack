@@ -20,9 +20,11 @@ from typing import Any
 import numpy as np
 
 from .build_observable_future_dataset import (
+    SEGMENT_AUDIT_FIELDS,
     _dense_times,
     _rollout_dense_truth,
 )
+from .dataset import MOTION_SEGMENT_TIME_GUARD_NS
 from .build_truth_history_dataset import (
     _load_jsonl,
     _nearest_indices,
@@ -73,6 +75,18 @@ def _key_index(arrays: dict[str, np.ndarray], label: str) -> dict[tuple[str, int
     return result
 
 
+def _consume_exact_row(
+    index: dict[tuple[str, int], int], key: tuple[str, int],
+    consumed: set[tuple[str, int]], label: str,
+) -> int:
+    if key not in index:
+        raise ValueError(f"{label} is missing exact sample key: {key}")
+    if key in consumed:
+        raise ValueError(f"{label} sample key was consumed twice: {key}")
+    consumed.add(key)
+    return int(index[key])
+
+
 def _assert_clean_replay(
     replayed: dict[str, np.ndarray], clean: dict[str, np.ndarray], clean_index: int
 ) -> None:
@@ -88,6 +102,40 @@ def _pair_id(session_id: str, t0_ns: int) -> str:
     return hashlib.sha256(f"{session_id}:{int(t0_ns)}".encode("utf-8")).hexdigest()
 
 
+def _assert_segment_audit_join(
+    source: dict[str, np.ndarray], source_row: int,
+    peers: tuple[tuple[str, dict[str, np.ndarray], int], ...],
+) -> bool:
+    """Fail closed when an ACK-bound row loses or changes segment provenance."""
+    if "motion_command_epoch" not in source:
+        return False
+    required = (*SEGMENT_AUDIT_FIELDS, "rule_query")
+    for name in required:
+        if name not in source:
+            raise ValueError(f"multistate source is missing segment field: {name}")
+    for label, arrays, row in peers:
+        for name in required:
+            if name not in arrays:
+                raise ValueError(f"{label} is missing multistate segment field: {name}")
+            if not np.array_equal(source[name][source_row], arrays[name][row]):
+                raise ValueError(f"multistate segment join differs: {label}/{name}")
+    if (
+        not bool(source["window_constant_motion"][source_row])
+        or not bool(np.all(source["rule_query"][source_row]))
+    ):
+        raise ValueError("multistate row is not a fully valid constant-motion window")
+    start_ns = int(source["motion_segment_start_ns"][source_row])
+    end_ns = int(source["motion_segment_end_ns"][source_row])
+    history_start_ns = int(source["history_start_ns"][source_row])
+    future_end_ns = int(source["future_end_ns"][source_row])
+    if (
+        history_start_ns - start_ns < MOTION_SEGMENT_TIME_GUARD_NS
+        or end_ns - 1 - future_end_ns < MOTION_SEGMENT_TIME_GUARD_NS
+    ):
+        raise ValueError("multistate row violates the motion-segment time guard")
+    return True
+
+
 def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
     source = _load_npz(Path(task["source_shard"]))
     truth = _load_npz(Path(task["truth_shard"]))
@@ -95,6 +143,8 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
     clean = _load_npz(Path(task["clean_shard"]))
     truth_index = _key_index(truth, "truth-history")
     observation_index = _key_index(observation, "observation")
+    clean_key_index = _key_index(clean, "observable-clean")
+    consumed_clean_keys: set[tuple[str, int]] = set()
 
     frames = _parse_truth(Path(task["raw_truth_path"]), str(task["raw_truth_sha256"]))
     timestamps = np.asarray([frame.timestamp_ns for frame in frames], dtype=np.int64)
@@ -102,7 +152,6 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("raw truth timestamps are not strictly increasing")
 
     paired: list[dict[str, np.ndarray]] = []
-    clean_index = 0
     maximum_rollout_error_m = 0.0
     for source_index, (session_raw, t0_raw) in enumerate(zip(
         source["session_id"], source["t0_ns"]
@@ -120,7 +169,6 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             source["event_time_s"][source_index], observation["event_time_s"][observation_row]
         ):
             raise ValueError(f"paired event times differ: {key}")
-
         tau = source["tau"][source_index].astype(np.float32, copy=False)
         zero = np.flatnonzero(tau == 0.0)
         if zero.size < 1:
@@ -168,13 +216,22 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             )
         except ValueError:
             continue
-        if clean_index >= int(clean["motion_class"].shape[0]):
-            raise ValueError("observable-r6 replay produced extra samples")
-        _assert_clean_replay(clean_replay, clean, clean_index)
+        clean_row = _consume_exact_row(
+            clean_key_index, key, consumed_clean_keys, "observable-clean"
+        )
+        _assert_clean_replay(clean_replay, clean, clean_row)
         if int(source["motion_class"][source_index]) != int(
-            clean["motion_class"][clean_index]
+            clean["motion_class"][clean_row]
         ):
             raise ValueError("clean replay motion class differs")
+        segment_audited = _assert_segment_audit_join(
+            source, source_index,
+            (
+                ("truth-history", truth, truth_row),
+                ("observation", observation, observation_row),
+                ("observable-clean", clean, clean_row),
+            ),
+        )
 
         valid_events = np.flatnonzero(
             source["event_mask"][source_index]
@@ -243,17 +300,22 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         )
         row = {key: value.copy() for key, value in pnp.items()}
         row["motion_class"] = np.asarray(
-            clean["motion_class"][clean_index], dtype=np.int64
+            clean["motion_class"][clean_row], dtype=np.int64
         )
         row["session_id"] = np.asarray(session_id)
         row["t0_ns"] = np.asarray(t0_ns, dtype=np.int64)
         row["pair_id"] = np.asarray(_pair_id(session_id, t0_ns))
+        if segment_audited:
+            row["rule_query"] = source["rule_query"][source_index].astype(
+                np.bool_, copy=True
+            )
+            for name in SEGMENT_AUDIT_FIELDS:
+                row[name] = np.asarray(source[name][source_index]).copy()
         paired.append(row)
-        clean_index += 1
 
-    if clean_index != int(clean["motion_class"].shape[0]):
+    if len(consumed_clean_keys) != int(clean["motion_class"].shape[0]):
         raise ValueError(
-            f"observable-r6 replay count mismatch: {clean_index} != "
+            f"observable-r6 replay key coverage mismatch: {len(consumed_clean_keys)} != "
             f"{clean['motion_class'].shape[0]}"
         )
     if not paired:
@@ -308,6 +370,9 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             for code in range(4)
         },
         "maximum_rollout_error_m": maximum_rollout_error_m,
+        "segment_audited_sample_count": (
+            len(paired) if "motion_command_epoch" in arrays else 0
+        ),
         "sha256": _sha256(output_path),
         "bytes": output_path.stat().st_size,
     }
@@ -497,6 +562,19 @@ def build(args: argparse.Namespace) -> Path:
     future_coherent_count = sum(
         int(item["future_label_coherent_count"]) for item in results
     )
+    segment_audited_count = sum(
+        int(item["segment_audited_sample_count"]) for item in results
+    )
+    if segment_audited_count not in {0, sample_count}:
+        raise ValueError("paired PnP dataset mixes ACK-audited and legacy rows")
+    segment_audit_enabled = segment_audited_count == sample_count
+    formal_segment_audit_required = bool(
+        clean_manifest.get("segment_audit", {}).get(
+            "required_by_capture_contract", False
+        ) or "capture_contract_sha256" in clean_manifest
+    )
+    if formal_segment_audit_required and not segment_audit_enabled:
+        raise ValueError("frozen multistate paired PnP data lost segment audit provenance")
     failure_code_count = {
         str(code): sum(
             int(item["failure_code_count"][str(code)]) for item in results
@@ -517,6 +595,18 @@ def build(args: argparse.Namespace) -> Path:
         "truth_s_candidates": True,
         "future_truth_in_model_input": False,
         "physical_identity_exported": False,
+        "segment_audit": {
+            "enabled": segment_audit_enabled,
+            "required_by_capture_contract": formal_segment_audit_required,
+            "fields": list(SEGMENT_AUDIT_FIELDS),
+            "source": str(source_dir),
+            "source_manifest_sha256": _sha256(source_manifest_path),
+            "audited_sample_count": segment_audited_count,
+            "join_mismatch_count": 0,
+            "window_constant_motion_required": segment_audit_enabled,
+            "all_rule_query_required": segment_audit_enabled,
+            "time_guard_ns": MOTION_SEGMENT_TIME_GUARD_NS,
+        },
         "strict_complete_32_event_history": False,
         "observed_primary_stream": True,
         "history_admission_policy": (
@@ -549,6 +639,10 @@ def build(args: argparse.Namespace) -> Path:
         ),
         "clean_dataset": str(clean_dir),
         "clean_dataset_manifest_sha256": _sha256(clean_manifest_path),
+        **({
+            "capture_contract": str(clean_manifest["capture_contract"]),
+            "capture_contract_sha256": str(clean_manifest["capture_contract_sha256"]),
+        } if "capture_contract_sha256" in clean_manifest else {}),
         "causal_physical_dataset": str(source_dir),
         "causal_physical_manifest_sha256": _sha256(source_manifest_path),
         "truth_history_dataset": str(truth_dir),

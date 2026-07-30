@@ -21,6 +21,7 @@ from typing import Any
 import numpy as np
 
 from .build_observable_future_pnp_upper_bound_dataset import (
+    _assert_segment_audit_join,
     _key_index,
     _load_npz,
     _one_session_map,
@@ -28,6 +29,8 @@ from .build_observable_future_pnp_upper_bound_dataset import (
     _sha256,
     _write_json,
 )
+from .build_observable_future_dataset import SEGMENT_AUDIT_FIELDS
+from .dataset import MOTION_SEGMENT_TIME_GUARD_NS
 from .build_truth_history_dataset import (
     _load_jsonl,
     _nearest_indices,
@@ -63,6 +66,24 @@ def _window_relabel(pair_id: str) -> tuple[int, bool]:
     return value % 4, bool((value >> 2) & 1)
 
 
+def _assert_sf_segment_bounds(
+    source: dict[str, np.ndarray], source_row: int, event_timestamps: np.ndarray,
+) -> bool:
+    if "motion_command_epoch" not in source:
+        return False
+    segment_start_ns = int(source["motion_segment_start_ns"][source_row])
+    segment_end_ns = int(source["motion_segment_end_ns"][source_row])
+    if (
+        event_timestamps.size != 32
+        or int(event_timestamps.min())
+        < segment_start_ns + MOTION_SEGMENT_TIME_GUARD_NS
+        or int(event_timestamps.max()) >= segment_end_ns
+        or int(source["future_end_ns"][source_row]) >= segment_end_ns
+    ):
+        raise ValueError("S/F last-32 history or future leaves its motion segment")
+    return True
+
+
 def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
     parent = _load_npz(Path(task["parent_shard"]))
     source = _load_npz(Path(task["source_shard"]))
@@ -95,6 +116,14 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         source_row = source_index[key]
         truth_row = truth_index[key]
         observation_row = observation_index[key]
+        segment_audited = _assert_segment_audit_join(
+            source, source_row,
+            (
+                ("truth-history", truth, truth_row),
+                ("observation", observation, observation_row),
+                ("paired-pnp-parent", parent, parent_row),
+            ),
+        )
         event_time = source["event_time_s"][source_row]
         if not np.array_equal(event_time, truth["event_time_s"][truth_row]) or not np.array_equal(
             event_time, observation["event_time_s"][observation_row]
@@ -111,6 +140,8 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         event_timestamps = t0_ns + np.rint(
             selected_time.astype(np.float64) * 1e9
         ).astype(np.int64)
+        if segment_audited:
+            _assert_sf_segment_bounds(source, source_row, event_timestamps)
         event_frame_index, event_error_ns = _nearest_indices(timestamps, event_timestamps)
         anchor_frame_index, anchor_error_ns = _nearest_indices(
             timestamps, np.asarray([t0_ns], dtype=np.int64)
@@ -304,6 +335,9 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "associated_primary_count": associated_primary_count,
         "ambiguous_event_count": ambiguous_event_count,
         "pruned_candidate_count": pruned_candidate_count_total,
+        "segment_audited_sample_count": (
+            len(rows) if "motion_command_epoch" in arrays else 0
+        ),
         "sha256": _sha256(output_path),
         "bytes": output_path.stat().st_size,
     }
@@ -438,6 +472,19 @@ def build(args: argparse.Namespace) -> Path:
     associated_primary = sum(int(item["associated_primary_count"]) for item in results)
     ambiguous_events = sum(int(item["ambiguous_event_count"]) for item in results)
     pruned_candidates = sum(int(item["pruned_candidate_count"]) for item in results)
+    segment_audited_count = sum(
+        int(item["segment_audited_sample_count"]) for item in results
+    )
+    if segment_audited_count not in {0, sample_count}:
+        raise ValueError("PnP/SF dataset mixes ACK-audited and legacy rows")
+    segment_audit_enabled = segment_audited_count == sample_count
+    formal_segment_audit_required = bool(
+        parent_manifest.get("segment_audit", {}).get(
+            "required_by_capture_contract", False
+        ) or "capture_contract_sha256" in parent_manifest
+    )
+    if formal_segment_audit_required and not segment_audit_enabled:
+        raise ValueError("frozen multistate PnP/SF data lost segment audit provenance")
     manifest = {
         "schema_version": SCHEMA_VERSION,
         "experiment_kind": EXPERIMENT_KIND,
@@ -451,6 +498,19 @@ def build(args: argparse.Namespace) -> Path:
         "observed_primary_stream": True,
         "future_truth_in_model_input": False,
         "physical_identity_exported": False,
+        "segment_audit": {
+            "enabled": segment_audit_enabled,
+            "required_by_capture_contract": formal_segment_audit_required,
+            "fields": list(SEGMENT_AUDIT_FIELDS),
+            "source": str(source_dir),
+            "source_manifest_sha256": _sha256(manifest_paths["source"]),
+            "audited_sample_count": segment_audited_count,
+            "join_mismatch_count": 0,
+            "window_constant_motion_required": segment_audit_enabled,
+            "all_rule_query_required": segment_audit_enabled,
+            "last_32_inside_segment_required": segment_audit_enabled,
+            "time_guard_ns": MOTION_SEGMENT_TIME_GUARD_NS,
+        },
         "handle_identity": "window-local C4-shifted and optionally direction-reversed",
         "mandatory_anonymization": "pair-id hash C4 origin plus direction reversal",
         "pnp_feature_contract": "xyz and validity only",
@@ -463,6 +523,10 @@ def build(args: argparse.Namespace) -> Path:
         ),
         "parent_paired_dataset": str(parent_dir),
         "parent_paired_manifest_sha256": _sha256(parent_manifest_path),
+        **({
+            "capture_contract": str(parent_manifest["capture_contract"]),
+            "capture_contract_sha256": str(parent_manifest["capture_contract_sha256"]),
+        } if "capture_contract_sha256" in parent_manifest else {}),
         "causal_physical_dataset": str(source_dir),
         "causal_physical_manifest_sha256": _sha256(manifest_paths["source"]),
         "truth_history_dataset": str(truth_dir),

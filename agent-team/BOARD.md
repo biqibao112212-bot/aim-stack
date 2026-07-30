@@ -1274,17 +1274,43 @@
   combined is 202.11/217.92 mm. Removing raw origins alone therefore does not
   create a stable motion law, and deleting phase information wholesale hurts
   rotation. More v4 epochs are not authorized.
-- [ ] Active: train v5 through an explicit supervised physical-motion
-  bottleneck. A pure-increment history encoder predicts tracker/chassis
-  `[vx,vy,vz,physical_yaw_rate]`; physical truth is joined exactly by
-  `(split,session_id,t0_ns)` and enters loss/metrics only. The learned future
-  decoder and selector can read only the predicted 4D state, S-owned q0
-  relative geometry/support and query time. They cannot read the high-
-  dimensional temporal state, session, motion class, ID or truth. State,
-  trajectory, selector and decoder-joint stages keep the state encoder frozen
-  outside its own stage; future loss always sees a detached predicted state.
-  Ten focused v5 tests and all 406 Stage3 tests pass. Run local CUDA capacity
-  and exact recovery gates before one fixed full endpoint.
+- [x] Complete the fixed v5 endpoint and ballistic evaluation locally. The
+  state/decoder isolation, frozen hashes and recovery contract pass, but the
+  endpoint is rejected as a cross-session state-estimation failure: train vs
+  heldout velocity error is 0.155/0.950 m/s and yaw-rate error is 0.46/6.984
+  rad/s. Heldout conditional future Mean is 267.53 mm, while the same decoder
+  supplied with truth state reaches 141.74 mm. The decoder is reusable enough
+  for the next A/B; the history-to-4D state path is the current bottleneck.
+- [ ] Active: collect a fixed-6-mm multistate dataset that breaks the
+  session-to-motion shortcut. Each session keeps distance/camera/environment
+  fixed but applies 12 ACK-bound continuous random motion segments, including
+  one stationary block. The consumer reuses one Scene Control session: the
+  first command initializes it and later commands update only target motion.
+  Every admitted sample must keep all retained history and all future queries
+  inside one ACK half-open interval and pass constant velocity/yaw truth over
+  the complete window. Motion class is taken from the active segment, not the
+  session family; stationary blocks therefore remain stationary and are not
+  silently relabelled as rotation/combined. A 2 us guard protects both segment
+  boundaries against float timestamp reconstruction. Segment epoch/start/end,
+  full-window truth and rule-query audit fields are preserved and checked
+  exactly through observable-clean, paired PnP and PnP/SF derivatives. The
+  2-session end-to-end smoke passed and the strict
+  builder retained 60 rotation and 16 combined samples from 1-second blocks;
+  formal blocks use 3 seconds. Scene Control updates are never retried inside
+  one control session because v1 has no idempotency token; any failure discards
+  that run and restarts the whole session under a new run/control identity.
+  Before capture, freeze the exact 24-session/12-segment/3-second manifest SHA
+  and 14/5/5 split hash with the formal capture contract. All 421 Stage3 tests
+  and both boundary checks must pass before the formal capture.
+- [ ] After coverage audit, derive truth-history, observation, causal-physical
+  and observed-stream PnP/SF artifacts without opening the formal test split.
+  Do not count planned segments as coverage: emit a per-segment survival table
+  through the PnP/SF parent and require at least 8/11 active segments with
+  samples in every heldout session. Scan raw camera profile per frame and fail
+  any non-wide-6mm/dual-focal evidence before training.
+  Retrain the exact frozen v5 architecture/loss/schedule as the single data A/B.
+  Report heldout 4D state metrics, predicted-vs-truth-state decoder gap,
+  conditional/hard position metrics and one distance/error scatter per motion.
 - [ ] Mapper/S/H, v70/v71/v72 checkpoints, test, export and online fire control
   remain frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090
   stays powered off but retained and must not be released.

@@ -32,6 +32,7 @@ MAX_LATEST_AGE_S = 0.05
 QUERY_TAUS_S = (0.0, 0.1, 0.2, 0.5)
 MOTION_CLASSES = {"stationary": 0, "linear": 1, "spin": 2, "linear_and_spin": 3}
 STAGE3_OBSERVATION_V1_HISTORICAL_H_M = 0.07
+MOTION_SEGMENT_TIME_GUARD_NS = 2_000
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,11 @@ class TensorSample:
     future_position: np.ndarray  # [Q,4,3]
     future_normal: np.ndarray  # [Q,4,3]
     motion_class: int
+    motion_command_epoch: int
+    motion_segment_start_ns: int
+    motion_segment_end_ns: int
+    history_start_ns: int
+    future_end_ns: int
 
 
 def _key(record: Mapping[str, object]) -> tuple[str, int, int, int]:
@@ -182,6 +188,39 @@ def _motion_class(manifest: Mapping[str, object] | None, truth: TruthFrame) -> i
     return 3
 
 
+def _constant_truth_window(
+    truths: list[TruthFrame], start_ns: int, end_ns: int,
+) -> bool:
+    """Require one exact constant physical state across the full model window."""
+    frames = [frame for frame in truths if start_ns <= frame.timestamp_ns <= end_ns]
+    if not frames or frames[0].timestamp_ns > start_ns or frames[-1].timestamp_ns < end_ns:
+        return False
+    first = frames[0]
+    if first.target_origin_world_m is None:
+        return False
+    timestamps = np.asarray([frame.timestamp_ns for frame in frames], dtype=np.int64)
+    velocities = np.asarray([frame.velocity_world_mps for frame in frames], dtype=np.float64)
+    yaw_rates = np.asarray([frame.yaw_rate_rad_s for frame in frames], dtype=np.float64)
+    origins = [frame.target_origin_world_m for frame in frames]
+    if any(origin is None for origin in origins):
+        return False
+    origins_array = np.asarray(origins, dtype=np.float64)
+    yaws = np.asarray([frame.yaw_rad for frame in frames], dtype=np.float64)
+    time_s = (timestamps - timestamps[0]).astype(np.float64) / 1e9
+    expected_origin = origins_array[0] + velocities[0] * time_s[:, None]
+    expected_yaw = yaws[0] + yaw_rates[0] * time_s
+    yaw_delta = yaws - expected_yaw
+    return bool(
+        all(frame.producer_epoch == first.producer_epoch for frame in frames)
+        and all(frame.target_id == first.target_id for frame in frames)
+        and all(str(frame.geometry_hash) == str(first.geometry_hash) for frame in frames)
+        and np.linalg.norm(velocities - velocities[0], axis=1).max(initial=0.0) <= 1e-6
+        and np.abs(yaw_rates - yaw_rates[0]).max(initial=0.0) <= 1e-6
+        and np.linalg.norm(origins_array - expected_origin, axis=1).max(initial=0.0) <= 1e-4
+        and np.abs(np.arctan2(np.sin(yaw_delta), np.cos(yaw_delta))).max(initial=0.0) <= 1e-4
+    )
+
+
 def load_manifests(paths: Iterable[str | Path]) -> dict[str, Mapping[str, object]]:
     result: dict[str, Mapping[str, object]] = {}
     for path in paths:
@@ -254,6 +293,7 @@ def _make_sample(
     diagnostics: dict[str, object] | None = None,
     truth_by_key: Mapping[tuple[str, int, int, int], TruthFrame] | None = None,
     inputs_epoch_filtered: bool = False,
+    motion_segment: Mapping[str, object] | None = None,
 ) -> TensorSample | None:
     rejection_counts: Counter[str] | None = None
     if diagnostics is not None:
@@ -277,9 +317,21 @@ def _make_sample(
         return None
     tracker_quaternion = anchor_truth.chassis_quaternion_world_wxyz
     t0 = anchor.timestamp_ns
+    segment_start_ns = (
+        int(motion_segment["start_timestamp_ns"])
+        if motion_segment is not None else -1
+    )
+    segment_end_ns = (
+        int(motion_segment["end_timestamp_ns"])
+        if motion_segment is not None else 2**63 - 1
+    )
+    if motion_segment is not None and not segment_start_ns <= t0 < segment_end_ns:
+        reject("anchor_outside_motion_segment")
+        return None
     eligible = sorted((
         frame for frame in observations
         if frame.timestamp_ns <= t0 and
+        (motion_segment is None or frame.timestamp_ns >= segment_start_ns) and
         (inputs_epoch_filtered or frame.producer_epoch == anchor.producer_epoch)
     ), key=lambda frame: (frame.timestamp_ns, frame.frame_seq))
 
@@ -344,6 +396,9 @@ def _make_sample(
         if future is None:
             reject("missing_future_truth")
             return None
+        if motion_segment is not None and future.timestamp_ns >= segment_end_ns:
+            reject("cross_motion_segment_future")
+            return None
         if tau >= 0.0 and future.timestamp_ns < t0:
             reject("future_truth_precedes_anchor")
             return None
@@ -368,6 +423,21 @@ def _make_sample(
                 reject("invalid_future_normal")
                 return None
             future_normal[query_index, armor_index] /= normal_norm
+    history_start_ns = int(selected[0].timestamp_ns)
+    future_end_ns = int(future_timestamps.max(initial=t0))
+    if motion_segment is not None:
+        if history_start_ns < segment_start_ns:
+            reject("cross_motion_segment_history")
+            return None
+        if history_start_ns - segment_start_ns < MOTION_SEGMENT_TIME_GUARD_NS:
+            reject("history_too_close_to_motion_segment_start")
+            return None
+        if segment_end_ns - 1 - future_end_ns < MOTION_SEGMENT_TIME_GUARD_NS:
+            reject("future_too_close_to_motion_segment_end")
+            return None
+        if not _constant_truth_window(truths, history_start_ns, future_end_ns):
+            reject("nonconstant_full_motion_window")
+            return None
     if rng is not None:
         original_obs_mask = obs_mask.copy()
         original_event_mask = event_mask.copy()
@@ -403,6 +473,20 @@ def _make_sample(
             obs_mask = original_obs_mask
             event_mask = original_event_mask
             event_time_s = original_event_time_s
+    if diagnostics is not None and motion_segment is not None:
+        admitted = diagnostics.setdefault("admitted_motion_command_epochs", Counter())
+        assert isinstance(admitted, Counter)
+        admitted[int(motion_segment["motion_command_epoch"])] += 1
+        history_margin = history_start_ns - segment_start_ns
+        future_margin = segment_end_ns - 1 - future_end_ns
+        diagnostics["minimum_history_margin_to_segment_start_ns"] = min(
+            int(diagnostics.get("minimum_history_margin_to_segment_start_ns", history_margin)),
+            history_margin,
+        )
+        diagnostics["minimum_future_margin_to_segment_end_ns"] = min(
+            int(diagnostics.get("minimum_future_margin_to_segment_end_ns", future_margin)),
+            future_margin,
+        )
     return TensorSample(
         session_id=anchor.session_id,
         t0_ns=t0,
@@ -415,7 +499,18 @@ def _make_sample(
         future_timestamp_ns=future_timestamps,
         future_position=future_position,
         future_normal=future_normal,
-        motion_class=_motion_class(manifest, truths[0]),
+        motion_class=_motion_class(
+            motion_segment if motion_segment is not None else manifest,
+            anchor_truth,
+        ),
+        motion_command_epoch=(
+            int(motion_segment["motion_command_epoch"])
+            if motion_segment is not None else -1
+        ),
+        motion_segment_start_ns=segment_start_ns,
+        motion_segment_end_ns=segment_end_ns,
+        history_start_ns=history_start_ns,
+        future_end_ns=future_end_ns,
     )
 
 
@@ -431,6 +526,7 @@ def build_samples(
     min_history_timestamp_ns: int | None = None,
     preloaded_observations: Iterable[ObservationFrame] | None = None,
     preloaded_truth: Iterable[TruthFrame] | None = None,
+    motion_segments: Mapping[str, tuple[Mapping[str, object], ...]] | None = None,
 ) -> list[TensorSample]:
     if extrinsic is None:
         raise ValueError("Stage-3 v3 tensorization requires calibrated camera/gimbal R/T")
@@ -507,10 +603,24 @@ def build_samples(
                 query_rng = np.random.default_rng(query_seed)
                 random_taus = tuple(float(value) for value in query_rng.uniform(0.0, 0.5, 4))
                 query_taus = QUERY_TAUS_S + random_taus
+                segment = None
+                if motion_segments is not None and session_id in motion_segments:
+                    segment = next((
+                        value for value in motion_segments[session_id]
+                        if int(value["start_timestamp_ns"]) <= anchor.timestamp_ns
+                        < int(value["end_timestamp_ns"])
+                    ), None)
+                    if segment is None:
+                        if diagnostics is not None:
+                            counts = diagnostics.setdefault("rejection_counts", Counter())
+                            assert isinstance(counts, Counter)
+                            counts["anchor_outside_motion_segment"] += 1
+                        continue
                 sample = _make_sample(
                     anchor, epoch_frames[:anchor_index + 1], epoch_truths,
                     (manifests or {}).get(session_id), extrinsic, rng, query_taus, diagnostics,
                     truth_by_key=truth_by_key, inputs_epoch_filtered=True,
+                    motion_segment=segment,
                 )
                 if sample is not None:
                     result.append(sample)
@@ -533,7 +643,7 @@ def build_samples(
 def samples_to_arrays(samples: list[TensorSample]) -> dict[str, np.ndarray]:
     if not samples:
         raise ValueError("no valid samples were built")
-    return {
+    arrays = {
         "obs": np.stack([sample.obs for sample in samples]),
         "obs_mask": np.stack([sample.obs_mask for sample in samples]),
         "event_mask": np.stack([sample.event_mask for sample in samples]),
@@ -548,3 +658,28 @@ def samples_to_arrays(samples: list[TensorSample]) -> dict[str, np.ndarray]:
         "session_id": np.asarray([sample.session_id for sample in samples]),
         "t0_ns": np.asarray([sample.t0_ns for sample in samples], dtype=np.int64),
     }
+    segment_audited = np.asarray(
+        [sample.motion_command_epoch >= 0 for sample in samples], dtype=np.bool_
+    )
+    if segment_audited.any() and not segment_audited.all():
+        raise ValueError("one shard cannot mix ACK-audited and legacy samples")
+    if segment_audited.all():
+        arrays.update({
+            "motion_command_epoch": np.asarray(
+                [sample.motion_command_epoch for sample in samples], dtype=np.int64
+            ),
+            "motion_segment_start_ns": np.asarray(
+                [sample.motion_segment_start_ns for sample in samples], dtype=np.int64
+            ),
+            "motion_segment_end_ns": np.asarray(
+                [sample.motion_segment_end_ns for sample in samples], dtype=np.int64
+            ),
+            "history_start_ns": np.asarray(
+                [sample.history_start_ns for sample in samples], dtype=np.int64
+            ),
+            "future_end_ns": np.asarray(
+                [sample.future_end_ns for sample in samples], dtype=np.int64
+            ),
+            "window_constant_motion": np.ones((len(samples),), dtype=np.bool_),
+        })
+    return arrays

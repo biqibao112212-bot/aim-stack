@@ -57,8 +57,15 @@ def _load_formal_manifest(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"manifest record has no session_id: {path}")
         if session_id in seen:
             raise ValueError(f"duplicate manifest session_id: {session_id}")
-        if str(record.get("schema_version", "")) != "stage3-manifest-v1":
+        schema_version = str(record.get("schema_version", ""))
+        if schema_version not in {
+            "stage3-manifest-v1", "stage3-multistate-manifest-v2",
+        }:
             raise ValueError(f"unsupported manifest schema for {session_id}")
+        if schema_version == "stage3-multistate-manifest-v2":
+            segments = record.get("segments")
+            if not isinstance(segments, list) or len(segments) < 3:
+                raise ValueError(f"multistate manifest has no valid segments: {session_id}")
         seen.add(session_id)
         records.append(record)
     if not records:
@@ -90,6 +97,59 @@ def discover_canonical_sources(
         result = json.loads(result_path.read_text(encoding="utf-8-sig"))
         if str(result.get("session_id", "")) != session_id:
             raise ValueError(f"session_result id mismatch: {result_path}")
+        motion_segments: list[dict[str, Any]] | None = None
+        if str(manifest.get("schema_version")) == "stage3-multistate-manifest-v2":
+            captured_sha256 = _sha256_file(captured_manifest_path)
+            if (
+                result.get("schema_version") != "stage3-session-result-v2"
+                or not bool(result.get("complete", False))
+                or str(result.get("captured_manifest_sha256", "")) != captured_sha256
+                or str(result.get("segment_plan_sha256", "")) != captured_sha256
+            ):
+                raise ValueError(f"multistate result is incomplete or stale: {session_id}")
+            desired = manifest["segments"]
+            actual = result.get("motion_segments")
+            if not isinstance(actual, list) or len(actual) != len(desired):
+                raise ValueError(f"multistate ACK count differs from plan: {session_id}")
+            capture_end = int(result.get("capture_end_timestamp_ns", 0))
+            starts = [int(value.get("applied_timestamp_ns", 0)) for value in actual]
+            command_ids = [int(value.get("command_id", 0)) for value in actual]
+            frame_sequences = [int(value.get("applied_frame_seq", 0)) for value in actual]
+            if (
+                any(right <= left for left, right in zip(starts, starts[1:]))
+                or any(right <= left for left, right in zip(frame_sequences, frame_sequences[1:]))
+                or capture_end <= starts[-1]
+            ):
+                raise ValueError(f"multistate ACK timeline is not strictly increasing: {session_id}")
+            motion_segments = []
+            for index, (planned, acknowledged) in enumerate(zip(desired, actual, strict=True)):
+                if (
+                    int(planned.get("segment_index", -1)) != index
+                    or int(acknowledged.get("motion_command_epoch", -1)) != index
+                    or int(acknowledged.get("segment_index", -1)) != index
+                    or str(planned.get("mode")) != str(acknowledged.get("mode"))
+                ):
+                    raise ValueError(f"multistate segment identity mismatch: {session_id}/{index}")
+                for field in (
+                    "direction_deg", "linear_speed_mps", "linear_span_m", "spin_rad_s",
+                ):
+                    if not math.isclose(
+                        float(planned[field]), float(acknowledged[field]),
+                        rel_tol=0.0, abs_tol=1e-12,
+                    ):
+                        raise ValueError(
+                            f"multistate segment parameter mismatch: {session_id}/{index}/{field}"
+                        )
+                motion_segments.append({
+                    "motion_command_epoch": index,
+                    "mode": str(planned["mode"]),
+                    "start_timestamp_ns": starts[index],
+                    "end_timestamp_ns": (
+                        starts[index + 1] if index + 1 < len(starts) else capture_end + 1
+                    ),
+                    "command_id": command_ids[index],
+                    "applied_frame_seq": frame_sequences[index],
+                })
         observations = _normalise_path(str(result.get("observations", "")))
         truth = _normalise_path(str(result.get("truth", "")))
         for kind, path in (("observations", observations), ("truth", truth)):
@@ -115,6 +175,7 @@ def discover_canonical_sources(
             "captured_manifest_sha256": _sha256_file(captured_manifest_path),
             "observations": str(observations),
             "truth": str(truth),
+            **({"motion_segments": motion_segments} if motion_segments is not None else {}),
         })
     return sources
 
@@ -206,6 +267,67 @@ def stratified_session_split(records: list[Mapping[str, Any]], seed: int) -> dic
     if len(all_ids) != len(set(all_ids)) or len(all_ids) != count:
         raise AssertionError("session split is not a disjoint cover")
     return splits
+
+
+def _is_formal_multistate_profile(records: list[Mapping[str, Any]]) -> bool:
+    if len(records) != 24:
+        return False
+    families = Counter(str(record.get("mode")) for record in records)
+    if families != Counter({"spin": 12, "linear_and_spin": 12}):
+        return False
+    for record in records:
+        segments = record.get("segments")
+        if (
+            record.get("schema_version") != "stage3-multistate-manifest-v2"
+            or record.get("camera_profile") != "wide_6mm"
+            or bool(record.get("dual_focal", True))
+            or not isinstance(segments, list)
+            or len(segments) != 12
+        ):
+            return False
+        modes = Counter(str(segment.get("mode")) for segment in segments)
+        if modes["stationary"] != 1 or modes[str(record["mode"])] != 11:
+            return False
+        if any(
+            not math.isclose(float(segment.get("duration_s", 0.0)), 3.0, abs_tol=1e-12)
+            for segment in segments
+        ):
+            return False
+    return True
+
+
+def _load_capture_contract_binding(
+    manifest_path: Path,
+    records: list[dict[str, Any]],
+    split_seed: int,
+    capture_contract_value: str | Path | None,
+) -> tuple[Path | None, dict[str, Any] | None]:
+    if capture_contract_value is None:
+        if _is_formal_multistate_profile(records):
+            raise ValueError("the formal 24-session multistate profile requires --capture-contract")
+        return None, None
+    path = _normalise_path(capture_contract_value)
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    if contract.get("schema_version") != "stage3-multistate-capture-contract-v1":
+        raise ValueError("capture contract schema mismatch")
+    if str(contract.get("formal_manifest_sha256")) != _sha256_file(manifest_path):
+        raise ValueError("capture contract does not bind the selected manifest")
+    if int(contract.get("split_seed", -1)) != int(split_seed):
+        raise ValueError("capture contract split seed differs from --seed")
+    if any(
+        record.get("schema_version") != "stage3-multistate-manifest-v2"
+        for record in records
+    ):
+        raise ValueError("capture contract cannot admit legacy sessions")
+    expected_splits = stratified_session_split(records, split_seed)
+    if expected_splits != contract.get("splits"):
+        raise ValueError("computed session split differs from the frozen capture contract")
+    split_digest = hashlib.sha256(json.dumps(
+        expected_splits, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")).hexdigest()
+    if str(contract.get("splits_sha256")) != split_digest:
+        raise ValueError("capture contract split hash is invalid")
+    return path, contract
 
 
 def _stream_jsonl(path: Path):
@@ -502,10 +624,19 @@ def _process_session_to_shard(task: Mapping[str, Any]) -> dict[str, Any]:
         seed=session_seed, diagnostics=diagnostics,
         min_history_timestamp_ns=int(truth_audit["stable_start_timestamp_ns"]),
         preloaded_observations=observation_frames, preloaded_truth=truth_frames,
+        motion_segments=(
+            {session_id: tuple(source["motion_segments"])}
+            if "motion_segments" in source else None
+        ),
     )
     rejection_counts = diagnostics.get("rejection_counts", Counter())
     if isinstance(rejection_counts, Counter):
         diagnostics["rejection_counts"] = dict(sorted(rejection_counts.items()))
+    admitted_epochs = diagnostics.get("admitted_motion_command_epochs")
+    if isinstance(admitted_epochs, Counter):
+        diagnostics["admitted_motion_command_epochs"] = {
+            str(key): value for key, value in sorted(admitted_epochs.items())
+        }
     session_report = {
         "session_id": session_id,
         "split": split,
@@ -558,6 +689,12 @@ def build_dataset(args: argparse.Namespace) -> Path:
     _write_json(state_path, {"schema_version": DATASET_SCHEMA_VERSION, "status": "in_progress"})
 
     manifest_records = _load_formal_manifest(manifest_path)
+    capture_contract_path, capture_contract = _load_capture_contract_binding(
+        manifest_path, manifest_records, args.seed,
+        getattr(args, "capture_contract", None),
+    )
+    if capture_contract is not None and args.max_sessions > 0:
+        raise ValueError("a frozen capture contract forbids --max-sessions")
     if args.max_sessions > 0:
         manifest_records = manifest_records[: args.max_sessions]
     sources = discover_canonical_sources(manifest_records, evidence_root, raw_root)
@@ -687,6 +824,8 @@ def build_dataset(args: argparse.Namespace) -> Path:
         "normalization": output / "normalization.json",
         "geometry_template": output / "geometry_template.json",
     }
+    if capture_contract_path is not None:
+        artifact_paths["capture_contract"] = capture_contract_path
     dataset_manifest = {
         "schema_version": DATASET_SCHEMA_VERSION,
         "observation_schema": ["stage3-observation-v1", "stage3-observation-v2"],
@@ -694,6 +833,10 @@ def build_dataset(args: argparse.Namespace) -> Path:
         "schema_fingerprint": schema_fingerprint(),
         "seed": args.seed,
         "manifest": str(manifest_path),
+        **({
+            "capture_contract": str(capture_contract_path),
+            "capture_contract_sha256": _sha256_file(capture_contract_path),
+        } if capture_contract_path is not None else {}),
         "evidence_root": str(evidence_root),
         "raw_root": str(raw_root),
         "camera_gimbal_extrinsic_yaml": str(extrinsic_yaml),
@@ -723,6 +866,11 @@ def build_dataset(args: argparse.Namespace) -> Path:
             "target_axes": "anchor exposure chassis forward-left-up",
             "unit_position": "metre",
             "unit_time": "second",
+            "motion_segment_admission": (
+                "v2 only: all retained history and all future queries remain in one "
+                "ACK-bound half-open segment and exact truth is constant across the full window"
+            ),
+            "motion_segment_fields_are_model_inputs": False,
         },
         "split_session_counts": {name: len(splits[name]) for name in SPLIT_NAMES},
         "split_sample_counts": dict(split_sample_counts),
@@ -757,6 +905,10 @@ def main() -> None:
     parser.add_argument("--raw-root", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--extrinsic-yaml", required=True)
+    parser.add_argument(
+        "--capture-contract",
+        help="optional frozen stage3-multistate-capture-contract-v1 JSON",
+    )
     parser.add_argument("--seed", type=int, default=20260719)
     parser.add_argument("--sessions-per-shard", type=int, default=4)
     parser.add_argument("--workers", type=int, default=1)

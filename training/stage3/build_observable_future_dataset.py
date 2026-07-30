@@ -27,6 +27,16 @@ from .observable_future_dataset import (
 )
 
 
+SEGMENT_AUDIT_FIELDS = (
+    "motion_command_epoch",
+    "motion_segment_start_ns",
+    "motion_segment_end_ns",
+    "history_start_ns",
+    "future_end_ns",
+    "window_constant_motion",
+)
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -156,6 +166,19 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             truth["motion_class"][truth_index]
         ):
             raise ValueError("r4 and truth-history motion classes disagree")
+        has_segment_audit = "motion_command_epoch" in source
+        if has_segment_audit:
+            if any(name not in source or name not in truth for name in SEGMENT_AUDIT_FIELDS):
+                raise ValueError("multistate source is missing a segment audit field")
+            for name in SEGMENT_AUDIT_FIELDS:
+                if not np.array_equal(source[name][source_index], truth[name][truth_index]):
+                    raise ValueError(f"r4 and truth-history segment audit differs: {name}")
+            if (
+                not bool(source["window_constant_motion"][source_index])
+                or not bool(np.all(source["rule_query"][source_index]))
+                or not bool(np.all(truth["rule_query"][truth_index]))
+            ):
+                raise ValueError("multistate observable row is not one fully valid motion epoch")
         try:
             sample = construct_observable_future_sample(
                 source["history_position_m"][source_index],
@@ -174,6 +197,14 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             reason = str(error).replace(" ", "_")[:96]
             drop_counts[reason] = drop_counts.get(reason, 0) + 1
             continue
+        sample["session_id"] = np.asarray(str(source["session_id"][source_index]))
+        sample["t0_ns"] = np.asarray(source["t0_ns"][source_index], dtype=np.int64)
+        sample["rule_query"] = source["rule_query"][source_index].astype(
+            np.bool_, copy=True
+        )
+        if has_segment_audit:
+            for name in SEGMENT_AUDIT_FIELDS:
+                sample[name] = np.asarray(source[name][source_index]).copy()
         eligible = source["rule_query"][source_index].astype(np.bool_, copy=False)
         covered = sample["target_query_mask"]
         eligible_queries += int(eligible.sum())
@@ -206,6 +237,9 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "maximum_switch_count": maximum_switch,
         "eligible_query_count": eligible_queries,
         "uncovered_query_count": uncovered_queries,
+        "segment_audited_sample_count": (
+            len(samples) if "motion_command_epoch" in arrays else 0
+        ),
     }
 
 
@@ -301,6 +335,16 @@ def build(args: argparse.Namespace) -> Path:
         raise ValueError("observed switch count exceeds the declared candidate head")
     uncovered = sum(int(item["uncovered_query_count"]) for item in results)
     eligible = sum(int(item["eligible_query_count"]) for item in results)
+    segment_audited_count = sum(
+        int(item["segment_audited_sample_count"]) for item in results
+    )
+    sample_count = sum(int(item["sample_count"]) for item in results)
+    if segment_audited_count not in {0, sample_count}:
+        raise ValueError("observable dataset mixes ACK-audited and legacy rows")
+    segment_audit_enabled = segment_audited_count == sample_count
+    formal_segment_audit_required = "capture_contract_sha256" in source_manifest
+    if formal_segment_audit_required and not segment_audit_enabled:
+        raise ValueError("frozen multistate capture lost segment audit provenance")
     if uncovered:
         raise ValueError(f"candidate head leaves {uncovered}/{eligible} eligible queries uncovered")
     shutil.copy2(source_dir / "geometry_template.json", output_dir / "geometry_template.json")
@@ -313,7 +357,11 @@ def build(args: argparse.Namespace) -> Path:
         "source_dataset_manifest_sha256": _sha256(source_manifest_path),
         "truth_history_dataset": str(truth_dir),
         "truth_history_manifest_sha256": _sha256(truth_manifest_path),
-        "sample_count": sum(int(item["sample_count"]) for item in results),
+        **({
+            "capture_contract": str(source_manifest["capture_contract"]),
+            "capture_contract_sha256": str(source_manifest["capture_contract_sha256"]),
+        } if formal_segment_audit_required else {}),
+        "sample_count": sample_count,
         "source_sample_count": sum(int(item["source_sample_count"]) for item in results),
         "session_count": len(results),
         "history_events": 32,
@@ -334,6 +382,17 @@ def build(args: argparse.Namespace) -> Path:
         "eligible_query_count": eligible,
         "uncovered_query_count": uncovered,
         "physical_identity_exported": False,
+        "segment_audit": {
+            "enabled": segment_audit_enabled,
+            "required_by_capture_contract": formal_segment_audit_required,
+            "fields": list(SEGMENT_AUDIT_FIELDS),
+            "source": str(source_dir),
+            "source_manifest_sha256": _sha256(source_manifest_path),
+            "audited_sample_count": segment_audited_count,
+            "join_mismatch_count": 0,
+            "window_constant_motion_required": segment_audit_enabled,
+            "all_rule_query_required": segment_audit_enabled,
+        },
         "geometry_template": "geometry_template.json",
         "geometry_template_sha256": _sha256(output_dir / "geometry_template.json"),
         "builder_source_sha256": {

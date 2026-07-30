@@ -60,6 +60,13 @@ bool hasArgument(int argc, char **argv, const std::string &name) {
   return false;
 }
 
+int argumentCount(int argc, char **argv, const std::string &name) {
+  int count = 0;
+  for (int i = 1; i < argc; ++i)
+    count += std::string(argv[i]) == name ? 1 : 0;
+  return count;
+}
+
 bool strictArgument(int argc, char **argv, const std::string &name,
                     std::string *value, std::string *error) {
   int matches = 0;
@@ -91,16 +98,22 @@ bool parseStage3Args(int argc, char **argv, std::string *host,
                     std::string *session, RangeTargetMotion *motion,
                     std::string *error) {
   const std::unordered_set<std::string> allowed = {
-      "--stage3", "--host", "--session", "--target", "--mode",
+      "--stage3", "--stage3-update", "--host", "--session", "--target", "--mode",
       "--direction-deg", "--linear-speed-mps", "--linear-span-m",
       "--spin-deg-s"};
+  const int initialize_count = argumentCount(argc, argv, "--stage3");
+  const int update_count = argumentCount(argc, argv, "--stage3-update");
+  if (initialize_count + update_count != 1) {
+    *error = "exactly one of --stage3 or --stage3-update is required";
+    return false;
+  }
   for (int i = 1; i < argc; ++i) {
     const std::string arg(argv[i]);
     if (allowed.count(arg) == 0) {
       *error = "unknown Stage3 option " + arg;
       return false;
     }
-    if (arg != "--stage3") {
+    if (arg != "--stage3" && arg != "--stage3-update") {
       if (++i >= argc || std::string(argv[i]).rfind("--", 0) == 0) {
         *error = "missing value for " + arg;
         return false;
@@ -111,6 +124,10 @@ bool parseStage3Args(int argc, char **argv, std::string *host,
   if (!strictArgument(argc, argv, "--host", host, error) ||
       !strictArgument(argc, argv, "--session", session, error) ||
       !strictArgument(argc, argv, "--target", &raw, error)) return false;
+  if (host->empty() || session->empty()) {
+    *error = "--host and --session must be non-empty";
+    return false;
+  }
   if (raw != "3") {
     *error = "Stage3 only controls target 3";
     return false;
@@ -143,6 +160,20 @@ bool parseStage3Args(int argc, char **argv, std::string *host,
   }
   motion->spin_deg_s = static_cast<float>(value);
   motion->target = 3;
+  const bool has_linear = motion->linear_speed_mps > 0.0F ||
+                          motion->linear_span_m > 0.0F;
+  const bool has_spin = std::abs(motion->spin_deg_s) > 0.0F;
+  const bool mode_consistent =
+      (motion->mode == RangeMotionMode::Stationary && !has_linear && !has_spin) ||
+      (motion->mode == RangeMotionMode::Linear &&
+       motion->linear_speed_mps > 0.0F && motion->linear_span_m > 0.0F && !has_spin) ||
+      (motion->mode == RangeMotionMode::Spin && !has_linear && has_spin) ||
+      (motion->mode == RangeMotionMode::LinearAndSpin &&
+       motion->linear_speed_mps > 0.0F && motion->linear_span_m > 0.0F && has_spin);
+  if (!mode_consistent) {
+    *error = "motion parameters are inconsistent with --mode";
+    return false;
+  }
   return true;
 }
 
@@ -183,7 +214,9 @@ ClientResult<SceneControlResponse> retryRequest(const Request &request) {
 }  // namespace
 
 int main(int argc, char **argv) {
-  if (hasArgument(argc, argv, "--stage3")) {
+  const bool stage3_initialize = hasArgument(argc, argv, "--stage3");
+  const bool stage3_update = hasArgument(argc, argv, "--stage3-update");
+  if (stage3_initialize || stage3_update) {
     std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");
     std::string session = envOr("AIM_SIM_SCENE_CONTROL_SESSION", "stage3");
     RangeTargetMotion motion;
@@ -198,13 +231,21 @@ int main(int argc, char **argv) {
     options.session_id = session;
     options.timeout = std::chrono::milliseconds(300);
     SceneControlClient control(options);
-    if (!responseOk("create_session", retryRequest([&control] { return control.createSession(); })) ||
-        !responseOk("set_scene", retryRequest([&control] { return control.setScene(SceneMode::ShootingRange); })) ||
-        !responseOk("set_target_3_motion", retryRequest([&control, motion] { return control.setRangeTargetMotion(motion); }))) {
+    if (stage3_initialize) {
+      if (!responseOk("create_session", retryRequest([&control] { return control.createSession(); })) ||
+          !responseOk("set_scene", retryRequest([&control] { return control.setScene(SceneMode::ShootingRange); }))) {
+        return 2;
+      }
+    }
+    if (!responseOk("set_target_3_motion",
+                    retryRequest([&control, motion] {
+                      return control.setRangeTargetMotion(motion);
+                    }))) {
       return 2;
     }
-    std::cout << "scene_control_stage3_ready host=" << host << " session=" << session
-              << " target=3\n";
+    std::cout << (stage3_initialize ? "scene_control_stage3_ready" :
+                                      "scene_control_stage3_updated")
+              << " host=" << host << " session=" << session << " target=3\n";
     return 0;
   }
   std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");

@@ -149,8 +149,10 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         )
         if np.any(timestamp_error > 2_000):
             raise ValueError("physical visibility truth lookup exceeded 2 us")
-        fit_events = int(task["constant_motion_history_events"])
-        fit_start = int(truth_index[max(0, len(truth_index) - fit_events)])
+        # Admission follows the actual retained model history, not a short
+        # diagnostic suffix. This prevents an older motion command from hiding
+        # before the last four events.
+        fit_start = int(truth_index[0])
         fit_end = int(anchor_index[0])
         left, right = sorted((fit_start, fit_end))
         interval = slice(left, right + 1)
@@ -186,6 +188,16 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
             and yaw_rate_change <= 1e-6
             and position_residual <= 1e-4
             and yaw_residual <= 1e-4
+        ):
+            keep_sample[sample] = False
+            dropped_nonconstant_history += 1
+            continue
+        if (
+            "window_constant_motion" in physical
+            and (
+                not bool(physical["window_constant_motion"][sample])
+                or not bool(np.all(physical["rule_query"][sample]))
+            )
         ):
             keep_sample[sample] = False
             dropped_nonconstant_history += 1
@@ -252,6 +264,13 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "session_id": physical["session_id"][keep_sample],
         "t0_ns": physical["t0_ns"][keep_sample].astype(np.int64, copy=False),
     }
+    for name in (
+        "motion_command_epoch", "motion_segment_start_ns",
+        "motion_segment_end_ns", "history_start_ns", "future_end_ns",
+        "window_constant_motion",
+    ):
+        if name in physical:
+            output[name] = physical[name][keep_sample].copy()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_path, **output)
     valid = output["history_position_m"][output["history_obs_mask"]]
@@ -397,6 +416,10 @@ def build(args: argparse.Namespace) -> Path:
         "source_truth_history_manifest_sha256": _sha256(truth_manifest_path),
         "source_observation_dataset": str(observation_root),
         "source_observation_manifest_sha256": _sha256(observation_manifest_path),
+        **({
+            "capture_contract": str(truth_manifest["capture_contract"]),
+            "capture_contract_sha256": str(truth_manifest["capture_contract_sha256"]),
+        } if "capture_contract_sha256" in truth_manifest else {}),
         "test_accessed": False,
         "splits": ["train", "validation"],
         "session_count": len(admitted),

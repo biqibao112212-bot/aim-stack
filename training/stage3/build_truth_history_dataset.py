@@ -256,6 +256,21 @@ def _build_shard(task: dict[str, Any]) -> dict[str, Any]:
         "session_id": source["session_id"],
         "t0_ns": source["t0_ns"].astype(np.int64, copy=False),
     }
+    segment_fields = (
+        "motion_command_epoch", "motion_segment_start_ns",
+        "motion_segment_end_ns", "history_start_ns", "future_end_ns",
+        "window_constant_motion",
+    )
+    if "motion_command_epoch" in source:
+        if not (
+            np.all(source["window_constant_motion"])
+            and np.all(source["history_start_ns"] >= source["motion_segment_start_ns"])
+            and np.all(source["future_end_ns"] < source["motion_segment_end_ns"])
+            and np.all(source["future_end_ns"] == source["future_timestamp_ns"].max(axis=1))
+        ):
+            raise ValueError("source contains a cross-segment or nonconstant model window")
+        for name in segment_fields:
+            output[name] = source[name].copy()
     output_shard.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(output_shard, **output)
     valid_values = truth_obs[truth_mask]
@@ -365,6 +380,10 @@ def build(args: argparse.Namespace) -> Path:
         "qualification_passed": True,
         "source_dataset": str(source_dataset),
         "source_dataset_manifest_sha256": _sha256(manifest_path),
+        **({
+            "capture_contract": str(source_manifest["capture_contract"]),
+            "capture_contract_sha256": str(source_manifest["capture_contract_sha256"]),
+        } if "capture_contract_sha256" in source_manifest else {}),
         "test_accessed": False,
         "splits": ["train", "validation"],
         "session_count": len(results),

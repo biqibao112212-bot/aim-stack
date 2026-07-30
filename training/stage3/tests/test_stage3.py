@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import itertools
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import pytest
 import torch
 
 from training.stage3.build_dataset import discover_canonical_sources, stratified_session_split
 from training.stage3.baselines import rigid_constant_velocity_yaw_rate
 from training.stage3.analyze_triangle_errors import _match_observation_to_truth
-from training.stage3.dataset import CameraGimbalExtrinsic, _make_sample, _world_to_tracker
+from training.stage3.dataset import (
+    CameraGimbalExtrinsic,
+    _make_sample,
+    _world_to_tracker,
+    samples_to_arrays,
+)
 from training.stage3.losses import (
     stage3_direct_observation_loss,
     stage3_loss,
@@ -65,6 +72,10 @@ def _truth(timestamp_ns: int, frame_seq: int) -> TruthFrame:
         camera_quaternion_world_wxyz=(1.0, 0.0, 0.0, 0.0),
         exposure_state_flags=7, geometry_hash="geometry",
     )
+
+
+def _constant_truth(timestamp_ns: int, frame_seq: int) -> TruthFrame:
+    return replace(_truth(timestamp_ns, frame_seq), target_origin_world_m=(0.0, 0.0, 0.0))
 
 
 def test_observation_schema_accepts_null_quality_and_extra_raw_candidates() -> None:
@@ -234,6 +245,158 @@ def test_latest_valid_age_ignores_newer_zero_candidate_frames() -> None:
         for offset in range(8)
     )
     assert _make_sample(anchor, observations, [_truth(t0, 100)], None, EXTRINSIC, query_taus=(0.0,)) is None
+
+
+def test_multistate_window_accepts_only_one_full_ack_bound_segment() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths.append(_constant_truth(t0 + 100_000_000, 100))
+    segment = {
+        "motion_command_epoch": 4,
+        "mode": "spin",
+        "start_timestamp_ns": t0 - 400_000_000,
+        "end_timestamp_ns": t0 + 200_000_000,
+    }
+    sample = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0, 0.1),
+        motion_segment=segment,
+    )
+    assert sample is not None
+    assert sample.motion_class == 2
+    assert sample.motion_command_epoch == 4
+    assert sample.history_start_ns >= segment["start_timestamp_ns"]
+    assert sample.future_end_ns < segment["end_timestamp_ns"]
+
+
+def test_multistate_window_rejects_history_or_future_across_ack_boundary() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths.append(_constant_truth(t0 + 100_000_000, 100))
+    history_boundary = {
+        "motion_command_epoch": 5,
+        "mode": "spin",
+        "start_timestamp_ns": t0 - 100_000_000,
+        "end_timestamp_ns": t0 + 200_000_000,
+    }
+    assert _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=history_boundary,
+    ) is None
+    future_boundary = {
+        "motion_command_epoch": 4,
+        "mode": "spin",
+        "start_timestamp_ns": t0 - 400_000_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    assert _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.1,),
+        motion_segment=future_boundary,
+    ) is None
+
+
+def test_multistate_full_history_truth_change_is_rejected() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths[3] = replace(truths[3], velocity_world_mps=(1.0, 0.0, 0.0))
+    segment = {
+        "motion_command_epoch": 1,
+        "mode": "spin",
+        "start_timestamp_ns": t0 - 400_000_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    assert _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=segment,
+    ) is None
+
+
+def test_multistate_motion_class_comes_from_the_active_segment() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    segment = {
+        "motion_command_epoch": 0,
+        "mode": "stationary",
+        "start_timestamp_ns": t0 - 400_000_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    sample = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=segment,
+    )
+    assert sample is not None
+    assert sample.motion_class == 0
+
+
+def test_multistate_window_requires_two_microsecond_boundary_guard() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    too_close_to_history = {
+        "motion_command_epoch": 0,
+        "mode": "stationary",
+        "start_timestamp_ns": timestamps[0] - 1_999,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    assert _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=too_close_to_history,
+    ) is None
+    too_close_to_future = {
+        "motion_command_epoch": 0,
+        "mode": "stationary",
+        "start_timestamp_ns": timestamps[0] - 2_000,
+        "end_timestamp_ns": t0 + 2_000,
+    }
+    assert _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=too_close_to_future,
+    ) is None
+
+
+def test_segment_audit_arrays_exist_only_for_ack_bound_samples() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    legacy = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "stationary"}, EXTRINSIC, query_taus=(0.0,),
+    )
+    assert legacy is not None
+    legacy_arrays = samples_to_arrays([legacy])
+    assert "motion_command_epoch" not in legacy_arrays
+    segment = {
+        "motion_command_epoch": 0,
+        "mode": "stationary",
+        "start_timestamp_ns": timestamps[0] - 2_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    audited = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=segment,
+    )
+    assert audited is not None
+    audited_arrays = samples_to_arrays([audited])
+    assert int(audited_arrays["motion_command_epoch"][0]) == 0
+    with pytest.raises(ValueError, match="cannot mix"):
+        samples_to_arrays([legacy, audited])
 
 
 def test_gimbal_origin_and_chassis_axes_define_label_frame_without_h() -> None:
