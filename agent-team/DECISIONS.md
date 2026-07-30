@@ -1817,3 +1817,44 @@
   optimization and role factorization can close a small task; it is not a
   generalization estimate and does not authorize hyperparameter selection.
   The one full r2 pilot now uses the predeclared 1,200/600/300/300 schedule.
+
+## 2026-07-30 decision 163: reject the v2 endpoint and isolate routing supervision
+
+- The single full v2 run completes at fixed update 2,400 in 372.1 seconds from
+  clean commit `ef75d8a`. Checkpoint SHA-256 is
+  `2b1af57f0cac21ed564b4a9031634dc6dcd7e04ebcf6b3e9ad197d3e497e68cb`.
+  Mapper/S/H hashes remain unchanged, joint gradient isolation is verified,
+  validation never selects a checkpoint and test remains unopened.
+- The accuracy gate fails. At the exact validation queries, v2 overall
+  conditional/hard Mean/P50/P95 is 217.38/229.04, 159.13/187.51 and
+  682.39/693.36 mm, versus v1's 207.63/212.74, 141.15/153.51 and
+  606.51/630.37 mm. The 8--15-event slice is 395.96/418.37 mm versus
+  377.82/395.33 mm. Final recalibration improves modulo-four role accuracy only
+  from 50.94% to 51.33% while regressing hard Mean from 227.64 to 229.04 mm.
+- The same-window trajectory stage repeats the old negative-transfer pattern:
+  rotation conditional Mean changes from 196.22 mm at initialization to
+  299.78 mm at update 1,200, while combined improves from 310.60 to 188.14 mm.
+  The latent expert count alone therefore does not solve regime separation.
+- Ballistic-time evaluation from clean commit `1235b03` keeps 581/587 windows
+  and all frozen hashes. Rotation conditional/hard Mean is 303.63/310.65 mm
+  with 56.82% modulo-four role accuracy, compared with v1's 255.70/267.18 mm
+  and 56.25%. Combined conditional improves slightly from 159.56 to 154.33 mm,
+  but role accuracy falls from 71.36% to 34.07% and hard Mean rises from
+  166.10 to 173.66 mm. Distance/error plots show the same broad vertical body,
+  not a monotone range failure.
+- The three latent experts did not numerically collapse: gates are nearly
+  one-hot and coefficient pairs remain distinct. They instead specialize and
+  route incorrectly. Among short rotation windows, 80.61% route to expert 1,
+  whose conditional window Mean is about 533 mm; counterfactually choosing the
+  best already-trained expert lowers that group to about 209 mm. Long rotation
+  routed to expert 2 reaches about 9 mm on 64/66 windows. Across motion/history
+  slices, oracle best-of-three window Mean is roughly 15--237 mm, substantially
+  below the learned gate's 23--553 mm.
+- Future truth may supervise a training target but may never enter forward.
+  The next bounded experiment therefore freezes all expert trajectories,
+  derives a detached per-window best-expert label from training targets, and
+  trains only the history gate to predict it. This is a routing-identifiability
+  test, not extra epochs on the failed objective. If the gate generalizes, a
+  later v3 will use multiple-choice expert training followed by history-only
+  routing; if it cannot, expert selection is not identifiable from the current
+  causal state and the MotionContext representation must change again.

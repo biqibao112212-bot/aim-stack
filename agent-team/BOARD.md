@@ -1218,10 +1218,24 @@
   test unopened. The 48-window capacity subset reaches 35.96 mm overall
   conditional/hard Mean and 100% modulo-four role accuracy; this is only a
   training-closure check, not a generalization result.
-- [ ] Active: run exactly one non-overwriting full r2 v2 pilot with the fixed
-  1,200 trajectory + 600 selector + 300 short-joint + 300 recalibration
-  schedule. Do not select a validation checkpoint or tune the schedule from
-  intermediate metrics.
+- [x] Complete the one fixed full r2 v2 pilot at update 2,400 in 372.1 seconds.
+  The clean endpoint preserves Mapper/S/H hashes, verifies joint gradient
+  isolation and keeps test unopened, but fails the accuracy gate: overall
+  conditional/hard Mean is 217.38/229.04 mm and 8--15-event history is
+  395.96/418.37 mm. Final selector recalibration raises hard Mean from the
+  joint endpoint's 227.64 to 229.04 mm, so the fixed endpoint is retained for
+  evidence but not promoted.
+- [x] Run the v2 ballistic-time diagnostic and copy the two distance/error
+  plots plus tables back through the official GitHub channel. Rotation
+  conditional/hard Mean is 303.63/310.65 mm; combined is 154.33/173.66 mm.
+  Frozen states remain unchanged and 581/587 windows are labeled, with the
+  same six opposite-source fail-closed cases as v1.
+- [ ] Active: replace implicit mixture-gradient routing with a bounded
+  multiple-choice routing diagnostic. Freeze the existing expert trajectories,
+  label each training window by its lowest-error expert using supervision only,
+  and train the history-only gate to predict that expert. This tests whether
+  causal history can recover the large counterfactual headroom before changing
+  expert capacity or collecting a larger corpus.
 - [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
   train/validation corpus under decisions 154--157, verify native 6 mm
   provenance, and execute the formal run. If provenance cannot establish 6 mm,
