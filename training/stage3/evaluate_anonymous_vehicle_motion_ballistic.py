@@ -482,7 +482,12 @@ def run(args: argparse.Namespace) -> Path:
     expected_truth_sha256 = dataset_manifest.get("truth_history_manifest_sha256")
     if truth_provenance["manifest_sha256"] != expected_truth_sha256:
         raise ValueError("ballistic truth history differs from the paired dataset")
-    expected = model_info["provenance"]["frozen_initial_state_dict_sha256"]
+    expected = model_info["provenance"].get(
+        "frozen_initial_state_dict_sha256",
+        model_info["provenance"].get("upstream_initial_state_dict_sha256"),
+    )
+    if not isinstance(expected, dict):
+        raise ValueError("motion checkpoint has no frozen upstream hash contract")
     loaded_hashes = {
         "mapper": state_dict_sha256(mapper.state_dict()),
         "s": state_dict_sha256(s_model.state_dict()),
