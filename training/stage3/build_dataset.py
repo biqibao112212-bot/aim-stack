@@ -310,6 +310,11 @@ def _load_capture_contract_binding(
     contract = json.loads(path.read_text(encoding="utf-8"))
     if contract.get("schema_version") != "stage3-multistate-capture-contract-v1":
         raise ValueError("capture contract schema mismatch")
+    source_git_commit = str(contract.get("source_git_commit", ""))
+    if len(source_git_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in source_git_commit
+    ):
+        raise ValueError("capture contract source Git commit is invalid")
     if str(contract.get("formal_manifest_sha256")) != _sha256_file(manifest_path):
         raise ValueError("capture contract does not bind the selected manifest")
     if int(contract.get("split_seed", -1)) != int(split_seed):

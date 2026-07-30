@@ -29,8 +29,15 @@ def _canonical_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def freeze_contract(manifest: Path, output: Path, split_seed: int) -> dict[str, Any]:
+def freeze_contract(
+    manifest: Path, output: Path, split_seed: int, source_git_commit: str,
+) -> dict[str, Any]:
     manifest = manifest.resolve()
+    source_git_commit = source_git_commit.strip().lower()
+    if len(source_git_commit) != 40 or any(
+        character not in "0123456789abcdef" for character in source_git_commit
+    ):
+        raise ValueError("source_git_commit must be a full lowercase Git SHA-1")
     records = _load_formal_manifest(manifest)
     if len(records) != 24:
         raise ValueError("formal multistate capture requires exactly 24 sessions")
@@ -84,6 +91,7 @@ def freeze_contract(manifest: Path, output: Path, split_seed: int) -> dict[str, 
         "dataset_id": next(iter(dataset_ids)),
         "formal_manifest": str(manifest),
         "formal_manifest_sha256": _sha256(manifest),
+        "source_git_commit": source_git_commit,
         "session_count": 24,
         "family_session_counts": family_counts,
         "segments_per_session": 12,
@@ -117,8 +125,12 @@ def main() -> None:
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--split-seed", type=int, required=True)
+    parser.add_argument("--source-git-commit", required=True)
     args = parser.parse_args()
-    payload = freeze_contract(Path(args.manifest), Path(args.output), args.split_seed)
+    payload = freeze_contract(
+        Path(args.manifest), Path(args.output), args.split_seed,
+        args.source_git_commit,
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
 
 
