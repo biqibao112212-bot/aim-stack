@@ -27,6 +27,9 @@ from .anonymous_vehicle_motion_v2 import (
     VisibilityAwareAnonymousVehicleFutureModel,
     target_roles,
 )
+from .continuous_invariant_anonymous_future import (
+    ContinuousInvariantAnonymousFutureModel,
+)
 from .cyclic_future_foundation import load_frozen_v19
 from .evaluate_final_visible_position_ballistic import (
     TruthState,
@@ -45,6 +48,7 @@ from .train_anonymous_vehicle_motion import (
     frozen_upstream_batch,
 )
 from .train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
+from .train_continuous_invariant_anonymous_future import RUN_SCHEMA as V3_RUN_SCHEMA
 from .train_visibility_aware_expert_router import (
     RUN_SCHEMA as ROUTER_RUN_SCHEMA,
     _hard_expert_role_position,
@@ -57,6 +61,7 @@ from .train_pnp_window_mapper_distillation import _atomic_json
 EVALUATION_SCHEMA = "stage3-anonymous-vehicle-motion-ballistic-v1"
 V2_EVALUATION_SCHEMA = "stage3-visibility-aware-anonymous-motion-ballistic-v2"
 ROUTER_EVALUATION_SCHEMA = "stage3-visibility-aware-hard-router-ballistic-v1"
+V3_EVALUATION_SCHEMA = "stage3-continuous-invariant-anonymous-future-ballistic-v3"
 FLIGHT_TIME_FORMULA = "norm(frozen_upstream_current_position_m)/bullet_speed_mps"
 MOTION_NAMES = {2: "rotation", 3: "combined"}
 DISTANCE_EDGES_M = tuple(float(value) for value in range(1, 8))
@@ -64,6 +69,7 @@ DISPLAY_BODY_PERCENTILE = 95.0
 EXPECTED_FINAL_UPDATE = 2100
 EXPECTED_V2_FINAL_UPDATE = 2400
 EXPECTED_ROUTER_FINAL_UPDATE = 600
+EXPECTED_V3_FINAL_UPDATE = 2100
 OPPOSITE_SOURCE_FAILURE = "observable target jumped to an opposite source slot"
 
 
@@ -181,12 +187,13 @@ def _canonical_ballistic_label(
 def _load_motion_checkpoint(
     path: Path,
 ) -> tuple[
-    AnonymousVehicleFutureModel | VisibilityAwareAnonymousVehicleFutureModel,
+    AnonymousVehicleFutureModel | VisibilityAwareAnonymousVehicleFutureModel
+    | ContinuousInvariantAnonymousFutureModel,
     dict[str, Any],
 ]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     schema = payload.get("schema_version")
-    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA}:
+    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA, V3_RUN_SCHEMA}:
         raise ValueError("anonymous motion checkpoint schema mismatch")
     if not bool(payload.get("fixed_endpoint", False)):
         raise ValueError("ballistic evaluation requires the fixed final endpoint")
@@ -196,6 +203,7 @@ def _load_motion_checkpoint(
         V1_RUN_SCHEMA: EXPECTED_FINAL_UPDATE,
         V2_RUN_SCHEMA: EXPECTED_V2_FINAL_UPDATE,
         ROUTER_RUN_SCHEMA: EXPECTED_ROUTER_FINAL_UPDATE,
+        V3_RUN_SCHEMA: EXPECTED_V3_FINAL_UPDATE,
     }[schema]
     if int(payload.get("progress", {}).get("global_update", -1)) != expected_update:
         raise ValueError(f"anonymous motion checkpoint is not update {expected_update}")
@@ -222,7 +230,7 @@ def _load_motion_checkpoint(
         model = AnonymousVehicleFutureModel(**common)
         model_version = "v1"
         evaluation_schema = EVALUATION_SCHEMA
-    else:
+    elif schema in {V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA}:
         model = VisibilityAwareAnonymousVehicleFutureModel(
             **common,
             basis_count=int(config["basis_count"]),
@@ -234,6 +242,13 @@ def _load_motion_checkpoint(
         else:
             model_version = "v2_hard_router"
             evaluation_schema = ROUTER_EVALUATION_SCHEMA
+    else:
+        model = ContinuousInvariantAnonymousFutureModel(
+            **common,
+            basis_count=int(config["basis_count"]),
+        )
+        model_version = "v3"
+        evaluation_schema = V3_EVALUATION_SCHEMA
     model.load_state_dict(payload["model"], strict=True)
     actual_hash = state_dict_sha256(model.state_dict())
     if actual_hash != payload.get("model_state_dict_sha256"):
@@ -271,16 +286,27 @@ def _distribution(values: np.ndarray) -> dict[str, float | int]:
 def _selection_diagnostics(queries: dict[str, np.ndarray]) -> dict[str, Any]:
     predicted = queries["predicted_switch_count"].astype(np.int64)
     target = queries["target_switch_count"].astype(np.int64)
-    exact = predicted == target
-    same_role = np.remainder(predicted - target, 4) == 0
-    wrong_exact = ~exact
+    signed_available = queries.get(
+        "signed_step_available", np.ones_like(predicted, dtype=np.bool_),
+    ).astype(np.bool_)
+    predicted_role = queries.get(
+        "predicted_role", np.remainder(predicted, 4),
+    ).astype(np.int64)
+    target_role = np.remainder(target, 4)
+    exact = (predicted == target) & signed_available
+    same_role = predicted_role == target_role
+    wrong_exact = signed_available & ~exact
     wrong_role = ~same_role
     excess = (
         queries["hard_error_m"].astype(np.float64)
         - queries["conditional_error_m"].astype(np.float64)
     )
     return {
-        "exact_signed_step_accuracy": float(exact.mean()),
+        "exact_signed_step_accuracy": (
+            float(exact[signed_available].mean()) if bool(signed_available.any())
+            else None
+        ),
+        "exact_signed_step_available": bool(signed_available.all()),
         "modulo4_physical_role_accuracy": float(same_role.mean()),
         "exact_wrong_count": int(wrong_exact.sum()),
         "exact_wrong_but_same_role_count": int((wrong_exact & same_role).sum()),
@@ -319,8 +345,13 @@ def _distance_rows(queries: dict[str, np.ndarray]) -> list[dict[str, Any]]:
     conditional_mm = queries["conditional_error_m"].astype(np.float64) * 1000.0
     predicted = queries["predicted_switch_count"].astype(np.int64)
     target = queries["target_switch_count"].astype(np.int64)
-    exact = predicted == target
-    role = np.remainder(predicted - target, 4) == 0
+    signed_available = queries.get(
+        "signed_step_available", np.ones_like(predicted, dtype=np.bool_),
+    ).astype(np.bool_)
+    exact = (predicted == target) & signed_available
+    role = queries.get(
+        "predicted_role", np.remainder(predicted, 4),
+    ).astype(np.int64) == np.remainder(target, 4)
     bins = [
         (f"[{left:.0f},{right:.0f})", left, right)
         for left, right in zip(DISTANCE_EDGES_M[:-1], DISTANCE_EDGES_M[1:])
@@ -338,7 +369,10 @@ def _distance_rows(queries: dict[str, np.ndarray]) -> list[dict[str, Any]]:
                 "conditional_mean_mm": float(conditional_mm[mask].mean()),
                 "conditional_p50_mm": float(np.percentile(conditional_mm[mask], 50)),
                 "conditional_p95_mm": float(np.percentile(conditional_mm[mask], 95)),
-                "exact_step_accuracy": float(exact[mask].mean()),
+                "exact_step_accuracy": (
+                    float(exact[mask].mean())
+                    if bool(signed_available[mask].all()) else None
+                ),
                 "modulo4_role_accuracy": float(role[mask].mean()),
             })
         rows.append(row)
@@ -433,12 +467,16 @@ def _write_summary(
         hard = value["hard_position"]
         conditional = value["conditional_position"]
         selection = value["selection"]
+        exact_text = (
+            f"{selection['exact_signed_step_accuracy']:.2%}"
+            if selection["exact_signed_step_accuracy"] is not None else "N/A"
+        )
         lines.append(
             f"| {name} | {value['sample_count']}/{raw_counts[name]} | "
             f"{hard['mean_m'] * 1000:.2f} | "
             f"{hard['p50_m'] * 1000:.2f} | {hard['p95_m'] * 1000:.2f} | "
             f"{conditional['mean_m'] * 1000:.2f} | {conditional['p95_m'] * 1000:.2f} | "
-            f"{selection['exact_signed_step_accuracy']:.2%} | "
+            f"{exact_text} | "
             f"{selection['modulo4_physical_role_accuracy']:.2%} |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -578,7 +616,7 @@ def run(args: argparse.Namespace) -> Path:
             (len(eligible_rows), 1), dtype=torch.bool, device=device,
         )
         prediction = model(_forward_only(dynamic))
-        if model_info["model_version"] in {"v2", "v2_hard_router"}:
+        if model_info["model_version"] in {"v2", "v2_hard_router", "v3"}:
             role = target_roles(
                 dynamic["target_switch_count"], dynamic["target_query_mask"],
             )
@@ -624,11 +662,16 @@ def run(args: argparse.Namespace) -> Path:
         q0_error = torch.linalg.vector_norm(
             current - dynamic["truth_current_position_m"], dim=-1,
         )
-        predicted_step = prediction[
-            "selected_switch_step_aux"
-            if model_info["model_version"] in {"v2", "v2_hard_router"}
-            else "selected_switch_step"
-        ].squeeze(1)
+        signed_step_available = model_info["model_version"] != "v3"
+        if signed_step_available:
+            predicted_step = prediction[
+                "selected_switch_step_aux"
+                if model_info["model_version"] in {"v2", "v2_hard_router"}
+                else "selected_switch_step"
+            ].squeeze(1)
+        else:
+            predicted_step = prediction["selected_role"].squeeze(1)
+        predicted_role = prediction["selected_role"].squeeze(1)
         values = {
             "dataset_index": np.asarray(selected_indices, dtype=np.int64),
             "session_id": np.asarray([sessions[index] for index in selected_indices]),
@@ -647,6 +690,10 @@ def run(args: argparse.Namespace) -> Path:
             "tau_s": flight_time.copy(),
             "target_switch_count": target_step,
             "predicted_switch_count": predicted_step.cpu().numpy().astype(np.int64),
+            "predicted_role": predicted_role.cpu().numpy().astype(np.int64),
+            "signed_step_available": np.full(
+                len(selected_indices), signed_step_available, dtype=np.bool_,
+            ),
             "conditional_error_m": conditional_error.float().cpu().numpy(),
             "hard_error_m": hard_error.float().cpu().numpy(),
             "conditional_displacement_error_m": conditional_displacement.float().cpu().numpy(),

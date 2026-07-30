@@ -8,6 +8,9 @@ from training.stage3.anonymous_vehicle_motion import AnonymousVehicleFutureModel
 from training.stage3.anonymous_vehicle_motion_v2 import (
     VisibilityAwareAnonymousVehicleFutureModel,
 )
+from training.stage3.continuous_invariant_anonymous_future import (
+    ContinuousInvariantAnonymousFutureModel,
+)
 from training.stage3.evaluate_anonymous_vehicle_motion_ballistic import (
     OPPOSITE_SOURCE_FAILURE,
     _canonical_ballistic_label,
@@ -20,6 +23,9 @@ from training.stage3.evaluate_final_visible_position_ballistic import TruthState
 from training.stage3.observable_future_pnp_ab import state_dict_sha256
 from training.stage3.train_anonymous_vehicle_motion import RUN_SCHEMA
 from training.stage3.train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
+from training.stage3.train_continuous_invariant_anonymous_future import (
+    RUN_SCHEMA as V3_RUN_SCHEMA,
+)
 from training.stage3.train_visibility_aware_expert_router import (
     RUN_SCHEMA as ROUTER_RUN_SCHEMA,
 )
@@ -57,6 +63,21 @@ def test_distance_rows_report_hard_conditional_and_both_selection_definitions() 
     assert np.isclose(two_to_three["exact_step_accuracy"], 0.5)
     assert np.isclose(two_to_three["modulo4_role_accuracy"], 1.0)
     assert overall["count"] == 3
+
+
+def test_v3_selection_diagnostics_reports_role_without_fake_signed_step() -> None:
+    queries = {
+        "predicted_switch_count": np.asarray([0, 1, 2], dtype=np.int64),
+        "predicted_role": np.asarray([0, 1, 2], dtype=np.int64),
+        "signed_step_available": np.zeros(3, dtype=np.bool_),
+        "target_switch_count": np.asarray([0, 5, -1], dtype=np.int64),
+        "hard_error_m": np.asarray([0.1, 0.2, 0.3], dtype=np.float32),
+        "conditional_error_m": np.asarray([0.1, 0.2, 0.2], dtype=np.float32),
+    }
+    metrics = _selection_diagnostics(queries)
+    assert metrics["exact_signed_step_accuracy"] is None
+    assert metrics["exact_signed_step_available"] is False
+    assert metrics["modulo4_physical_role_accuracy"] == pytest.approx(2 / 3)
 
 
 def test_pair_reverse_flag_is_audit_only() -> None:
@@ -182,6 +203,38 @@ def test_motion_checkpoint_loader_accepts_v2_only_at_update_2400(tmp_path) -> No
     rejected = tmp_path / "rejected-v2.pt"
     torch.save(payload, rejected)
     with pytest.raises(ValueError, match="update 2400"):
+        _load_motion_checkpoint(rejected)
+
+
+def test_motion_checkpoint_loader_accepts_v3_only_at_update_2100(tmp_path) -> None:
+    model = ContinuousInvariantAnonymousFutureModel(
+        channels=32, dropout=0.0, message_layers=2, basis_count=6,
+    )
+    payload = {
+        "schema_version": V3_RUN_SCHEMA,
+        "fixed_endpoint": True,
+        "checkpoint_role": "fixed_final_endpoint",
+        "progress": {"global_update": 2100},
+        "provenance": {
+            "oracle_association": True,
+            "deployable_pipeline": False,
+            "test_accessed": False,
+        },
+        "model_config": model.config,
+        "model": model.state_dict(),
+        "model_state_dict_sha256": state_dict_sha256(model.state_dict()),
+    }
+    accepted = tmp_path / "accepted-v3.pt"
+    torch.save(payload, accepted)
+    loaded, info = _load_motion_checkpoint(accepted)
+    assert info["global_update"] == 2100
+    assert info["model_version"] == "v3"
+    assert state_dict_sha256(loaded.state_dict()) == payload["model_state_dict_sha256"]
+
+    payload["progress"]["global_update"] = 2099
+    rejected = tmp_path / "rejected-v3.pt"
+    torch.save(payload, rejected)
+    with pytest.raises(ValueError, match="update 2100"):
         _load_motion_checkpoint(rejected)
 
 
