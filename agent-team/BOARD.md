@@ -1281,7 +1281,7 @@
   rad/s. Heldout conditional future Mean is 267.53 mm, while the same decoder
   supplied with truth state reaches 141.74 mm. The decoder is reusable enough
   for the next A/B; the history-to-4D state path is the current bottleneck.
-- [ ] Active: collect a fixed-6-mm multistate dataset that breaks the
+- [x] Collect a fixed-6-mm multistate dataset that breaks the
   session-to-motion shortcut. Each session keeps distance/camera/environment
   fixed but applies 12 ACK-bound continuous random motion segments, including
   one stationary block. The consumer reuses one Scene Control session: the
@@ -1309,11 +1309,25 @@
   consumer runner now stops the bridge writer before sealing and parses only
   the file-order last LF-committed truth record from a fixed-length snapshot.
   An unterminated append fragment is excluded; malformed committed JSON or a
-  non-integer timestamp fails closed. After regression and clean-commit validation, freeze a
-  new source-bound v2 contract and recapture all 24 sessions from scratch; do
-  not reuse the four v1 results under the new source commit.
-- [ ] After coverage audit, derive truth-history, observation, causal-physical
-  and observed-stream PnP/SF artifacts without opening the formal test split.
+  non-integer timestamp fails closed. The repaired source commit is `96461ea`.
+  Formal v2 completed 24/24 sessions and all 288 segments; 22 sessions passed
+  on attempt one and one session used two whole-session retries before its
+  accepted third run. Validation found zero plan/hash/ACK/camera/process/port
+  failures. The 26 raw runs are protected; only 24 canonical results are
+  selected. Manifest/contract SHA-256 are `70f354e0ea75eb2...d4f50e` and
+  `2dee2e1dff1fee3...f24259`.
+- [ ] Active: finish train/validation-only derivation and the pretraining
+  coverage audit. Qualified base r2 has 9,562 samples with
+  5,303/2,072/2,187 train/validation/test and binds the frozen contract. The
+  first base r1 attempt was interrupted after its command wrapper timed out;
+  it remains explicitly incomplete and is not a downstream source. Qualified
+  truth-history, causal-physical and observable-clean train/validation
+  derivatives are complete. The legacy observation-v4 builder opened test
+  shards despite downstream training not using them; it is being hardened to
+  enumerate train/validation only and to record `test_accessed=false` before
+  observed-stream PnP/SF construction.
+  After all derivatives complete, emit a per-segment survival table without
+  opening the formal test split.
   Do not count planned segments as coverage: emit a per-segment survival table
   through the PnP/SF parent and require at least 8/11 active segments with
   samples in every heldout session. Scan raw camera profile per frame and fail

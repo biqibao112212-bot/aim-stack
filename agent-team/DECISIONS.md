@@ -2120,3 +2120,27 @@
   24-session recapture; no pre-fix result is carried across the source boundary.
 - The rented RTX 3090 remains powered off and retained. Capture, derivation and
   training continue locally in the Windows `yolov8` environment.
+
+## 2026-07-30 decision 170: derived observation data keeps formal test sealed
+
+- Formal v2 capture completed 24/24 source-bound sessions and 288/288 motion
+  segments from clean commit `96461ea`. It produced 26 immutable raw runs: 24
+  canonical accepted results plus two rejected whole-session attempts. The
+  manifest SHA-256 is `70f354e0ea75eb212fcd09e93452b74fc89142cc831c1709f25f7ba050d4f50e`
+  and the capture-contract SHA-256 is
+  `2dee2e1dff1fee35ac37a2a17a1c03c9bbba02f16add66388e718236d7f24259`.
+- The qualified base r2 dataset contains 9,562 samples split as
+  5,303 train, 2,072 validation and 2,187 sealed test. Base construction owns
+  initial split materialization; every later truth, clean, observation, PnP,
+  S/F, audit and training stage must report `test_accessed=false` and must not
+  load a test shard.
+- The observation-v4 builder previously iterated train, validation and test
+  shards while documenting only that training would not use test. That is too
+  weak for the formal contract. Observation derivation now enumerates only
+  train/validation, records zero test shards opened, and reports counts for the
+  actual derivative rather than copying base totals. The paired PnP builder
+  rejects an observation manifest that lacks the fail-closed test-access flag.
+- The timed-out base r1 directory has `build_state=in_progress` and no dataset
+  manifest. It is retained as incomplete diagnostic evidence and is forbidden
+  as a downstream source; the independently completed r2 directory is the only
+  qualified base for this run.

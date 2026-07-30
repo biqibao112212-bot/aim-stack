@@ -2,9 +2,9 @@
 
 The raw captures and the qualified v3 dataset are immutable.  This builder
 adds exact-exposure observation labels and two history quality channels to a
-new v4 directory without recollecting data or opening test data during
-training.  A missing exact frame is unknown; an exact frame with zero valid
-candidates is an explicit all-invisible label.
+new v4 directory without recollecting data.  Only train and validation shards
+are opened; test shards remain sealed.  A missing exact frame is unknown; an
+exact frame with zero valid candidates is an explicit all-invisible label.
 """
 
 from __future__ import annotations
@@ -127,6 +127,20 @@ def _future_labels(
     }
 
 
+def _select_training_shards(source_manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    selected = [
+        item for item in source_manifest["shards"]
+        if str(item.get("split")) in {"train", "validation"}
+    ]
+    split_counts = {
+        split: sum(str(item.get("split")) == split for item in selected)
+        for split in ("train", "validation")
+    }
+    if not selected or not all(split_counts.values()):
+        raise ValueError(f"no complete train/validation selection: {split_counts}")
+    return selected
+
+
 def build(args: argparse.Namespace) -> Path:
     source = Path(args.source_dataset).resolve()
     output = Path(args.output).resolve()
@@ -154,7 +168,7 @@ def build(args: argparse.Namespace) -> Path:
 
     quality_values: list[np.ndarray] = []
     shard_manifest: list[dict[str, Any]] = []
-    source_shards = [item for item in source_manifest["shards"] if item["split"] in {"train", "validation", "test"}]
+    source_shards = _select_training_shards(source_manifest)
     for ordinal, shard in enumerate(source_shards, 1):
         shard_path = source / str(shard["path"])
         with np.load(shard_path, allow_pickle=False) as loaded:
@@ -168,8 +182,7 @@ def build(args: argparse.Namespace) -> Path:
             raise ValueError(f"canonical source missing for {session_id}")
         observation_path = Path(str(source_record["observations"])).resolve()
         if not observation_path.is_file():
-            matches = list(raw_root.glob(f"*/run-*/observations.jsonl"))
-            matches = [path for path in matches if path.parent.parent.name == session_id]
+            matches = list((raw_root / session_id).glob("run-*/observations.jsonl"))
             if len(matches) != 1:
                 raise FileNotFoundError(f"canonical observations unavailable for {session_id}")
             observation_path = matches[0].resolve()
@@ -197,7 +210,6 @@ def build(args: argparse.Namespace) -> Path:
         relative = relative.with_name(
             relative.name.replace("train-", "obs-train-")
             .replace("validation-", "obs-validation-")
-            .replace("test-", "obs-test-")
         )
         destination = output / relative
         np.savez_compressed(destination, **new_arrays)
@@ -228,13 +240,41 @@ def build(args: argparse.Namespace) -> Path:
         "session_splits": output / "splits.json",
         "canonical_sources": output / "canonical_sources.jsonl",
     }
+    split_session_counts = {
+        split: sum(str(item["split"]) == split for item in shard_manifest)
+        for split in ("train", "validation")
+    }
+    split_sample_counts = {
+        split: sum(
+            int(item["sample_count"])
+            for item in shard_manifest
+            if str(item["split"]) == split
+        )
+        for split in ("train", "validation")
+    }
     dataset_manifest = {
         "schema_version": "stage3-dataset-v4-observation",
         "source_v3_dataset": str(source),
         "source_v3_manifest_sha256": _sha256(source_manifest_path),
         "qualification_passed": True,
-        "session_count": int(source_manifest["session_count"]),
-        "sample_count": int(source_manifest["sample_count"]),
+        "test_accessed": False,
+        "test_shards_opened": 0,
+        "splits": ["train", "validation"],
+        "included_splits": ["train", "validation"],
+        "excluded_splits": ["test"],
+        "source_session_count": int(source_manifest["session_count"]),
+        "source_sample_count": int(source_manifest["sample_count"]),
+        "source_test_shard_count": sum(
+            str(item.get("split")) == "test" for item in source_manifest["shards"]
+        ),
+        "session_count": len(source_shards),
+        "sample_count": sum(int(item["sample_count"]) for item in source_shards),
+        "split_session_counts": split_session_counts,
+        "split_sample_counts": split_sample_counts,
+        **({
+            "capture_contract": str(source_manifest["capture_contract"]),
+            "capture_contract_sha256": str(source_manifest["capture_contract_sha256"]),
+        } if "capture_contract_sha256" in source_manifest else {}),
         "observation_schema": source_manifest["observation_schema"],
         "truth_schema": source_manifest.get("truth_schema", "stage3-truth-v1"),
         "camera_gimbal_extrinsic_yaml": str(extrinsic_path),

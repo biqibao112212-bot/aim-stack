@@ -394,6 +394,15 @@ def _one_session_map(manifest: dict[str, Any], allowed_splits: set[str]) -> dict
     return result
 
 
+def _assert_sealed_observation_manifest(manifest: dict[str, Any]) -> None:
+    if bool(manifest.get("test_accessed", True)):
+        raise ValueError("PnP observation source accessed test")
+    if manifest.get("included_splits") != ["train", "validation"]:
+        raise ValueError("PnP observation source must materialize train/validation only")
+    if any(str(item.get("split")) == "test" for item in manifest.get("shards", [])):
+        raise ValueError("PnP observation source materialized a test shard")
+
+
 def build(args: argparse.Namespace) -> Path:
     clean_dir = Path(args.clean_dataset).resolve()
     observation_dir = Path(args.observation_dataset).resolve()
@@ -444,6 +453,7 @@ def build(args: argparse.Namespace) -> Path:
         raise ValueError("PnP source must be observation v4")
     if not bool(observation_manifest.get("qualification_passed", False)):
         raise ValueError("PnP observation source is not qualified")
+    _assert_sealed_observation_manifest(observation_manifest)
     if str(observation_manifest.get("source_v3_manifest_sha256")) != str(
         truth_manifest.get("source_dataset_manifest_sha256")
     ):
