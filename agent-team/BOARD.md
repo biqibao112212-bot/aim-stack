@@ -1156,7 +1156,7 @@
   gives 204.63/97.79/743.76 mm with 68.79%. V67 changes the frozen V66 result
   by only about 1--2 mm and its residual magnitude is about 14 mm mean, so
   another final-position refinement is not justified.
-- [ ] Active: agree the structural training boundary before changing weights.
+- [x] The structural training boundary was approved under decision 159.
   The current F encoder compresses the available anonymous four-handle history
   into one identity-switching primary stream and invalidates same-handle local
   velocity at switches. The candidate next experiment is an explicit anonymous
@@ -1186,15 +1186,26 @@
   unopened. Overall conditional/hard Mean is 207.63/212.74 mm; rotation is
   280.41/280.67 mm and combined is 178.17/185.26 mm. The 8--15-event slice
   remains 377.82/395.33 mm.
-- [ ] Active: do not interpret the final 61.44% exact signed-step accuracy as
+- [x] Do not interpret the final 61.44% exact signed-step accuracy as
   physical armor-role accuracy. `k` and `k+/-4` are one physical role in this
   model, final hard exceeds conditional by only 5.12 mm overall, and the
   3+-history-switch hard Mean is paradoxically 4.51 mm below conditional.
   Complete the no-training ballistic-time evaluation with exact-step and
   modulo-4 role metrics, one distance/error scatter and one table per motion
-  state before changing another weight.
-- [ ] Only if the corrected diagnostic supports it, replace the short-history
-  trajectory representation and then rebuild the larger train/validation
-  corpus under decisions 154--157 after verifying native 6 mm provenance, then
-  execute the formal three-stage run. If provenance cannot establish 6 mm,
+  state before changing another weight. The clean update-2100 evaluation keeps
+  581/587 windows; six opposite-source jumps fail closed. Rotation hard/
+  conditional Mean is 267.18/255.70 mm with 56.25% modulo-4 role accuracy;
+  combined is 166.10/159.56 mm with 71.36% role accuracy. The frozen states
+  remain unchanged.
+- [ ] Active: replace the short-history trajectory representation rather than
+  tuning the present selector. Per-handle temporal encoding must advance only
+  on actually visible events and retain true inter-observation time gaps;
+  motion-regime separation must be inferred from history rather than a truth
+  class input; the continuous decoder must predict one query-independent
+  trajectory state evaluated by a shared learned time basis. Train with equal
+  window/motion/history-bin weighting and make modulo-4 role the firing loss,
+  with signed crossing count retained only as an auxiliary task.
+- [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
+  train/validation corpus under decisions 154--157, verify native 6 mm
+  provenance, and execute the formal run. If provenance cannot establish 6 mm,
   collect new 6 mm sessions rather than silently mixing focal domains.

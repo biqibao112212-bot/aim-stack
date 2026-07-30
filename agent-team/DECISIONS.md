@@ -1719,3 +1719,42 @@
   window/query set before claiming an improvement. A later structural run must
   prioritize short-history trajectory evidence and motion-regime separation;
   selector recalibration is secondary.
+
+## 2026-07-30 decision 161: ballistic-time evaluation confirms a trajectory bottleneck
+
+- The frozen update-2,100 model is evaluated once per validation window at
+  `norm(frozen Mapper/S/H current position) / 22 m/s`. Exact dense truth builds
+  labels only; `_forward_only` proves that truth, session, pair and motion class
+  do not enter the network. Six of 587 windows jump directly from the observed
+  q0 source to its opposite source under the adjacent visible-stream contract;
+  they fail closed with full audit records. The accepted metric denominator is
+  581/587 (98.98%), split 176/181 rotation and 405/406 combined.
+- Rotation hard Mean/P50/P95 is 267.18/225.54/667.62 mm, versus conditional
+  255.70/208.24/616.61 mm. Exact signed-count accuracy is 50.00%, while
+  modulo-4 role accuracy is 56.25%; 11 of 88 exact-count errors are the same
+  physical role. Combined hard Mean/P50/P95 is 166.10/156.08/405.79 mm versus
+  conditional 159.56/134.85/395.70 mm; both selection definitions are 71.36%.
+- Selection is not the main XYZ error source. Hard minus conditional Mean is
+  only 11.48 mm for rotation and 6.53 mm for combined. Even among wrong-role
+  samples the mean excess is 26.24/22.81 mm. In the scatter plots, hard and
+  conditional points mostly overlap while a broad vertical spread remains at
+  the same distance.
+- Upstream q0 Mean/P50/P95 is 94.79/38.75/317.94 mm for rotation and
+  35.70/18.27/122.27 mm for combined. Anchor-relative conditional displacement
+  Mean is still 267.17/157.49 mm, so neither perfect role choice nor q0 repair
+  alone can remove the trajectory error. Rotation and combined occupy different
+  distance bands in this validation, so the plots diagnose each motion but do
+  not establish a cross-motion distance law.
+- The next model change is therefore structural and trajectory-first. For each
+  anonymous handle, temporal state must update only on its truly visible
+  events and use the real elapsed time across gaps. A history-conditioned
+  latent mixture may separate rotation-like and translation-plus-rotation-like
+  regimes, but no truth motion-class input is allowed. The decoder predicts a
+  query-independent trajectory state once and evaluates a shared learned
+  continuous-time basis at arbitrary tau, rather than independently regressing
+  every query.
+- The firing selector becomes a two-level task: modulo-4 role is primary and
+  exact signed crossing count is auxiliary. Training is equal-weighted by
+  window, motion and history bin, followed by a short joint stage and a final
+  frozen-trajectory selector recalibration. More epochs on the current head and
+  another final-position residual remain closed.
