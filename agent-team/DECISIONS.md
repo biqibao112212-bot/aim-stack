@@ -1939,3 +1939,36 @@
   blocked until a local CUDA capacity smoke and deliberate resume check pass.
 - Subsequent compute uses the local Windows `yolov8` CUDA environment. The
   rented RTX 3090 instance remains powered off and retained; it is not released.
+
+## 2026-07-30 decision 166: v72 rejects raw-position temporal shortcuts
+
+- V72 passed structure, capacity and recovery gates. A forced stop at update
+  150 resumed with updates 160--200 losses and final state SHA bit-exact to an
+  uninterrupted control. The one fixed 2,100-update endpoint completed in
+  405.1 seconds from clean commit `6405148`; checkpoint SHA-256 is
+  `d7de1bf6daf9da142a011f48d1f9e1c65d3931f945b21581cf50899107d2239f`.
+  Mapper/S/H hashes stayed unchanged, joint isolation passed, validation did
+  not select a checkpoint and test remained unopened.
+- The endpoint fails cross-session accuracy rather than optimization closure.
+  Train overall conditional/hard Mean is 65.01/92.17 mm with 85.07%
+  session-macro role accuracy; heldout is 228.52/234.24 mm and 53.96%.
+  Rotation heldout conditional/hard Mean is 265.30/284.72 mm and combined is
+  213.64/213.82 mm. Hierarchical session sampling therefore does not itself
+  prevent the temporal representation from memorizing session fingerprints.
+- Ballistic range/22 m/s evaluation from clean commit `c6e257c` retains
+  581/587 windows. Rotation conditional/hard Mean is 250.51/287.09 mm with
+  52.84% role accuracy; combined is 166.97/201.22 mm with 46.42%. The scatter
+  bodies are broad within distance clusters, so another range calibration or
+  selector-only epoch run is rejected.
+- Root cause is narrowed to the reused v2 MotionContext: its TCN still consumes
+  raw historical relative XYZ and q0 quality fingerprints, despite the v3
+  final head being translation equivariant. V4-A replaces this with tokens
+  built from same-handle adjacent displacement, true visible-event gap,
+  velocity, time/switch masks and first-visible offset relative to q0 geometry.
+  Q0 relation remains the S-owned static armor geometry; raw history origins,
+  sigma/confidence/age/support-class are excluded from learned motion features.
+- Naive synchronized time compression is explicitly deferred. It changes
+  camera cadence and scales linear and angular speed together, so it could
+  introduce a new shortcut. A future augmentation must preserve the captured
+  dt distribution through causal resampling and must beat an identical v4-A
+  no-augmentation control. V4-A first isolates the representation change.

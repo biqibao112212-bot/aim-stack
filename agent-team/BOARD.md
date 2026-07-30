@@ -1258,8 +1258,24 @@
   The offline sampler balances motion, then session, then history bin, while
   session identity remains metadata and prefix dropout cannot cross bins.
   Twenty-one focused v3 tests and all 379 Stage3 tests pass.
-- [ ] Active: run the fixed local CUDA capacity and interruption/resume gate,
-  then one non-overwriting 1,200/600/300-update endpoint from a clean commit.
-  Mapper/S/H, v70/v71 checkpoints, test, export and online fire control remain
-  frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays
-  powered off but retained and must not be released.
+- [x] Complete v72 local CUDA capacity, exact interruption/resume and the one
+  fixed 1,200/600/300 endpoint. Resume from update 150 is bit-exact through
+  update 200. The full endpoint finishes in 405.1 s with frozen hashes and
+  joint isolation intact, but is rejected: train/heldout conditional Mean is
+  65.01/228.52 mm and session-macro role accuracy is 85.07%/53.96%.
+- [x] Generate the requested v72 ballistic distance-error plots locally at
+  `D:\仿真\runtime\stage3-evaluations\20260730-v72-continuous-invariant-ballistic-r1`.
+  Rotation conditional/hard Mean is 250.51/287.09 mm; combined is
+  166.97/201.22 mm. The broad bodies and distance clusters reject a simple
+  monotone range explanation; 581/587 labels are eligible and all hashes pass.
+- [ ] Active: replace the remaining v2 temporal shortcut with v4-A. Its TCN
+  receives only same-handle adjacent displacement, real visible-event gap,
+  velocity, time/switch masks and first-visible offset relative to that
+  handle's q0 relation. Raw historical position and q0 quality fields never
+  enter learned motion features. Do not add naive time-scaling augmentation:
+  review found that it would alter sampling cadence and jointly scale linear
+  and angular speed. Fifteen focused v4 tests and all 396 Stage3 tests pass;
+  local CUDA smoke/recovery remains before the fixed full run.
+- [ ] Mapper/S/H, v70/v71/v72 checkpoints, test, export and online fire control
+  remain frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090
+  stays powered off but retained and must not be released.
