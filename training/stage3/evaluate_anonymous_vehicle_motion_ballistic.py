@@ -23,6 +23,10 @@ from .anonymous_vehicle_motion import (
     AnonymousVehicleFutureModel,
     target_candidate_rows,
 )
+from .anonymous_vehicle_motion_v2 import (
+    VisibilityAwareAnonymousVehicleFutureModel,
+    target_roles,
+)
 from .cyclic_future_foundation import load_frozen_v19
 from .evaluate_final_visible_position_ballistic import (
     TruthState,
@@ -34,22 +38,25 @@ from .pnp_q0_hypothesis_adapter import (
     load_frozen_pnp_mapper,
 )
 from .train_anonymous_vehicle_motion import (
-    RUN_SCHEMA,
+    RUN_SCHEMA as V1_RUN_SCHEMA,
     CombinedMotionDataset,
     _dataset,
     _forward_only,
     frozen_upstream_batch,
 )
+from .train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
 from .train_causal_physical_ab import _git_state, _to_device
 from .train_pnp_window_mapper_distillation import _atomic_json
 
 
 EVALUATION_SCHEMA = "stage3-anonymous-vehicle-motion-ballistic-v1"
+V2_EVALUATION_SCHEMA = "stage3-visibility-aware-anonymous-motion-ballistic-v2"
 FLIGHT_TIME_FORMULA = "norm(frozen_upstream_current_position_m)/bullet_speed_mps"
 MOTION_NAMES = {2: "rotation", 3: "combined"}
 DISTANCE_EDGES_M = tuple(float(value) for value in range(1, 8))
 DISPLAY_BODY_PERCENTILE = 95.0
 EXPECTED_FINAL_UPDATE = 2100
+EXPECTED_V2_FINAL_UPDATE = 2400
 OPPOSITE_SOURCE_FAILURE = "observable target jumped to an opposite source slot"
 
 
@@ -164,16 +171,25 @@ def _canonical_ballistic_label(
         raise
 
 
-def _load_motion_checkpoint(path: Path) -> tuple[AnonymousVehicleFutureModel, dict[str, Any]]:
+def _load_motion_checkpoint(
+    path: Path,
+) -> tuple[
+    AnonymousVehicleFutureModel | VisibilityAwareAnonymousVehicleFutureModel,
+    dict[str, Any],
+]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
-    if payload.get("schema_version") != RUN_SCHEMA:
+    schema = payload.get("schema_version")
+    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA}:
         raise ValueError("anonymous motion checkpoint schema mismatch")
     if not bool(payload.get("fixed_endpoint", False)):
         raise ValueError("ballistic evaluation requires the fixed final endpoint")
     if payload.get("checkpoint_role") != "fixed_final_endpoint":
         raise ValueError("anonymous motion checkpoint is not the final endpoint")
-    if int(payload.get("progress", {}).get("global_update", -1)) != EXPECTED_FINAL_UPDATE:
-        raise ValueError("anonymous motion checkpoint is not update 2100")
+    expected_update = (
+        EXPECTED_FINAL_UPDATE if schema == V1_RUN_SCHEMA else EXPECTED_V2_FINAL_UPDATE
+    )
+    if int(payload.get("progress", {}).get("global_update", -1)) != expected_update:
+        raise ValueError(f"anonymous motion checkpoint is not update {expected_update}")
     provenance = payload.get("provenance", {})
     if (
         provenance.get("oracle_association") is not True
@@ -183,16 +199,28 @@ def _load_motion_checkpoint(path: Path) -> tuple[AnonymousVehicleFutureModel, di
         raise ValueError("anonymous motion checkpoint provenance is not sealed")
     config = payload["model_config"]
     context = config["motion_context"]
-    model = AnonymousVehicleFutureModel(
-        channels=int(config["channels"]),
-        dropout=float(config["dropout"]),
-        message_layers=int(context["message_layers"]),
-        trained_horizon_s=float(config["trained_horizon_s"]),
-        maximum_absolute_step=int(config["maximum_absolute_step"]),
-        position_scale_m=float(config["position_scale_m"]),
-        history_scale_s=float(config["history_scale_s"]),
-        residual_scale_m=float(config["residual_scale_m"]),
-    )
+    common = {
+        "channels": int(config["channels"]),
+        "dropout": float(config["dropout"]),
+        "message_layers": int(context["message_layers"]),
+        "trained_horizon_s": float(config["trained_horizon_s"]),
+        "maximum_absolute_step": int(config["maximum_absolute_step"]),
+        "position_scale_m": float(config["position_scale_m"]),
+        "history_scale_s": float(config["history_scale_s"]),
+        "residual_scale_m": float(config["residual_scale_m"]),
+    }
+    if schema == V1_RUN_SCHEMA:
+        model = AnonymousVehicleFutureModel(**common)
+        model_version = "v1"
+        evaluation_schema = EVALUATION_SCHEMA
+    else:
+        model = VisibilityAwareAnonymousVehicleFutureModel(
+            **common,
+            basis_count=int(config["basis_count"]),
+            latent_experts=int(config["latent_experts"]),
+        )
+        model_version = "v2"
+        evaluation_schema = V2_EVALUATION_SCHEMA
     model.load_state_dict(payload["model"], strict=True)
     actual_hash = state_dict_sha256(model.state_dict())
     if actual_hash != payload.get("model_state_dict_sha256"):
@@ -204,6 +232,8 @@ def _load_motion_checkpoint(path: Path) -> tuple[AnonymousVehicleFutureModel, di
         "global_update": int(payload["progress"]["global_update"]),
         "checkpoint_role": payload["checkpoint_role"],
         "fixed_endpoint": True,
+        "model_version": model_version,
+        "evaluation_schema": evaluation_schema,
         "provenance": provenance,
         "model_config": config,
     }
@@ -530,13 +560,21 @@ def run(args: argparse.Namespace) -> Path:
             (len(eligible_rows), 1), dtype=torch.bool, device=device,
         )
         prediction = model(_forward_only(dynamic))
-        row = target_candidate_rows(
-            dynamic["candidate_step"], dynamic["candidate_mask"],
-            dynamic["target_switch_count"], dynamic["target_query_mask"],
-        )
-        conditional = prediction["conditional_position_m"].gather(
-            2, row[:, :, None, None].expand(-1, -1, 1, 3),
-        ).squeeze(2).squeeze(1)
+        if model_info["model_version"] == "v2":
+            role = target_roles(
+                dynamic["target_switch_count"], dynamic["target_query_mask"],
+            )
+            conditional = prediction["role_position_m"].gather(
+                2, role[:, :, None, None].expand(-1, -1, 1, 3),
+            ).squeeze(2).squeeze(1)
+        else:
+            row = target_candidate_rows(
+                dynamic["candidate_step"], dynamic["candidate_mask"],
+                dynamic["target_switch_count"], dynamic["target_query_mask"],
+            )
+            conditional = prediction["conditional_position_m"].gather(
+                2, row[:, :, None, None].expand(-1, -1, 1, 3),
+            ).squeeze(2).squeeze(1)
         hard = prediction["position_m"].squeeze(1)
         target = dynamic["truth_current_position_m"] + dynamic["target_visible_delta_m"].squeeze(1)
         current = dynamic["current_position_m"]
@@ -551,7 +589,11 @@ def run(args: argparse.Namespace) -> Path:
         q0_error = torch.linalg.vector_norm(
             current - dynamic["truth_current_position_m"], dim=-1,
         )
-        predicted_step = prediction["selected_switch_step"].squeeze(1)
+        predicted_step = prediction[
+            "selected_switch_step_aux"
+            if model_info["model_version"] == "v2"
+            else "selected_switch_step"
+        ].squeeze(1)
         values = {
             "dataset_index": np.asarray(selected_indices, dtype=np.int64),
             "session_id": np.asarray([sessions[index] for index in selected_indices]),
@@ -636,7 +678,7 @@ def run(args: argparse.Namespace) -> Path:
         reason = str(failure["reason"])
         failure_reason_counts[reason] = failure_reason_counts.get(reason, 0) + 1
     result = {
-        "schema_version": EVALUATION_SCHEMA,
+        "schema_version": model_info["evaluation_schema"],
         "status": "complete",
         "evaluation_only": True,
         "model_updated": False,
