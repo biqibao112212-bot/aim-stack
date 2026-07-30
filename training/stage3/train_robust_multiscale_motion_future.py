@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import inspect
 from pathlib import Path
+import textwrap
 
 import torch
 
@@ -15,6 +18,12 @@ from .robust_multiscale_motion_future import (
 from .observable_future_pnp_ab import sha256_file, state_dict_sha256
 from .train_anonymous_vehicle_motion import _json_sha256
 from .train_stable_motion_bottleneck_future import build_parser, train
+from .train_stable_motion_bottleneck_future import motion_state_cells
+from .train_increment_invariant_anonymous_future import (
+    HierarchicalSessionHistorySampler,
+    _history_label,
+    apply_bin_preserving_prefix_dropout,
+)
 from .train_pnp_window_mapper_distillation import _atomic_json
 
 
@@ -38,13 +47,44 @@ FROZEN_FUTURE_MODULES = (
     "motion_state_encoder", "handle_encoder", "time_basis",
     "trajectory_coefficient_head", "role_coefficient_head",
 )
+CONTROL_SAMPLER_COMMIT = "39a23282160f158f6dfd3278aeb8c0d5e60b14fb"
+CONTROL_SAMPLER_SOURCE_SHA256 = {
+    "motion_state_cells": "5cdce7b2f5eaba4a14d9214c6f37ba742c928c17c64309ccc5b53c2358f4c2cc",
+    "HierarchicalSessionHistorySampler": "165fd703087e823b73d51e08a38e3d185dd7270218d664ce0144bdc7e5d37f26",
+    "apply_bin_preserving_prefix_dropout": "96457e8abf80e1f4b8713c26b336e40ff018c06985df7159cc85fe38dc0201ac",
+    "_history_label": "a10497b1d13a13a500b5d349c43f5b7b890bcf668387c4bbabfda00db7aa88e9",
+}
 
 
 def _mean(group: dict, metric: str) -> float:
     return float(group[metric]["mean_m"])
 
 
+def _semantic_source_sha256(value) -> str:
+    source = textwrap.dedent(inspect.getsource(value)).strip() + "\n"
+    return hashlib.sha256(source.encode("utf-8")).hexdigest()
+
+
+def _sampler_source_hashes() -> dict[str, str]:
+    return {
+        "motion_state_cells": _semantic_source_sha256(motion_state_cells),
+        "HierarchicalSessionHistorySampler": _semantic_source_sha256(
+            HierarchicalSessionHistorySampler
+        ),
+        "apply_bin_preserving_prefix_dropout": _semantic_source_sha256(
+            apply_bin_preserving_prefix_dropout
+        ),
+        "_history_label": _semantic_source_sha256(_history_label),
+    }
+
+
 def _preflight_control(control_checkpoint: Path) -> tuple[dict, dict]:
+    actual_sampler_source = _sampler_source_hashes()
+    if actual_sampler_source != CONTROL_SAMPLER_SOURCE_SHA256:
+        raise ValueError(
+            "state-gate sampler semantics differ from v77 control commit "
+            + CONTROL_SAMPLER_COMMIT
+        )
     if sha256_file(control_checkpoint) != CONTROL_CHECKPOINT_SHA256:
         raise ValueError("v77 update-800 control checkpoint hash differs")
     control = torch.load(control_checkpoint, map_location="cpu", weights_only=False)
@@ -60,7 +100,9 @@ def _preflight_control(control_checkpoint: Path) -> tuple[dict, dict]:
         raise ValueError("v77 control manifest contract payload differs")
     if control_manifest.get("run_id") != control.get("run_id"):
         raise ValueError("v77 control checkpoint/manifest run ID differs")
-    for name in ("dataset", "truth_history", "frozen_initial_state_dict_sha256"):
+    for name in (
+        "dataset", "truth_history", "frozen_initial_state_dict_sha256", "sampler",
+    ):
         if control_manifest["provenance"][name] != control["provenance"][name]:
             raise ValueError(f"v77 control checkpoint/manifest {name} differs")
     return control, control_manifest
@@ -99,6 +141,9 @@ def _finalize_state_gate(
         "frozen_upstream": (
             control_provenance["frozen_initial_state_dict_sha256"],
             actual_provenance["frozen_initial_state_dict_sha256"],
+        ),
+        "sampler": (
+            control_provenance["sampler"], actual_provenance["sampler"],
         ),
     }
     if any(control_value != actual_value for control_value, actual_value in lineage_checks.values()):
@@ -173,6 +218,8 @@ def _finalize_state_gate(
             "checkpoint_sha256": CONTROL_CHECKPOINT_SHA256,
             "contract_sha256": CONTROL_CONTRACT_SHA256,
             "fixed_state_updates": 800,
+            "sampler_commit": CONTROL_SAMPLER_COMMIT,
+            "sampler_semantic_source_sha256": CONTROL_SAMPLER_SOURCE_SHA256,
         },
         "lineage": {
             name: {"control": pair[0], "actual": pair[1], "matched": pair[0] == pair[1]}

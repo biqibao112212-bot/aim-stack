@@ -25,6 +25,7 @@ from training.stage3.train_robust_multiscale_motion_future import (
     CONTROL_FIELDS,
     FROZEN_FUTURE_MODULES,
     _finalize_state_gate,
+    _sampler_source_hashes,
     _validate_state_gate_args,
     build_state_gate_parser,
 )
@@ -48,6 +49,10 @@ def test_formal_parser_defaults_to_one_complete_state_only_stage() -> None:
     assert parser.get_default("selector_updates") == 0
     assert parser.get_default("decoder_joint_updates") == 0
     assert parser.get_default("stop_after_update") == 0
+
+
+def test_state_gate_sampler_semantics_match_v77_control_commit() -> None:
+    assert _sampler_source_hashes() == gate_module.CONTROL_SAMPLER_SOURCE_SHA256
 
 
 def test_formal_state_gate_rejects_stage_override() -> None:
@@ -83,6 +88,7 @@ def test_failed_state_gate_is_explicit_and_binds_frozen_control(
         "frozen_initial_state_dict_sha256": {
             "mapper": "mapper", "s": "s", "h": "h",
         },
+        "sampler": {"strategy": "same", "support": {"cells": 4}},
     }
     common_args = {name: f"value-{name}" for name in CONTROL_FIELDS}
     control_contract = {"args": common_args}

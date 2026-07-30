@@ -2249,8 +2249,30 @@
   >=0.963. Session macro, all five validation sessions and history bins remain
   mandatory diagnostics. A passing state gate may resume the fixed trajectory,
   selector and joint stages; a failed gate ends the run without extra epochs.
-- The implementation gate is 454 Stage3 tests, both repository boundary checks,
+- The implementation gate is 455 Stage3 tests, both repository boundary checks,
   a complete state-only CUDA smoke and a bit-exact 150->200 interruption/resume
   comparison. Compute remains local in Windows `yolov8`. The rented RTX 3090 is powered off
   but retained and must not be released. Test, export, online integration and
   fire control remain sealed.
+
+## 2026-07-30 decision 174: equal-budget A/B binds sampler semantics, not only seed
+
+- The first v6 r1 state gate completed all 800 updates while the parent was
+  acting on a final read-only review. It is diagnostic-only even though its
+  model and metrics are intact: the run bound the same data, parameters and
+  seed as v77 but did not machine-bind the sampler implementation itself. It
+  reports overall velocity/yaw/normalized error 0.399/1.621/0.0650 versus v77
+  0.492/1.893/0.0791, while combined high-speed velocity remains 1.132 m/s and
+  combined-11 normalized MAE remains 0.1795. Six of eight predeclared gates
+  fail, so the result would not authorize downstream training in any case.
+- Equal-budget comparisons now hash the exact semantic source of
+  `motion_state_cells`, `HierarchicalSessionHistorySampler`, `_history_label`
+  and `apply_bin_preserving_prefix_dropout` against v77 source commit
+  `39a23282160f158f6dfd3278aeb8c0d5e60b14fb`. The control checkpoint and
+  manifest must agree on their recomputed contract, run ID, dataset, truth,
+  frozen upstream and sampler provenance before training starts. Finalization
+  additionally requires the actual sampler strategy and support to equal the
+  control. The sampler implementation file is part of source provenance.
+- R1 and all checkpoints remain protected diagnostic evidence and are never
+  overwritten. The qualified rerun uses a new r2 root from a clean commit.
+  Test and later trajectory/selector stages remain sealed regardless of r1.

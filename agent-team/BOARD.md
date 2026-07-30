@@ -1346,8 +1346,18 @@
   passing state gate may start the predeclared trajectory and
   selector stages, followed by the two simple rotation/combined distance-error
   scatter plots.
-- [ ] V6 implementation has 454 passing Stage3 tests, both repository boundary
+- [ ] V6 implementation has 455 passing Stage3 tests, both repository boundary
   checks and a bit-exact 150->200 interruption/resume smoke. Mapper/S/H, v77
   decoder/selector, test, export and online fire control remain frozen. Use
   `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays powered off
   but retained and must not be released.
+- [ ] The first v6 r1 state run reached all 800 updates before the parent could
+  terminate it and is retained as diagnostic-only because the final review
+  found that "same sampler" was not yet machine-bound. It failed six of eight
+  gates but improved v77 overall velocity/yaw/normalized error from
+  0.492/1.893/0.0791 to 0.399/1.621/0.0650; combined high-speed velocity is
+  still 1.132 m/s and combined-11 normalized MAE is 0.1795. The sampler class,
+  state cells, history bins and prefix dropout are now semantic-hash-bound to
+  v77 source commit `39a2328`, and finalization compares exact sampler strategy
+  and support. After the new clean commit, rerun the same fixed gate only at a
+  new protected r2 root; do not promote or overwrite r1.

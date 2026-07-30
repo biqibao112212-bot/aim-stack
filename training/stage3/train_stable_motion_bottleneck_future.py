@@ -625,6 +625,9 @@ def train(
         "truth_join": Path(__file__).with_name("motion_truth_supervision.py").resolve(),
         "model_v4": Path(__file__).with_name("increment_invariant_anonymous_future.py").resolve(),
         "shared_runner": Path(__file__).with_name("train_anonymous_vehicle_motion.py").resolve(),
+        "sampler_implementation": Path(
+            inspect.getsourcefile(HierarchicalSessionHistorySampler) or ""
+        ).resolve(),
     }
     if extra_source_paths:
         source_paths.update({
