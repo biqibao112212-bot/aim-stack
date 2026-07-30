@@ -2,33 +2,44 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-25 strict single-handle F redesign (active handoff)
+## 2026-07-31 omega-first ordered closure V12 (active)
 
-- No trainer is active. Repository `main` is at
-  `464605c46f496836897c1db9b8e76e2376376bf7`. The worktree has four preserved
-  uncommitted V23 draft files: `cyclic_rotation_ab_loss.py`,
-  `cyclic_rotation_ab_model.py`, `tests/test_cyclic_rotation_ab.py`, and
-  `train_cyclic_future_expert.py`.
-- V23 formal training was never launched. Its two aborted smoke runs are
-  invalid because source changed while they ran. The draft adds ordered local
-  multi-track relations and tail losses, conflicts with the newly clarified
-  strict single-handle F contract, and is paused pending an explicit
-  discard/rework decision.
-- V19-r2 epoch 110 remains the accepted frozen S/q0 foundation. PnP, router,
-  export, online integration and test remain sealed. All datasets and model
-  checkpoints are protected and retained.
-- Read-only validation audit: the last-32 primary switches in 4.4%/66.2%/59.6%
-  of translation/rotation/combined windows. Current-handle observed-span
-  P10/P50 is 0.250/0.296 s for translation, 0.041/0.244 s for rotation and
-  0.044/0.249 s for combined. At the nominal 0.5-second target, only
-  95.35%/43.99%/57.83% of q0-current tracks remain virtually visible, but
-  their same-handle future truth is still present; leaving view is supervised
-  extrapolation, while cold/opposite never-seen tracks remain excluded.
-- Current in-progress item for the next conversation: define and validate a
-  flattened per-handle dataset and strict `F_i(history_i, time, tau)` forward
-  contract. First stratify clean error by observed time span/arc and forecast-
-  to-history ratio; then decide architecture and training budget. Do not start
-  another formal run before this interface review.
+- V11 is a valid rejected baseline, not an unfinished run. Its separate
+  mechanism audit corrected the old crossed-metric interpretation: the masked
+  mean of visible-plate apparent rates is not vehicle-center translation.
+  V11 does learn useful high-speed/pair1/pair2 behaviour, but contracts yaw
+  magnitude and contaminates velocity through its shared four-dimensional
+  update; more epochs or small loss tuning are not authorized.
+- V12 replaces the shared update with a strict typed computation. Event-ordered
+  relative factors estimate omega first. A learned history decoder then uses
+  omega, causal geometry and elapsed time to remove rotation; only the remaining
+  common handle residual estimates velocity. Relative/pair factors cannot write
+  velocity, velocity cannot write omega, and all recurrent/update paths are
+  bias-free and exactly zero-preserving. Inference still receives exactly the
+  six anonymous causal observation fields; it receives no physical armor ID,
+  class, session, truth, future or PnP-only quality input.
+- The frozen learned future decoder remains hash-protected and is not trained in
+  this screen. V12 has 1,547,652 gradient-reachable state parameters versus
+  V8's 1,487,688 (+4.03%). Focused tests pass 15/15 and the full Stage3 suite
+  passes 561/561. A formal-shape CUDA BF16 batch-64 backward reached every
+  state module with finite nonzero gradients at about 3,742 MiB. Consumer and
+  architecture boundary checks pass; simulator, SDK and Release remain read-only.
+- Validation is body-aware and fail-closed. Exact validation group counts are
+  750 overall, 300 combined, 82 high-speed combined, 149 core and
+  pair0/1/2/3 = 127/25/23/229. Pair interventions use full-validation
+  equal-support derangements and have changed-row support 15/6/11 for
+  pair1/2/3. The AA/AB/BA/BB diagnostic resynthesizes target history support
+  from independent truth velocity/omega sources, tests x and y translation
+  separately across all four direction quadrants, and retains common-ramp and
+  relative-reflection equivariance. Exact schemas reject booleans, non-finite
+  values, unexpected fields, bad counts and impossible percentile ordering.
+- Current in-progress item: commit the reviewed implementation from a clean
+  source tree, then run exactly two local RTX 4060 fixed-200-update seeds and
+  aggregate every state/causal gate independently. Failure stops this
+  architecture without epoch piling. Only a two-seed pass may authorize a new
+  learned future-position decoder and its final fine-tune; the later plots stay
+  simple: one distance-or-flight-time versus position-error scatter per motion
+  state, evaluated on validation rather than tail-only summaries.
 
 ## 2026-07-23 cyclic-track clean physical experts (historical; superseded)
 

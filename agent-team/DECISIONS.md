@@ -2669,3 +2669,45 @@
   closure, isolated omega/v refinement effects, a 2x2 common/relative source
   cross, common-ramp and relative-reversal equivariance, and explicit touched
   counts for pair0/1/2/3. Future-position decoding remains frozen.
+
+## 2026-07-31 decision 185: V12 makes omega-to-velocity the only state dependency
+
+- Decision 184's statement that the original V11 crossed diagnostic showed a
+  coarse translation/rotation decomposition is superseded. Its translation
+  source was the masked arithmetic mean of visible-plate apparent rates, which
+  includes rotational motion and is not vehicle-center velocity. A dedicated
+  mechanism audit still confirms the useful parts of the conclusion: V11's
+  state-conditioned behaviour is real, but exact factor correspondence is weak,
+  yaw magnitude is contracted, and the shared four-dimensional refinement lets
+  angular evidence perturb velocity. The q0 constant-twist target remains valid.
+- V12 implements a typed, ordered estimator. A bias-free causal GRU aggregates
+  anonymous relative event factors and completes all angular refinements first.
+  A learned history decoder combines the resulting omega with centered prior
+  geometry and elapsed time to predict already-observed rotational displacement.
+  Only the de-rotated common handle residual enters the separate velocity branch.
+  Pair evidence cannot directly update velocity and velocity never updates
+  omega; `omega -> velocity` is the sole cross-state edge. Every state path is
+  bias-free and a zero-motion/support input produces an exactly zero state.
+- The deployment contract remains exactly six raw causal fields and excludes
+  physical armor IDs, slots as identity, session, motion class, truth, future,
+  absolute range and PnP-only quality. The learned future-position modules stay
+  frozen and hash-checked. Reachable state capacity is 1,547,652 parameters,
+  4.03% above the protected V8-joint control and within the fixed 5% envelope.
+- The structural screen is two independent fixed-200-update seeds against their
+  same-seed V8 controls. In addition to body, combined, high-speed and
+  pair0/1/2/3 state metrics, acceptance requires fixed-state handle/pair closure
+  degradation under equal-support geometry derangement and changed-only
+  re-estimated yaw degradation. Pair1 and pair2 are never merged for this gate.
+  A full-validation AA/AB/BA/BB resynthesis keeps target support, masks and time,
+  switches truth velocity and omega independently, and uses a fixed prior gauge
+  satisfying zero weighted relative displacement and rate. Translation transfer
+  must pass separately on x and y with all four truth-delta quadrants present;
+  relative yaw transfer, common-ramp invariance and relative-reflection
+  antisymmetry must also pass.
+- Diagnostics and aggregation are fail-closed: exact container schemas, native
+  numeric types, finite values, fixed sample counts, ordered percentiles and
+  bounded probabilities/correlations are independently recomputed from each
+  fixed checkpoint. A boolean cannot masquerade as exact-zero write isolation.
+  Both seeds must pass every gate; otherwise V12 ends without extra updates.
+  Only a pass can start learned future-position redesign/fine-tuning and the
+  requested per-motion distance/flight-time versus error scatter plots.
