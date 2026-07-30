@@ -688,12 +688,16 @@ def train(args: argparse.Namespace) -> Path:
             )
 
         if stage == "trajectory" and not isolation["future_to_state"]:
-            gradient = torch.autograd.grad(
-                loss, _module_parameters(model, STATE_MODULES),
-                retain_graph=True, allow_unused=True,
-            )
-            if any(value is not None and bool(torch.any(value != 0)) for value in gradient):
-                raise RuntimeError("future loss leaked into physical state estimator")
+            # Stage configuration freezes the estimator and forward detaches
+            # its 4D output.  The focused autograd test separately exercises
+            # the detach boundary while the estimator parameters require grad.
+            if any(
+                parameter.requires_grad
+                for parameter in _module_parameters(model, STATE_MODULES)
+            ):
+                raise RuntimeError("trajectory stage left state estimator trainable")
+            if prediction["motion_state_normalized"].requires_grad:
+                raise RuntimeError("frozen state prediction unexpectedly carries grad")
             isolation["future_to_state"] = True
         if stage == "decoder_joint" and not isolation["selector_to_decoder"]:
             with torch.autocast("cuda", dtype=amp_dtype):
