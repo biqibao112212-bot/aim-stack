@@ -1230,12 +1230,19 @@
   conditional/hard Mean is 303.63/310.65 mm; combined is 154.33/173.66 mm.
   Frozen states remain unchanged and 581/587 windows are labeled, with the
   same six opposite-source fail-closed cases as v1.
-- [ ] Active: replace implicit mixture-gradient routing with a bounded
-  multiple-choice routing diagnostic. Freeze the existing expert trajectories,
-  label each training window by its lowest-error expert using supervision only,
-  and train the history-only gate to predict that expert. This tests whether
-  causal history can recover the large counterfactual headroom before changing
-  expert capacity or collecting a larger corpus.
+- [x] Implement the bounded multiple-choice routing diagnostic. It hash-locks
+  the rejected v70 endpoint, freezes Mapper/S/H, MotionContext and all three
+  trajectory experts, derives one detached best-expert label per training
+  window from true modulo-four-role future error, and optimizes only the
+  history gate. Primary validation is hard argmax routing; soft mixture and
+  oracle best-of-three remain explicitly secondary/noncausal. The fixed
+  baseline expert is selected from train overall and then held fixed on
+  validation. All 357 Stage3 tests and both repository boundary checks pass.
+- [ ] Active: run a bounded CUDA interruption/resume smoke, then the fixed
+  600-update full routing diagnostic from the same clean commit. Accept only
+  if frozen hashes, deterministic recovery, hard-router regret reduction,
+  reliable-margin recall and train/validation generalization gates pass; do
+  not promote the v70 trajectory bank or open test from this diagnostic.
 - [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
   train/validation corpus under decisions 154--157, verify native 6 mm
   provenance, and execute the formal run. If provenance cannot establish 6 mm,
