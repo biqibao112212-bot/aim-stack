@@ -577,11 +577,11 @@ def _checkpoint_payload(
 
 
 def _require_runtime(args: argparse.Namespace) -> torch.device:
-    if platform.system() != "Windows":
-        raise RuntimeError("this pilot is restricted to the Windows yolov8 runtime")
     environment = os.environ.get("CONDA_DEFAULT_ENV", "").lower()
     if "yolov8" not in environment and "yolov8" not in sys.executable.lower():
-        raise RuntimeError("this pilot must run in the yolov8 virtual environment")
+        raise RuntimeError(
+            "this pilot must run in the yolov8 virtual environment on Windows or Linux"
+        )
     device = torch.device(args.device)
     if device.type != "cuda" or not torch.cuda.is_available():
         raise RuntimeError("this pilot requires a CUDA GPU")

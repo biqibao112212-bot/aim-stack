@@ -1676,3 +1676,8 @@
   evidence fixes the representation bottleneck, not whether online association
   is solved. Formal training requires a larger decision-157-compatible native
   6 mm corpus and preserves test sealing.
+- The user subsequently moved this pilot from the local Windows GPU to the
+  rented RTX 3090 server. The runtime gate therefore permits Windows or Linux
+  only when the executable belongs to a `yolov8` environment and CUDA is
+  available; this does not weaken any data, hash, diagnostic or test-sealing
+  gate.

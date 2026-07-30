@@ -1176,7 +1176,8 @@
   short-suffix augmentation. Inputs may contain mapped anonymous history and
   frozen H relative q0 support only; physical ID, motion class, truth state,
   future PnP and session identity are forbidden from forward.
-- [ ] Run one non-overwriting Windows `yolov8`/CUDA r2 pilot with fixed
+- [ ] Run one non-overwriting `yolov8`/CUDA r2 pilot on the user-selected
+  RTX 3090 server with fixed
   trajectory, selector and controlled-joint update budgets. Report rotation,
   combined, 8--15-event and 3+-history-switch slices; never select an
   intermediate checkpoint from validation.
