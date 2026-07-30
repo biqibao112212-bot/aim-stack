@@ -1251,12 +1251,15 @@
   Rotation conditional/hard Mean is 306.39/305.71 mm and combined is
   153.46/173.92 mm, materially unchanged from v70. The same 581/587 windows
   are eligible and all frozen hashes remain unchanged.
-- [ ] Active: define the next F interface around a session-invariant continuous
-  motion representation built from normalized causal increments, with direct
-  trajectory prediction and no future-derived discrete expert ID. Before a new
-  full run, prove on held-out sessions that the representation preserves
-  motion information without encoding absolute/session-specific pose; keep S,
-  Mapper/H, v70/v71 checkpoints, test, export and online fire control frozen.
-  Per the user's instruction, all subsequent training runs use the local
-  `D:\Anaconda\envs\yolov8\python.exe` GPU environment. The rented RTX 3090
-  server was shut down after v71 results and plots were synchronized locally.
+- [x] Define and implement the independent v3 F interface as one continuous,
+  translation-equivariant anonymous role field. Absolute current position is
+  used only by the final `current + delta`; future-best expert IDs, latent
+  experts, exact crossing heads and soft-role position mixtures are absent.
+  The offline sampler balances motion, then session, then history bin, while
+  session identity remains metadata and prefix dropout cannot cross bins.
+  Twenty-one focused v3 tests and all 379 Stage3 tests pass.
+- [ ] Active: run the fixed local CUDA capacity and interruption/resume gate,
+  then one non-overwriting 1,200/600/300-update endpoint from a clean commit.
+  Mapper/S/H, v70/v71 checkpoints, test, export and online fire control remain
+  frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays
+  powered off but retained and must not be released.

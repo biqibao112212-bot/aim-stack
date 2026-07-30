@@ -1909,3 +1909,33 @@
   outputs must be trained jointly with stable semantics or evaluated as an
   uncertainty set; a future-derived expert ID may not become a deployment
   target again.
+
+## 2026-07-30 decision 165: v3 is one translation-equivariant continuous role field
+
+- V3 is an independent model and training schema; v1/v2 remain loadable and a
+  v2 state dictionary fails strict loading into v3. It reuses the verified
+  per-handle visible-event MotionContext, but removes the latent expert bank,
+  regime gate, future-best-expert supervision, exact signed-crossing head and
+  soft-role averaged-position loss.
+- Every learned module consumes only relative anonymous history, relative q0
+  support and continuous query time. `current_position_m` is used once, after
+  prediction, as `role_position = current + role_delta`. Common translation
+  leaves coefficients, deltas and role logits bit-exact and translates output
+  positions only; the delta has zero gradient with respect to current position.
+- The firing target is the q0-primary-relative modulo-four role. Physical ID,
+  motion class, session identity, truth fields, future PnP and legacy candidate
+  metadata are not forward inputs. Training truth gathers the correct role for
+  direct future-position Smooth-L1; the selector uses role CE plus distance
+  risk computed from detached role trajectories.
+- The fixed schedule has three stages only: 1,200 trajectory updates, 600
+  frozen-trajectory selector updates and 300 gradient-isolated joint updates.
+  There is no fourth recalibration stage and validation never selects a
+  checkpoint. The sampler first balances motion, then session within motion,
+  then history bin within session; prefix dropout stays inside the chosen bin.
+- Recovery retains all global RNG states, hierarchical sampler state, prefix
+  generator, optimizer/scaler state and source/upstream hashes. Mapper/S/H and
+  inactive-stage hashes are checked before every checkpoint and at completion.
+  Twenty-one focused v3 tests and all 379 Stage3 tests pass. Full training is
+  blocked until a local CUDA capacity smoke and deliberate resume check pass.
+- Subsequent compute uses the local Windows `yolov8` CUDA environment. The
+  rented RTX 3090 instance remains powered off and retained; it is not released.
