@@ -1322,10 +1322,14 @@
   first base r1 attempt was interrupted after its command wrapper timed out;
   it remains explicitly incomplete and is not a downstream source. Qualified
   truth-history, causal-physical and observable-clean train/validation
-  derivatives are complete. The legacy observation-v4 builder opened test
-  shards despite downstream training not using them; it is being hardened to
-  enumerate train/validation only and to record `test_accessed=false` before
-  observed-stream PnP/SF construction.
+  derivatives are complete. The sealed observation-v4 derivative now contains
+  7,375 train/validation rows across 19 sessions, reports zero test shards
+  opened and binds the formal capture contract. The first PnP-parent attempt
+  correctly failed because its join required truth-derived `rule_query` from
+  the label-free observation branch. That requirement is being corrected:
+  observation must match the six source-owned segment fields, while
+  truth-history/causal/clean remain the owners of `rule_query`. The failed PnP
+  r1 output is incomplete and not a downstream source.
   After all derivatives complete, emit a per-segment survival table without
   opening the formal test split.
   Do not count planned segments as coverage: emit a per-segment survival table

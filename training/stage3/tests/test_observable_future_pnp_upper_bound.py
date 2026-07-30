@@ -135,6 +135,16 @@ def test_segment_audit_join_is_exact_and_fail_closed() -> None:
         _assert_segment_audit_join(source, 0, (("peer", missing, 0),))
 
 
+def test_observation_segment_join_does_not_fabricate_truth_rule_query() -> None:
+    source = _segment_audit_fixture()
+    observation = {name: value.copy() for name, value in source.items()}
+    observation.pop("rule_query")
+
+    assert _assert_segment_audit_join(
+        source, 0, (("observation", observation, 0),)
+    )
+
+
 def test_observable_clean_join_uses_exact_key_not_row_order() -> None:
     arrays = {
         "session_id": np.asarray(["s", "s"]),

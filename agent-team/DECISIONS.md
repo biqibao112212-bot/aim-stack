@@ -2144,3 +2144,19 @@
   manifest. It is retained as incomplete diagnostic evidence and is forbidden
   as a downstream source; the independently completed r2 directory is the only
   qualified base for this run.
+
+## 2026-07-30 decision 171: rule-query truth stays out of observation derivation
+
+- `rule_query` is computed only after exact truth checks constant velocity,
+  yaw rate, center rollout, identity and geometry over every future endpoint.
+  The observation-v4 branch derives from base observations and must not
+  reconstruct, assume or copy this truth-owned label.
+- Exact PnP pairing therefore requires observation-v4 to match the six
+  source-owned ACK fields: motion epoch, segment start/end, history start,
+  future end and constant-motion admission. Truth-history, causal-physical and
+  observable-clean must additionally contain and exactly match `rule_query`.
+  The source row still requires every rule query true and both 2 us guards.
+- The first formal PnP-parent r1 attempt failed closed on the former overstrict
+  join before producing a manifest. It is retained as incomplete diagnostic
+  evidence and will not be used by PnP/SF or training; a new r2 derivative is
+  required after clean-commit validation.

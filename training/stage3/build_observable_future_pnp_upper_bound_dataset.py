@@ -114,7 +114,11 @@ def _assert_segment_audit_join(
         if name not in source:
             raise ValueError(f"multistate source is missing segment field: {name}")
     for label, arrays, row in peers:
-        for name in required:
+        # Observation-v4 is a label-free derivative of the base windows.  The
+        # truth-derived rule_query is introduced by truth-history and must not
+        # be fabricated in that observation-only branch.
+        peer_required = SEGMENT_AUDIT_FIELDS if label == "observation" else required
+        for name in peer_required:
             if name not in arrays:
                 raise ValueError(f"{label} is missing multistate segment field: {name}")
             if not np.array_equal(source[name][source_row], arrays[name][row]):
