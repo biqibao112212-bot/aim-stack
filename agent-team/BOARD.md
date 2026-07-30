@@ -1343,19 +1343,30 @@
   failure is translation/rotation entanglement and magnitude contraction, not
   tanh saturation, one bad scale, PnP noise, pair-only evidence or insufficient
   external state dimension.
-- [ ] Active: implement and run the fixed 800-update state-only v7 factorized
-  common/relative motion A/B. Keep the exact six-field causal input and external
-  `[vx,vy,vz,yaw_rate]` output. An unordered relative-shape branch estimates
-  signed yaw from normalized current/prior `rrT`, deltas, rates and commutator
-  features. A separate same-handle/common-centroid branch estimates planar
-  translation, conditioned only by detached predicted yaw; `vz` has an
-  independent head. Pair latent may not directly enter translation, translation
-  may not enter yaw, and no shared projection may emit all four coordinates.
-  Common-velocity ramp augmentation enforces yaw invariance and translation
-  equivariance without entering deployed forward. Updates 1--250 specialize
-  yaw, 251--600 freeze yaw and train translation/z, and 601--800 jointly
-  calibrate the separated heads and fusers. Mapper/S/H and exact v77-update-800
-  decoder/selector remain frozen; failure stops before future training.
+- [x] Complete and reject the qualified V7 r2 state gate. The exact fixed
+  update-800 checkpoint is protected at
+  `20260730-v79-v7-factorized-state-gate-r2`; SHA-256 is
+  `ecec8cf915b507ddc5b84ee99a9a37c92dddd42eac5a0a328c79cc9fe9ff2ba7`,
+  source commit is `256c1a3`, and test remains unopened. All eight gates fail:
+  overall velocity/yaw/normalized error is 0.458 m/s, 4.127 rad/s and 0.1040;
+  combined velocity/yaw is 0.649 m/s and 3.592 rad/s; high-speed combined
+  velocity is 1.098 m/s; combined-11 normalized MAE is 0.2648; yaw-sign
+  accuracy is 0.8187. Clean-observation and truth-yaw-conditioned
+  interventions do not remove the failure. More V7 epochs or fine tuning are
+  not authorized.
+- [ ] Active: run the bounded V8 rigid-flow structural screen from a clean
+  commit. Train three arms for exactly 200 state-only updates under seeds
+  20260730 and 20260731: an equally trained V7 control; a separated model whose
+  translation reads only handle-common flow and yaw reads only exact
+  same-visible-set 10/30/70-ms pair differential flow; and a joint 4D twist
+  model that may combine handle, pair and current anonymous geometry. All arms
+  use the same dataset, sampler, frozen Mapper/S/H/future modules, V6 state
+  loss, batch order and seed/update-determined ramp augmentation. A candidate
+  may authorize a full 800-update V8 only if both seeds improve overall and
+  combined yaw by at least 30%, also improve high-speed combined yaw by at
+  least 30%, regress yaw-sign by at most 0.01 and regress overall/combined/
+  high-speed-combined velocity by at most 0.03 m/s. No future-position fine
+  tuning or scatter plots begin unless this state-structure screen passes.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs
@@ -1403,6 +1414,15 @@
   online fire control remain frozen. Use
   `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays powered off
   but retained and must not be released.
+- [x] V8 implementation preflight passes 501 Stage3 tests. A real RTX 4060
+  CUDA backward at formal channels=96/dropout=0.05 is finite for all three
+  arms. The ramp draw is isolated from architecture-dependent dropout RNG and
+  depends only on run seed plus update; its dependency source is hash-bound.
+  The six-run aggregate restores the intentionally omitted interruption field,
+  revalidates checkpoint/manifest/source identity, requires the exact 3x2 arm
+  matrix, and reports total state parameters without mislabelling unreachable
+  legacy context parameters as active capacity. The rented RTX 3090 remains
+  powered off and retained.
 - [x] The first v6 r1 state run reached all 800 updates before the parent could
   terminate it and is retained as diagnostic-only because the final review
   found that "same sampler" was not yet machine-bound. It failed six of eight

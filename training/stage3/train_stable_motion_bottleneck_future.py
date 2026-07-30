@@ -504,6 +504,7 @@ def train(
         args.selector_updates, args.decoder_joint_updates,
     )
     state_step_contract = _callable_contract(state_step_function)
+    state_loss_contract = _callable_contract(state_loss_function)
     final_diagnostic_contract = _callable_contract(final_diagnostic_function)
     if state_gate_only:
         if args.motion_state_updates <= 0 or any(value != 0 for value in stage_lengths[1:]):
@@ -675,6 +676,7 @@ def train(
         "physics_decoder": False,
         "selected_model_family": model.config.get("family"),
         "state_gate_only": state_gate_only,
+        "state_loss_function": state_loss_contract,
         "state_step_function": state_step_contract,
         "final_diagnostic_function": final_diagnostic_contract,
         "trainable_initial_state_dict_sha256": trainable_initial,
@@ -708,6 +710,7 @@ def train(
     contract = {
         "schema_version": run_schema,
         "state_gate_only": state_gate_only,
+        "state_loss_function": state_loss_contract,
         "state_step_function": state_step_contract,
         "final_diagnostic_function": final_diagnostic_contract,
         "frozen_module_initialization": frozen_initialization,

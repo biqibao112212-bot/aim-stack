@@ -473,10 +473,13 @@ class RobustMultiScaleIncrementMotionContext(nn.Module):
             raise ValueError("no causal multi-scale edge is available")
         return {
             "scale_vehicle_state": scale_vehicle,
+            "scale_handle_vehicle_state": handle_vehicle,
             "scale_available": scale_available,
             "scale_coordinate_available": scale_coordinate_available,
             "scale_reliability_feature": reliability_feature,
             "scale_handle_available": handle_available,
+            "scale_handle_weight_mass": handle_weight_mass.sum(dim=1),
+            "scale_handle_effective_sample_size": handle_ess.sum(dim=1),
             "scale_edge_weight_mass": handle_weight_mass.sum(dim=1) + pair_weight_mass,
             "scale_effective_sample_size": handle_ess.sum(dim=1) + pair_ess,
             "scale_pair_available": pair_available,
