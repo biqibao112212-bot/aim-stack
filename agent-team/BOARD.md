@@ -1211,11 +1211,17 @@
   selector, short-joint and frozen-trajectory recalibration stages. Twenty-one
   v2 contract/gradient/recovery tests and all 349 Stage3 tests pass; architecture and
   consumer-boundary checks pass.
-- [ ] Active: run a small fixed r2 CUDA overfit/smoke acceptance, including a
-  checkpoint-resume exercise. If finite gradients, frozen upstream hashes,
-  stage isolation and endpoint metrics pass, run exactly one non-overwriting
-  full r2 v2 pilot. Do not select a validation checkpoint or tune the fixed
-  schedule from intermediate metrics.
+- [x] Pass the fixed r2 CUDA smoke and corrected recovery exercise. Deliberate
+  termination in recalibration leaves immutable update 150; resuming repeats
+  update-175 and update-200 losses exactly and completes update 300 with
+  `gradient_isolation_verified=true`, frozen Mapper/S/H hashes unchanged and
+  test unopened. The 48-window capacity subset reaches 35.96 mm overall
+  conditional/hard Mean and 100% modulo-four role accuracy; this is only a
+  training-closure check, not a generalization result.
+- [ ] Active: run exactly one non-overwriting full r2 v2 pilot with the fixed
+  1,200 trajectory + 600 selector + 300 short-joint + 300 recalibration
+  schedule. Do not select a validation checkpoint or tune the schedule from
+  intermediate metrics.
 - [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
   train/validation corpus under decisions 154--157, verify native 6 mm
   provenance, and execute the formal run. If provenance cannot establish 6 mm,

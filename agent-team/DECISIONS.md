@@ -1805,3 +1805,15 @@
   after resuming directly into recalibration. The v2 recovery payload now
   persists and restores this gate, with a focused regression test. The affected
   smoke is diagnostic-only and cannot pass the final recovery acceptance.
+- After the fix, a fresh CUDA recovery run is terminated during recalibration
+  with immutable update 150 as its latest checkpoint. Resume repeats both
+  logged update-175 and update-200 objectives exactly, finishes the fixed
+  update-300 endpoint, preserves all frozen Mapper/S/H hashes and records the
+  isolation gate as true. The checkpoint SHA-256 is
+  `acc136b8f169f13f792aee889c7747456a04c959348bd3619c74a2799c956911`.
+- On its deliberately tiny 24+24-window validation capacity slice, the
+  corrected smoke reaches 35.96 mm conditional/hard Mean, 100% modulo-four
+  role accuracy and 75.22% auxiliary exact-count accuracy. This proves the v2
+  optimization and role factorization can close a small task; it is not a
+  generalization estimate and does not authorize hyperparameter selection.
+  The one full r2 pilot now uses the predeclared 1,200/600/300/300 schedule.
