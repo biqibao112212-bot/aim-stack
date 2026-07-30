@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import inspect
+import sys
 from types import SimpleNamespace
 
 import torch
@@ -15,7 +16,10 @@ from training.stage3.paired_twist_set_future import (
 )
 from training.stage3.tests.test_anonymous_vehicle_motion import _batch
 from training.stage3.tests.test_stable_motion_bottleneck_future import _supervised_batch
-from training.stage3.train_stable_motion_bottleneck_future import STATE_MODULES
+from training.stage3.train_stable_motion_bottleneck_future import (
+    STATE_MODULES,
+    _callable_contract,
+)
 from training.stage3.train_paired_twist_set_probe import (
     LOCKED_VALUES,
     PROBE_SEEDS,
@@ -70,6 +74,22 @@ def test_v9_api_is_exactly_six_fields_and_forbids_identity_inputs() -> None:
     assert config["motion_context"]["long_projective_yaw_lags"] is False
     assert config["motion_context"]["early_geometry_velocity_pooling"] is False
     assert config["per_coordinate_scale_selection"] is False
+
+
+def test_callable_contract_canonicalizes_python_m_entrypoint(monkeypatch) -> None:
+    def diagnostic_hook() -> None:
+        return None
+
+    diagnostic_hook.__module__ = "__main__"
+    main_module = sys.modules["__main__"]
+    monkeypatch.setattr(
+        main_module, "__spec__",
+        SimpleNamespace(name="training.stage3.synthetic_probe"),
+        raising=False,
+    )
+    contract = _callable_contract(diagnostic_hook)
+    assert contract is not None
+    assert contract["module"] == "training.stage3.synthetic_probe"
 
 
 def test_v9_reachable_state_capacity_matches_v8_joint_within_five_percent() -> None:

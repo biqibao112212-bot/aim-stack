@@ -2468,3 +2468,24 @@
   training and simple distance/error scatter plots remain frozen until the
   state screen passes. Compute remains local; the retained RTX 3090 server
   stays powered off.
+
+## 2026-07-30 decision 180: callable provenance uses the canonical `python -m` module
+
+- Both first V9 r1 runs completed their fixed 200 updates and individually
+  validated in-process, but the independent aggregate refused them before
+  evaluating gates. A hook defined in the executable runner was recorded as
+  module `__main__` during `python -m`; importing that same runner from the
+  aggregate exposed its canonical package name. The qualname and semantic
+  source SHA-256 were identical, so this is a runtime alias bug in provenance,
+  not changed training code or corrupted checkpoints.
+- Callable contracts now replace `__main__` with
+  `sys.modules["__main__"].__spec__.name` when that canonical name is available.
+  Direct script execution without a module spec remains `__main__`; ordinary
+  imported functions are unchanged. A dedicated regression simulates the
+  `python -m` entrypoint. The fix is shared by Stage3 runners because the base
+  contract helper owns this serialization rule.
+- The two r1 checkpoints remain protected diagnostic evidence and are never
+  rewritten or manually promoted. Formal V9 evidence must be regenerated from
+  a clean commit into new r2 roots so checkpoint, manifest, callable contract
+  and aggregate all bind the same canonical source identity. Test remains
+  unopened; no gate is weakened.

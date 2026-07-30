@@ -79,8 +79,14 @@ def _callable_contract(value: Any | None) -> dict[str, str] | None:
     if value is None:
         return None
     source = textwrap.dedent(inspect.getsource(value)).strip() + "\n"
+    module = str(value.__module__)
+    if module == "__main__":
+        main_spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+        canonical_name = getattr(main_spec, "name", None)
+        if isinstance(canonical_name, str) and canonical_name:
+            module = canonical_name
     return {
-        "module": str(value.__module__),
+        "module": module,
         "qualname": str(value.__qualname__),
         "semantic_source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
     }

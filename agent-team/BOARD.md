@@ -1395,6 +1395,14 @@
   The full 750-sample diagnostic exactly reproduces the protected V8 control
   metrics and retains the 300 combined, 82 high-speed-combined and 149 core
   supports. Test remains unopened.
+- [ ] The first two V9 r1 runs reached their fixed update-200 checkpoints, but
+  aggregation correctly stopped before any gate report because a diagnostic
+  callable launched through `python -m` was recorded under runtime module
+  `__main__`; the normal imported finalizer saw its canonical package module.
+  Source/qualname hashes match, but r1 remains protected diagnostic evidence
+  and is not promoted. `_callable_contract` now canonicalizes a `python -m`
+  entrypoint through `__main__.__spec__.name`; after its clean commit, rerun
+  both fixed seeds under new r2 roots and aggregate only those r2 artifacts.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs
