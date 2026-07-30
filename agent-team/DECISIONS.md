@@ -2559,3 +2559,64 @@
   and yaw by at least 10% or 0.30 rad/s. Both seeds pass separately or the
   structure ends without extra epochs. Future fine tuning, scatter plots,
   export and online integration remain frozen.
+
+## 2026-07-30 decision 183: local yaw votes are rejected in favour of global history closure
+
+- The clean fixed V10 aggregate at
+  `20260730-v82-v10-paired-residual-aggregate-r1` is a valid `failed` result
+  from commit `d58f9e6`; both seeds reached update 200 and test remains
+  unopened. Each seed passes exactly 4/14 gates. The paired planar branch is
+  causally useful: pair1/2 velocity improves 11.14/13.13% over V8, and removing
+  the planar residual worsens combined velocity by 20.74/30.91%. This rules out
+  the claim that relative evidence is absent or wholly ignored.
+- The angular definition fails in the body of the distribution, not only the
+  tail. Pair1/2 yaw regresses 64.78/70.44%, combined yaw regresses
+  37.15/49.24% and high-speed-combined yaw regresses 43.50/46.17%. The yaw
+  median also worsens. Pair1 and pair2 cannot remain one diagnostic group:
+  broken pairing improves pair1 yaw by 20.22/10.14%, while it worsens pair2 yaw
+  by about 47% in both seeds. The merged pair1/2 intervention therefore hides
+  an invalid pair1 shortcut. The base local pair-vote yaw is worse than final
+  yaw by roughly 2 rad/s; the common-conditioned correction rescues part of the
+  error but cannot repair the local-vote definition.
+- The next estimator treats each exact event/scale/handle edge as an evidence
+  factor for one global twist rather than asking each local bundle to predict
+  global yaw. A learned causal history decoder must reconstruct already
+  observed displacements from that twist and prior geometry, and aggregated
+  closure residuals refine the same state for a fixed small number of shared
+  iterations. This is learned analysis-by-synthesis over causal history, not a
+  hand-written physical future decoder. It still consumes exactly the six
+  observation fields and no ID, class, session, truth, future or q0 quality.
+- The next screen reports pair1, pair2 and pair3 separately. Its decisive
+  counterfactual crosses translation evidence from one validation sample with
+  intact relative-rotation factors from another compatible sample: planar
+  velocity must follow the former and yaw/sign the latter. Breaking the donor
+  factor's internal event/scale geometry--differential correspondence must
+  worsen state and history-closure error. Separate handle-geometry and
+  pair-geometry interventions are also retained. Failure ends the structure
+  without extra updates; future-position training stays frozen.
+- The implemented closure decoder is typed and block-sparse. Handle translation
+  reads only candidate velocity and time. Handle rotation reads yaw, centered
+  prior geometry and time. Pair rotation reads yaw, prior pair geometry and
+  time and cannot read velocity. The initial pair and pair-residual messages
+  are bias-free multiplicative geometry--motion--time gates, so zeroing any
+  factor makes that branch exactly zero. Closure loss is normalized per sample
+  and per factor type, preventing full pair3 histories from dominating pair1
+  and pair2 solely by token count. The formal capacity is 1,467,004 reachable
+  state parameters, within 5% of the protected V8 control.
+- The crossed counterfactual is a donor-timeline resynthesis rather than tensor
+  splicing. The translation source contributes the arithmetic masked mean of
+  all valid handle rates and a q0 center estimated from every valid source
+  edge. The rotation donor contributes centered handle endpoints, pair
+  geometry, times and support. Absolute endpoints are reconstructed on the
+  donor timeline so both `delta = current - prior` and
+  `delta = rate * elapsed / history_scale` remain true. The broken version
+  independently rolls the donor's centered handle and pair geometry while
+  retaining common translation, kinematics and support. Formal acceptance
+  requires that this break worsen both hybrid-state error and observed-history
+  closure error; it is not enough for one tail metric to move.
+- The independent aggregate reconstructs each model from its immutable
+  manifest, restores only the runtime `stop_after_update=0` default omitted
+  from the contract hash, reruns the complete locked argument validator,
+  recomputes reachable capacity, replays the final diagnostics from the fixed
+  checkpoint, and binds the protected V8 path/SHA and recorded control metrics.
+  Candidate self-reported capacity or controls cannot satisfy the gate.

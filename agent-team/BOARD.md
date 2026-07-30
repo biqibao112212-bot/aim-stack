@@ -1431,15 +1431,45 @@
   overall/combined/high-speed/core/pair1-2 groups and exactly replays the V8
   controls. Three independent read-only reviews are READY; 526 Stage3 tests
   and both repository boundary checks pass. Test remains unopened.
-- [ ] Active: screen V10 for exactly 200 updates under both existing seeds against the
-  same protected V8-joint controls and original V9 gates. Add two causal-use
-  requirements: broken pairing must worsen high-speed-combined velocity by at
-  least 10% or 0.15 m/s, and zeroing the learned planar rotation compensation
-  must worsen combined or high-speed-combined velocity by at least 8% or
-  0.10 m/s. A dedicated pair1/pair2 group must improve both velocity and yaw
-  by at least 10%; breaking pairing in that group must worsen velocity by at
-  least 5% or 0.05 m/s and yaw by at least 10% or 0.30 rad/s. Failure stops the
-  structure without extra updates.
+- [x] The fixed V10 two-seed screen completed and was validly rejected at
+  `20260730-v82-v10-paired-residual-aggregate-r1`; both candidates reached
+  update 200 from clean commit `d58f9e6`, all artifacts are hash-bound and test
+  remains unopened. Each seed passes exactly 4/14 gates. Pair1/2 velocity does
+  improve by 11.14/13.13%, and removing the paired planar residual worsens
+  combined velocity by 20.74/30.91%, so the paired evidence is real. However,
+  pair1/2 yaw regresses 64.78/70.44%, combined yaw regresses 37.15/49.24%, and
+  high-speed yaw regresses 43.50/46.17%. Splitting support exposes the semantic
+  failure: broken pairing actually improves pair1 yaw, while pair2 carries the
+  misleading merged intervention pass. Independent local yaw votes are
+  rejected; no extra updates or full V10 run are authorized. The screen used
+  the protected same-seed V8-joint controls and original V9 gates, plus causal
+  use requirements for high-speed broken pairing, pair1/2 performance and
+  broken pairing, and the zero-planar-residual intervention.
+- [x] Implement and preflight the replacement for independent local yaw votes:
+  one learned global rigid-flow state constrained by the complete observed
+  history. Exact event/scale/handle edges are factor messages, not local state
+  predictions. A typed block-sparse causal decoder reconstructs already
+  observed handle and pair displacements from the single inferred twist; two
+  shared residual refinements update that same state. Pair messages are strict
+  zero-preserving geometry--motion--time interactions, pair-free histories have
+  an exactly zero pair branch, and the decoder cannot read the observed target
+  displacement or current endpoint as a shortcut. The formal model has
+  1,467,004 gradient-reachable state parameters versus V8's 1,487,688, within
+  5%. Validation preflight retains 750 overall, 300 combined, 82 high-speed,
+  149 core and 127/25/23/229 pair0/1/2/3 samples. The donor-time crossed-factor
+  diagnostic selects 267/300 combined samples from 52 non-self donors and
+  preserves both displacement identities to numerical precision. A real CUDA
+  BF16 batch-64 backward is finite and reaches every state tensor while future
+  modules remain frozen. Fourteen focused and 540 full Stage3 tests pass; all
+  read-only design/finalizer reviews are READY. Test remains unopened.
+- [ ] Active: commit the validated global-state/history-closure structure, then
+  run exactly two local CUDA seeds for 200 state-only updates and independently
+  aggregate them against the protected same-seed V8 controls. Each seed must
+  separately pass the predeclared overall, combined, high-speed, pair1/2/3,
+  zero-refinement, broken-geometry and crossed-factor gates. A failure ends
+  this structure without added epochs. Only a two-seed pass may unfreeze a new
+  learned future-position decoder and the simple per-motion distance/error
+  scatter plots; the current insensitive decoder is not promoted.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs
