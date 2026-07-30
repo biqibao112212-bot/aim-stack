@@ -1316,29 +1316,29 @@
   failures. The 26 raw runs are protected; only 24 canonical results are
   selected. Manifest/contract SHA-256 are `70f354e0ea75eb2...d4f50e` and
   `2dee2e1dff1fee3...f24259`.
-- [ ] Active: finish train/validation-only derivation and the pretraining
-  coverage audit. Qualified base r2 has 9,562 samples with
-  5,303/2,072/2,187 train/validation/test and binds the frozen contract. The
-  first base r1 attempt was interrupted after its command wrapper timed out;
-  it remains explicitly incomplete and is not a downstream source. Qualified
-  truth-history, causal-physical and observable-clean train/validation
-  derivatives are complete. The sealed observation-v4 derivative now contains
-  7,375 train/validation rows across 19 sessions, reports zero test shards
-  opened and binds the formal capture contract. The first PnP-parent attempt
-  correctly failed because its join required truth-derived `rule_query` from
-  the label-free observation branch. That requirement is being corrected:
-  observation must match the six source-owned segment fields, while
-  truth-history/causal/clean remain the owners of `rule_query`. The failed PnP
-  r1 output is incomplete and not a downstream source.
-  After all derivatives complete, emit a per-segment survival table without
-  opening the formal test split.
-  Do not count planned segments as coverage: emit a per-segment survival table
-  through the PnP/SF parent and require at least 8/11 active segments with
-  samples in every heldout session. Scan raw camera profile per frame and fail
-  any non-wide-6mm/dual-focal evidence before training.
-  Retrain the exact frozen v5 architecture/loss/schedule as the single data A/B.
-  Report heldout 4D state metrics, predicted-vs-truth-state decoder gap,
-  conditional/hard position metrics and one distance/error scatter per motion.
+- [ ] Active: rebuild the formal v2 derivative chain under the deployed
+  latest-32 history contract, then run the predeclared segment-survival audit.
+  The first complete derivative chain remains protected diagnostic evidence.
+  Its validation coverage is 11/11 active segments for all three rotation
+  sessions but only 5/11 for both combined sessions, so it is forbidden as a
+  training source. Raw frame scans show target observations through nearly
+  every 3-second block; the first loss is tensorization, not detector range or
+  6-mm visibility. The base retained up to 200 events although final S/F uses
+  only 32. Combined target translation can reverse inside that roughly
+  2-second retained interval, so an obsolete pre-reversal event invalidated
+  the entire history-to-future constant-motion window.
+  Formal ACK-bound rows now retain only the latest 32 valid events, right
+  aligned in the unchanged 200-event tensor; legacy datasets still retain up
+  to 200. Segment lookup and the ego-stability precheck use the same segment-
+  local latest-32 window. The full retained-history-to-future truth check,
+  half-open ACK interval and both 2-us guards remain strict. A durable audit
+  now treats the capture plan as the left table, verifies every base history
+  against raw latest-32 observations, checks exact lineage and history subsets
+  through PnP/SF, scans train/validation raw profiles, never opens test and
+  requires at least 8/11 active segments in every validation session. All 441
+  Stage3 tests and both repository boundary checks pass. Next create only new,
+  non-overwriting r3/r2 derivatives from a clean committed source, run the
+  fixed audit, and start the unchanged v5 training A/B only if that gate passes.
 - [ ] Mapper/S/H, v70/v71/v72 checkpoints, test, export and online fire control
   remain frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090
   stays powered off but retained and must not be released.

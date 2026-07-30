@@ -149,6 +149,52 @@ def test_last_200_irregular_valid_events_are_preserved_without_grid_collision() 
     assert sample.event_time_s[-1] == 0.0
 
 
+def test_multistate_motion_change_before_last_32_is_outside_model_history() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(40))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    truths[7] = replace(truths[7], velocity_world_mps=(1.0, 0.0, 0.0))
+    segment = {
+        "motion_command_epoch": 1,
+        "mode": "spin",
+        "start_timestamp_ns": timestamps[0] - 2_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    sample = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=segment,
+    )
+    assert sample is not None
+    assert int(sample.event_mask.sum()) == 32
+    assert not sample.event_mask[:168].any()
+    assert sample.event_mask[168:].all()
+    assert sample.history_start_ns == timestamps[8]
+    assert np.isclose(sample.event_time_s[168], (timestamps[8] - t0) / 1e9)
+
+
+def test_multistate_candidate_overflow_before_last_32_is_outside_model_history() -> None:
+    t0 = 2_000_000_000
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(40))]
+    observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    observations[7] = _observation(timestamps[7], 7, armor_count=5)
+    truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
+    segment = {
+        "motion_command_epoch": 1,
+        "mode": "spin",
+        "start_timestamp_ns": timestamps[0] - 2_000,
+        "end_timestamp_ns": t0 + 100_000_000,
+    }
+    sample = _make_sample(
+        observations[-1], observations, truths,
+        {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
+        motion_segment=segment,
+    )
+    assert sample is not None
+    assert int(sample.event_mask.sum()) == 32
+
+
 def test_position_monitor_uses_one_joint_permutation() -> None:
     target = torch.arange(2 * 3 * 4 * 3, dtype=torch.float32).reshape(2, 3, 4, 3)
     prediction = target[:, :, [2, 0, 3, 1], :]
@@ -303,21 +349,24 @@ def test_multistate_window_rejects_history_or_future_across_ack_boundary() -> No
 
 def test_multistate_full_history_truth_change_is_rejected() -> None:
     t0 = 2_000_000_000
-    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(16))]
+    timestamps = [t0 - offset * 20_000_000 for offset in reversed(range(40))]
     observations = [_observation(timestamp, index) for index, timestamp in enumerate(timestamps)]
     truths = [_constant_truth(timestamp, index) for index, timestamp in enumerate(timestamps)]
-    truths[3] = replace(truths[3], velocity_world_mps=(1.0, 0.0, 0.0))
+    truths[13] = replace(truths[13], velocity_world_mps=(1.0, 0.0, 0.0))
     segment = {
         "motion_command_epoch": 1,
         "mode": "spin",
-        "start_timestamp_ns": t0 - 400_000_000,
+        "start_timestamp_ns": timestamps[0] - 2_000,
         "end_timestamp_ns": t0 + 100_000_000,
     }
+    diagnostics: dict[str, object] = {}
     assert _make_sample(
         observations[-1], observations, truths,
         {"mode": "spin"}, EXTRINSIC, query_taus=(0.0,),
         motion_segment=segment,
+        diagnostics=diagnostics,
     ) is None
+    assert diagnostics["rejection_counts"]["nonconstant_full_motion_window"] == 1
 
 
 def test_multistate_motion_class_comes_from_the_active_segment() -> None:

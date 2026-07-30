@@ -851,7 +851,12 @@ def build_dataset(args: argparse.Namespace) -> Path:
         "shard_strategy": "one-session-per-shard",
         "build_workers": args.workers,
         "tensor_contract": {
-            "history_selection": "latest_200_valid_observation_events",
+            "history_selection": (
+                "formal_ack_bound_latest_32_valid_observation_events_right_aligned_to_200; "
+                "legacy_latest_200_valid_observation_events"
+            ),
+            "formal_motion_history_event_limit": 32,
+            "legacy_history_event_limit": 200,
             "minimum_recent_history_seconds": 0.2,
             "maximum_latest_valid_age_seconds": 0.05,
             "maximum_armors_per_frame": 4,

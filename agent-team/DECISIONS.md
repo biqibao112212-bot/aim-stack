@@ -2160,3 +2160,39 @@
   join before producing a manifest. It is retained as incomplete diagnostic
   evidence and will not be used by PnP/SF or training; a new r2 derivative is
   required after clean-commit validation.
+
+## 2026-07-30 decision 172: formal history matches the deployed 32-event estimator
+
+- The first complete v2 derivative chain is diagnostic-only. All three
+  rotation validation sessions retain samples in 11/11 active ACK segments,
+  while both combined validation sessions retain only 5/11 and fail the
+  predeclared 8/11 gate. Raw observation scans show valid wide-6-mm detections
+  throughout nearly every segment, so the missing combined coverage is not a
+  detector, camera-range or model-visibility failure.
+- The base tensorizer retained up to 200 valid events, roughly two seconds at
+  the recorded cadence, while every deployed S/F path consumes only the final
+  32. Combined linear motion can reverse at its span boundary inside one
+  3-second command block. A pre-reversal event that the model never consumes
+  therefore made the full 200-event truth window nonconstant and rejected
+  otherwise valid post-reversal supervision until almost the segment end.
+- Formal rows with ACK segment metadata now select the latest at most 32 valid
+  events inside that segment and right-align them in the unchanged `[200,...]`
+  base tensors. Legacy rows without segment metadata retain the previous
+  latest-200 contract. Segment discovery is moved before the ego-stability
+  precheck so both stages use the same segment-local selected history.
+- This is a data-contract correction, not a relaxation of truth supervision.
+  `history_start_ns` is the first actually retained event; the complete
+  retained-history-to-future interval must still have constant velocity,
+  yaw-rate, constant-twist position/yaw, producer, target and geometry. The ACK
+  interval remains half-open and both 2-us boundary guards remain mandatory.
+- A predeclared train/validation-only audit owns the next gate. It left-joins
+  every planned ACK epoch, hash-checks opened shards, checks core audit fields
+  and history subsets through base/truth/causal/clean/PnP/PnP-SF, recomputes
+  base latest-32 timestamps from raw observations, scans every opened frame for
+  `wide_6mm`, and records zero test shard/raw opens. Every validation session
+  must retain common-usable samples in at least 8/11 active epochs before the
+  unchanged v5 architecture, losses and update schedule may train.
+- All prior base/derivative attempts and raw captures remain protected and are
+  never overwritten or deleted. Rebuilds use new r3/r2 artifact roots. Compute
+  remains local in the Windows `yolov8` CUDA environment; the rented RTX 3090
+  stays powered off but retained and must not be released.

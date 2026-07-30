@@ -27,6 +27,7 @@ from .schema import (
 
 MAX_ARMORS = 4
 EVENT_COUNT = 200
+FORMAL_MOTION_HISTORY_EVENT_LIMIT = 32
 MIN_HISTORY_S = 0.2
 MAX_LATEST_AGE_S = 0.05
 QUERY_TAUS_S = (0.0, 0.1, 0.2, 0.5)
@@ -342,12 +343,18 @@ def _make_sample(
         ]
 
     valid_events = [frame for frame in eligible if valid_armors(frame)]
-    selected = valid_events[-EVENT_COUNT:]
+    history_event_limit = (
+        FORMAL_MOTION_HISTORY_EVENT_LIMIT
+        if motion_segment is not None else EVENT_COUNT
+    )
+    selected = valid_events[-history_event_limit:]
     if not selected:
         reject("no_valid_observation_events")
         return None
     contributing_start_ns = (
-        selected[0].timestamp_ns if len(selected) == EVENT_COUNT else eligible[0].timestamp_ns
+        selected[0].timestamp_ns
+        if motion_segment is not None or len(selected) == history_event_limit
+        else eligible[0].timestamp_ns
     )
     if any(
         len(frame.armors) > MAX_ARMORS
@@ -573,16 +580,48 @@ def build_samples(
             for anchor_index, anchor in enumerate(epoch_frames):
                 if anchor.timestamp_ns - last_anchor < step_ns:
                     continue
+                segment = None
+                if motion_segments is not None and session_id in motion_segments:
+                    segment = next((
+                        value for value in motion_segments[session_id]
+                        if int(value["start_timestamp_ns"]) <= anchor.timestamp_ns
+                        < int(value["end_timestamp_ns"])
+                    ), None)
+                    if segment is None:
+                        if diagnostics is not None:
+                            counts = diagnostics.setdefault("rejection_counts", Counter())
+                            assert isinstance(counts, Counter)
+                            counts["anchor_outside_motion_segment"] += 1
+                        continue
+                history_event_limit = (
+                    FORMAL_MOTION_HISTORY_EVENT_LIMIT
+                    if segment is not None else EVENT_COUNT
+                )
+                history_frames = epoch_frames[:anchor_index + 1]
+                if segment is not None:
+                    segment_start_ns = int(segment["start_timestamp_ns"])
+                    history_frames = [
+                        frame for frame in history_frames
+                        if frame.timestamp_ns >= segment_start_ns
+                    ]
                 valid_history = [
-                    frame for frame in epoch_frames[:anchor_index + 1]
+                    frame for frame in history_frames
                     if any(
                         armor.valid and all(math.isfinite(value) for value in (*armor.position_m, armor.yaw_rad))
                         for armor in frame.armors
                     )
-                ][-EVENT_COUNT:]
+                ][-history_event_limit:]
                 history_start_ns = (
-                    valid_history[0].timestamp_ns
-                    if len(valid_history) == EVENT_COUNT else epoch_frames[0].timestamp_ns
+                    (
+                        valid_history[0].timestamp_ns
+                        if valid_history else history_frames[0].timestamp_ns
+                    )
+                    if segment is not None
+                    else (
+                        valid_history[0].timestamp_ns
+                        if len(valid_history) == history_event_limit
+                        else epoch_frames[0].timestamp_ns
+                    )
                 )
                 if min_history_timestamp_ns is not None and history_start_ns < min_history_timestamp_ns:
                     if diagnostics is not None:
@@ -603,19 +642,6 @@ def build_samples(
                 query_rng = np.random.default_rng(query_seed)
                 random_taus = tuple(float(value) for value in query_rng.uniform(0.0, 0.5, 4))
                 query_taus = QUERY_TAUS_S + random_taus
-                segment = None
-                if motion_segments is not None and session_id in motion_segments:
-                    segment = next((
-                        value for value in motion_segments[session_id]
-                        if int(value["start_timestamp_ns"]) <= anchor.timestamp_ns
-                        < int(value["end_timestamp_ns"])
-                    ), None)
-                    if segment is None:
-                        if diagnostics is not None:
-                            counts = diagnostics.setdefault("rejection_counts", Counter())
-                            assert isinstance(counts, Counter)
-                            counts["anchor_outside_motion_segment"] += 1
-                        continue
                 sample = _make_sample(
                     anchor, epoch_frames[:anchor_index + 1], epoch_truths,
                     (manifests or {}).get(session_id), extrinsic, rng, query_taus, diagnostics,
