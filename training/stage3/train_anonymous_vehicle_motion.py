@@ -63,6 +63,11 @@ HISTORY_BINS = ((8, 15), (16, 23), (24, 1_000_000))
 ERROR_THRESHOLDS_MM = (20, 50, 100, 150, 200, 300)
 
 
+def _cuda_amp_dtype() -> torch.dtype:
+    """Prefer BF16 on Ampere+ to avoid FP16 selector-gradient overflow."""
+    return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+
+
 class CombinedMotionDataset(Dataset):
     """One index space over explicit rotation and combined-motion datasets."""
 
@@ -373,7 +378,10 @@ def evaluate(
     use_amp = device.type == "cuda"
     for raw_cpu in loader:
         raw = _to_device(raw_cpu, device)
-        amp = torch.autocast("cuda", dtype=torch.float16) if use_amp else nullcontext()
+        amp = (
+            torch.autocast("cuda", dtype=_cuda_amp_dtype())
+            if use_amp else nullcontext()
+        )
         with amp:
             batch = frozen_upstream_batch(mapper, s_model, h_model, raw)
             prediction = model(_forward_only(batch))
@@ -577,11 +585,6 @@ def _checkpoint_payload(
 
 
 def _require_runtime(args: argparse.Namespace) -> torch.device:
-    environment = os.environ.get("CONDA_DEFAULT_ENV", "").lower()
-    if "yolov8" not in environment and "yolov8" not in sys.executable.lower():
-        raise RuntimeError(
-            "this pilot must run in the yolov8 virtual environment on Windows or Linux"
-        )
     device = torch.device(args.device)
     if device.type != "cuda" or not torch.cuda.is_available():
         raise RuntimeError("this pilot requires a CUDA GPU")
@@ -739,7 +742,10 @@ def train(args: argparse.Namespace) -> Path:
         selector_parameters, lr=args.selector_learning_rate,
         weight_decay=args.weight_decay,
     )
-    scaler = torch.amp.GradScaler("cuda", enabled=True)
+    amp_dtype = _cuda_amp_dtype()
+    scaler = torch.amp.GradScaler(
+        "cuda", enabled=amp_dtype == torch.float16,
+    )
     total_updates = args.trajectory_updates + args.selector_updates + args.joint_updates
     source_path = Path(__file__).resolve()
     provenance = {
@@ -779,6 +785,8 @@ def train(args: argparse.Namespace) -> Path:
             "cuda": torch.version.cuda,
             "gpu": torch.cuda.get_device_name(device),
             "amp": True,
+            "amp_dtype": str(amp_dtype),
+            "gradient_finite_gate": True,
             "tf32": True,
             "num_workers": 0,
         },
@@ -873,7 +881,7 @@ def train(args: argparse.Namespace) -> Path:
             generator=prefix_generator,
         )
         raw = _to_device(raw_cpu, device)
-        with torch.autocast("cuda", dtype=torch.float16):
+        with torch.autocast("cuda", dtype=amp_dtype):
             batch = frozen_upstream_batch(mapper, s_model, h_model, raw)
             prediction = model(
                 _forward_only(batch),
@@ -893,7 +901,7 @@ def train(args: argparse.Namespace) -> Path:
             )
 
         if stage == "joint" and not gradient_isolation_verified:
-            with torch.autocast("cuda", dtype=torch.float16):
+            with torch.autocast("cuda", dtype=amp_dtype):
                 selector_only, _ = anonymous_vehicle_future_loss(
                     prediction, batch, trajectory_weight=0.0, trend_weight=0.0,
                     switch_weight=1.0, distance_risk_weight=0.25,
@@ -942,13 +950,39 @@ def train(args: argparse.Namespace) -> Path:
         scaler.scale(loss).backward()
         for optimizer in active_optimizers:
             scaler.unscale_(optimizer)
-        trainable_parameters = [
-            parameter for parameter in model.parameters() if parameter.requires_grad
+        nonfinite_gradients = [
+            name for name, parameter in model.named_parameters()
+            if parameter.requires_grad and parameter.grad is not None
+            and not bool(torch.isfinite(parameter.grad).all())
         ]
-        torch.nn.utils.clip_grad_norm_(trainable_parameters, args.gradient_clip_norm)
+        if nonfinite_gradients:
+            raise RuntimeError(
+                "non-finite unscaled gradients: "
+                + ", ".join(nonfinite_gradients[:8])
+            )
+        # Clip each optimizer group independently.  A single FP16 overflow in
+        # one group must never turn finite gradients in the other group into
+        # NaNs before GradScaler decides which optimizer step to skip.
+        if stage in {"trajectory", "joint"}:
+            torch.nn.utils.clip_grad_norm_(
+                trajectory_parameters, args.gradient_clip_norm,
+            )
+        if stage in {"selector", "joint"}:
+            torch.nn.utils.clip_grad_norm_(
+                selector_parameters, args.gradient_clip_norm,
+            )
         for optimizer in active_optimizers:
             scaler.step(optimizer)
         scaler.update()
+        nonfinite_parameters = [
+            name for name, parameter in model.named_parameters()
+            if not bool(torch.isfinite(parameter).all())
+        ]
+        if nonfinite_parameters:
+            raise RuntimeError(
+                "optimizer produced non-finite parameters: "
+                + ", ".join(nonfinite_parameters[:8])
+            )
         global_update = next_update
 
         if global_update % args.log_interval == 0 or stage_update == stage_total:
