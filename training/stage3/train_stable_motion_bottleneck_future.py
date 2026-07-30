@@ -225,7 +225,11 @@ def evaluate_motion(
     device: torch.device,
 ) -> dict[str, Any]:
     model.eval()
-    group_names = ("overall", "rotation", "combined", "stationary", "active")
+    group_names = (
+        "overall", "rotation", "combined", "stationary", "active",
+        "combined_speed_gt_1_7", "history_8_15", "history_16_23",
+        "history_24_31", "history_32",
+    )
     storage = {
         name: {
             "velocity": [], "yaw": [], "normalized": [], "oracle": [],
@@ -256,6 +260,8 @@ def evaluate_motion(
             prediction["motion_state_normalized"] - target_normalized
         ).abs().mean(dim=-1)
         active = target_physical.abs().amax(dim=1) > 1e-5
+        planar_speed = torch.linalg.vector_norm(target_physical[:, :2], dim=-1)
+        history_count = prediction["history_active_count"].to(torch.long)
         yaw_valid = target_physical[:, 3].abs() > 0.5
         velocity_valid = torch.linalg.vector_norm(target_physical[:, :2], dim=-1) > 0.1
         velocity_cosine = torch.nn.functional.cosine_similarity(
@@ -300,6 +306,13 @@ def evaluate_motion(
             "combined": batch["motion_class"] == 3,
             "stationary": ~active,
             "active": active,
+            "combined_speed_gt_1_7": (
+                (batch["motion_class"] == 3) & (planar_speed > 1.7)
+            ),
+            "history_8_15": (history_count >= 8) & (history_count <= 15),
+            "history_16_23": (history_count >= 16) & (history_count <= 23),
+            "history_24_31": (history_count >= 24) & (history_count <= 31),
+            "history_32": history_count == 32,
         }
         for name, mask in sample_groups.items():
             if not bool(mask.any()):
@@ -413,9 +426,10 @@ def _checkpoint_payload(
     fixed_endpoint: bool,
     run_id: str,
     gradient_isolation_verified: dict[str, bool],
+    schema_version: str = RUN_SCHEMA,
 ) -> dict[str, Any]:
     return {
-        "schema_version": RUN_SCHEMA,
+        "schema_version": schema_version,
         "model_class": type(model).__name__,
         "model_config": model.config,
         "model": model.state_dict(),
@@ -443,7 +457,20 @@ def _checkpoint_payload(
     }
 
 
-def train(args: argparse.Namespace) -> Path:
+def train(
+    args: argparse.Namespace,
+    *,
+    model_class: type[StableMotionBottleneckAnonymousFutureModel] = (
+        StableMotionBottleneckAnonymousFutureModel
+    ),
+    loss_function: Any = stable_motion_future_loss,
+    state_loss_function: Any | None = None,
+    run_schema: str = RUN_SCHEMA,
+    extra_source_paths: dict[str, Path] | None = None,
+    state_gate_only: bool = False,
+    frozen_initialization_checkpoint: Path | None = None,
+    frozen_initialization_modules: tuple[str, ...] = (),
+) -> Path:
     if not args.diagnostic_oracle_association:
         raise ValueError("requires explicit --diagnostic-oracle-association")
     if not args.allow_mapper_h_mismatch:
@@ -452,7 +479,12 @@ def train(args: argparse.Namespace) -> Path:
         args.motion_state_updates, args.trajectory_updates,
         args.selector_updates, args.decoder_joint_updates,
     )
-    if min(stage_lengths) <= 0:
+    if state_gate_only:
+        if args.motion_state_updates <= 0 or any(value != 0 for value in stage_lengths[1:]):
+            raise ValueError("state-only gate requires one positive state stage and zero later stages")
+        if state_loss_function is None:
+            raise ValueError("state-only gate requires a dedicated state loss")
+    elif min(stage_lengths) <= 0:
         raise ValueError("all four fixed stages need positive updates")
     if args.stop_after_update < 0 or args.stop_after_update >= sum(stage_lengths):
         if args.stop_after_update != 0:
@@ -466,7 +498,7 @@ def train(args: argparse.Namespace) -> Path:
         raise ValueError("stop-after-update must coincide with an immutable checkpoint")
     if CHECKPOINT_INTERVAL != 150:
         raise RuntimeError("immutable recovery checkpoint interval changed")
-    signature = inspect.signature(StableMotionBottleneckAnonymousFutureModel.forward)
+    signature = inspect.signature(model_class.forward)
     if "detach_motion_code" not in signature.parameters:
         raise RuntimeError("v5 forward lacks motion-gradient isolation")
 
@@ -533,12 +565,40 @@ def train(args: argparse.Namespace) -> Path:
         "h": state_dict_sha256(h_model.state_dict()),
     }
 
-    model = StableMotionBottleneckAnonymousFutureModel(
+    model = model_class(
         velocity_scale_mps=tuple(float(value) for value in motion_scale[:3]),
         yaw_rate_scale_rad_s=float(motion_scale[3]),
         channels=args.channels, dropout=args.dropout,
         message_layers=args.message_layers, basis_count=args.basis_count,
     ).to(device)
+    frozen_initialization: dict[str, Any] | None = None
+    if frozen_initialization_checkpoint is not None:
+        initialization_path = Path(frozen_initialization_checkpoint).resolve()
+        payload = torch.load(initialization_path, map_location="cpu", weights_only=False)
+        source_state = payload.get("model")
+        if not isinstance(source_state, dict) or not frozen_initialization_modules:
+            raise ValueError("frozen module initialization checkpoint is invalid")
+        loaded_hashes: dict[str, str] = {}
+        for name in frozen_initialization_modules:
+            prefix = name + "."
+            module_state = {
+                key[len(prefix):]: value
+                for key, value in source_state.items() if key.startswith(prefix)
+            }
+            if not module_state:
+                raise ValueError(f"initialization checkpoint lacks module: {name}")
+            getattr(model, name).load_state_dict(module_state, strict=True)
+            loaded_hashes[name] = state_dict_sha256(module_state)
+        frozen_initialization = {
+            "checkpoint": str(initialization_path),
+            "checkpoint_sha256": sha256_file(initialization_path),
+            "source_contract_sha256": payload.get("contract_sha256"),
+            "modules": loaded_hashes,
+        }
+    trainable_initial = {
+        name: state_dict_sha256(getattr(model, name).state_dict())
+        for name in ALL_TRAINABLE_MODULES
+    }
     optimizers = {
         "state": torch.optim.AdamW(
             _module_parameters(model, STATE_MODULES),
@@ -556,13 +616,20 @@ def train(args: argparse.Namespace) -> Path:
     amp_dtype = _cuda_amp_dtype()
     scaler = torch.amp.GradScaler("cuda", enabled=amp_dtype == torch.float16)
     total_updates = sum(stage_lengths)
+    model_source = inspect.getsourcefile(model_class)
+    if model_source is None:
+        raise RuntimeError("cannot resolve model source for provenance")
     source_paths = {
-        "trainer_v5": Path(__file__).resolve(),
-        "model_v5": Path(__file__).with_name("stable_motion_bottleneck_future.py").resolve(),
+        "shared_trainer": Path(__file__).resolve(),
+        "selected_model": Path(model_source).resolve(),
         "truth_join": Path(__file__).with_name("motion_truth_supervision.py").resolve(),
         "model_v4": Path(__file__).with_name("increment_invariant_anonymous_future.py").resolve(),
         "shared_runner": Path(__file__).with_name("train_anonymous_vehicle_motion.py").resolve(),
     }
+    if extra_source_paths:
+        source_paths.update({
+            str(name): Path(path).resolve() for name, path in extra_source_paths.items()
+        })
     source_hashes = {name: sha256_file(path) for name, path in source_paths.items()}
     provenance = {
         "diagnostic_only": True,
@@ -577,6 +644,10 @@ def train(args: argparse.Namespace) -> Path:
         "future_gradient_to_motion_encoder": False,
         "decoder_reads_high_dimensional_context": False,
         "physics_decoder": False,
+        "selected_model_family": model.config.get("family"),
+        "state_gate_only": state_gate_only,
+        "trainable_initial_state_dict_sha256": trainable_initial,
+        "frozen_module_initialization": frozen_initialization,
         "truth_history": truth_index.provenance,
         "truth_join": {"train": train_join, "validation": validation_join},
         "dataset": {
@@ -604,7 +675,9 @@ def train(args: argparse.Namespace) -> Path:
         "source_sha256": source_hashes,
     }
     contract = {
-        "schema_version": RUN_SCHEMA,
+        "schema_version": run_schema,
+        "state_gate_only": state_gate_only,
+        "frozen_module_initialization": frozen_initialization,
         "args": {
             name: value for name, value in vars(args).items()
             if name not in {"resume_checkpoint", "stop_after_update"}
@@ -621,7 +694,10 @@ def train(args: argparse.Namespace) -> Path:
         "h_state_dict_sha256": h_info["state_dict_sha256"],
         "source_sha256": source_hashes,
         "fixed_total_updates": total_updates,
-        "fixed_stage_order": list(STAGES),
+        "fixed_stage_order": [
+            name for name, length in zip(STAGES, stage_lengths, strict=True)
+            if length > 0
+        ],
     }
     contract_sha256 = _json_sha256(contract)
     run_id = str(uuid.uuid4())
@@ -632,7 +708,7 @@ def train(args: argparse.Namespace) -> Path:
         if resume.parent != checkpoint_dir:
             raise ValueError("resume checkpoint must be inside output/checkpoints")
         payload = torch.load(resume, map_location="cpu", weights_only=False)
-        if payload.get("schema_version") != RUN_SCHEMA:
+        if payload.get("schema_version") != run_schema:
             raise ValueError("resume checkpoint schema differs")
         if payload.get("contract_sha256") != contract_sha256:
             raise ValueError("resume checkpoint contract differs")
@@ -661,10 +737,11 @@ def train(args: argparse.Namespace) -> Path:
         })
 
     manifest_payload: dict[str, Any] = {
-        "schema_version": RUN_SCHEMA, "status": "running", "run_id": run_id,
+        "schema_version": run_schema, "status": "running", "run_id": run_id,
         "provenance": provenance, "contract": contract,
         "contract_sha256": contract_sha256, "model_config": model.config,
         "fixed_schedule": dict(zip(STAGES, stage_lengths, strict=True)),
+        "state_gate_only": state_gate_only,
         "progress": {"global_update": global_update},
         "validation_history": validation_history,
     }
@@ -688,14 +765,26 @@ def train(args: argparse.Namespace) -> Path:
         raw = _to_device(raw_cpu, device)
         with torch.autocast("cuda", dtype=amp_dtype):
             batch = _prepare_batch(mapper, s_model, h_model, raw)
-            prediction = model(
-                _forward_only(batch), detach_motion_code=True,
-                detach_selector_context=(stage == "decoder_joint"),
-            )
-            weights = stage_loss_weights(stage)
-            loss, components = stable_motion_future_loss(
-                prediction, batch, **weights,
-            )
+            if stage == "motion_state" and state_loss_function is not None:
+                state_output = model.estimate_motion_state(
+                    history_obs_rel_m=batch["history_obs_rel_m"],
+                    history_obs_mask=batch["history_obs_mask"],
+                    history_primary_mask=batch["history_primary_mask"],
+                    history_event_mask=batch["history_event_mask"],
+                    history_time_s=batch["history_time_s"],
+                    history_switch_step=batch["history_switch_step"],
+                )
+                prediction = {**state_output["history"], **state_output["state"]}
+                loss, components = state_loss_function(prediction, batch)
+            else:
+                prediction = model(
+                    _forward_only(batch), detach_motion_code=True,
+                    detach_selector_context=(stage == "decoder_joint"),
+                )
+                weights = stage_loss_weights(stage)
+                loss, components = loss_function(
+                    prediction, batch, **weights,
+                )
 
         if stage == "trajectory" and not isolation["future_to_state"]:
             # Stage configuration freezes the estimator and forward detaches
@@ -813,6 +902,7 @@ def train(args: argparse.Namespace) -> Path:
                 prefix_generator=prefix_generator, stage_endpoint=stage_endpoint,
                 fixed_endpoint=fixed_endpoint, run_id=run_id,
                 gradient_isolation_verified=isolation,
+                schema_version=run_schema,
             ))
             manifest_payload["progress"] = {
                 "global_update": global_update, "stage": stage,
@@ -835,6 +925,20 @@ def train(args: argparse.Namespace) -> Path:
     if not final_checkpoint.is_file():
         raise RuntimeError("fixed final endpoint checkpoint is missing")
     final_metrics = validation_history[-1]["metrics"]
+    trainable_final = {
+        name: state_dict_sha256(getattr(model, name).state_dict())
+        for name in ALL_TRAINABLE_MODULES
+    }
+    if state_gate_only:
+        changed_frozen = [
+            name for name in DECODER_MODULES + SELECTOR_MODULES
+            if trainable_final[name] != trainable_initial[name]
+        ]
+        if changed_frozen:
+            raise RuntimeError(
+                "state-only gate changed frozen future modules: "
+                + ", ".join(changed_frozen)
+            )
     _atomic_json(output / "final_metrics.json", final_metrics)
     manifest_payload.update({
         "status": "complete", "stop_reason": "fixed_update_endpoint",
@@ -851,6 +955,11 @@ def train(args: argparse.Namespace) -> Path:
         "frozen_final_state_dict_sha256": frozen_initial,
         "frozen_state_hashes_unchanged": True,
         "gradient_isolation_verified": isolation,
+        "trainable_initial_state_dict_sha256": trainable_initial,
+        "trainable_final_state_dict_sha256": trainable_final,
+        "state_gate_future_modules_unchanged": (
+            True if state_gate_only else None
+        ),
         "elapsed_s": time.time() - started,
     })
     _atomic_json(output / "run_manifest.json", manifest_payload)

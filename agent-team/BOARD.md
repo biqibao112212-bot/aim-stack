@@ -1316,29 +1316,38 @@
   failures. The 26 raw runs are protected; only 24 canonical results are
   selected. Manifest/contract SHA-256 are `70f354e0ea75eb2...d4f50e` and
   `2dee2e1dff1fee3...f24259`.
-- [ ] Active: rebuild the formal v2 derivative chain under the deployed
-  latest-32 history contract, then run the predeclared segment-survival audit.
-  The first complete derivative chain remains protected diagnostic evidence.
-  Its validation coverage is 11/11 active segments for all three rotation
-  sessions but only 5/11 for both combined sessions, so it is forbidden as a
-  training source. Raw frame scans show target observations through nearly
-  every 3-second block; the first loss is tensorization, not detector range or
-  6-mm visibility. The base retained up to 200 events although final S/F uses
-  only 32. Combined target translation can reverse inside that roughly
-  2-second retained interval, so an obsolete pre-reversal event invalidated
-  the entire history-to-future constant-motion window.
-  Formal ACK-bound rows now retain only the latest 32 valid events, right
-  aligned in the unchanged 200-event tensor; legacy datasets still retain up
-  to 200. Segment lookup and the ego-stability precheck use the same segment-
-  local latest-32 window. The full retained-history-to-future truth check,
-  half-open ACK interval and both 2-us guards remain strict. A durable audit
-  now treats the capture plan as the left table, verifies every base history
-  against raw latest-32 observations, checks exact lineage and history subsets
-  through PnP/SF, scans train/validation raw profiles, never opens test and
-  requires at least 8/11 active segments in every validation session. All 441
-  Stage3 tests and both repository boundary checks pass. Next create only new,
-  non-overwriting r3/r2 derivatives from a clean committed source, run the
-  fixed audit, and start the unchanged v5 training A/B only if that gate passes.
-- [ ] Mapper/S/H, v70/v71/v72 checkpoints, test, export and online fire control
-  remain frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090
-  stays powered off but retained and must not be released.
+- [x] Rebuild the formal v2 derivative chain under the deployed latest-32
+  history contract and pass the predeclared segment-survival audit. Every
+  validation session now retains common-usable samples in 11/11 active ACK
+  segments; raw base rows checked=8,980, test shards/raw opened=0. Qualified
+  derivatives are the non-overwriting base r3 plus truth/causal/clean/
+  observation/PnP-SF r2 roots. All captures and earlier derivatives remain
+  protected.
+- [x] Complete the unchanged v5 control as v77. Heldout velocity/yaw error is
+  0.492 m/s and 1.893 rad/s, conditional future Mean is 208.64 mm and the same
+  learned decoder with truth state is 156.24 mm. The requested ballistic plots
+  give rotation conditional/hard Mean 153.55/164.58 mm and combined
+  180.89/201.58 mm. State and future gates fail, although both materially beat
+  the prior v5 baseline; role accuracy is not the primary bottleneck.
+- [ ] Active: implement and run the fixed 800-update state-only v6 A/B. V77
+  failure is strongest at high combined translation speed; replacing PnP by
+  matched clean observations improves only about 10--15%, so the new state
+  estimator uses causal non-overlapping 10/30/70/150/280-ms same-handle time
+  bands, an FP32 unordered two-visible-armor relative-motion branch, bounded
+  learned robust consensus, effective-support-weighted handle pooling and
+  availability-aware scale fusion. Its only deployed output is
+  the unchanged four-vector `[vx,vy,vz,yaw_rate]`; no ID, session, class,
+  absolute range/current position, q0 geometry/quality, future or truth enters
+  forward; the state API accepts exactly six causal observation fields and its
+  loss never executes the decoder or reads future labels. The first gate
+  freezes Mapper/S/H and loads the exact v77-update-800 decoder/selector before
+  comparing equal-budget validation state metrics. It is one complete
+  800-update state-only artifact, not an interrupted 2,900-update run. Only a
+  passing state gate may start the predeclared trajectory and
+  selector stages, followed by the two simple rotation/combined distance-error
+  scatter plots.
+- [ ] V6 implementation has 454 passing Stage3 tests, both repository boundary
+  checks and a bit-exact 150->200 interruption/resume smoke. Mapper/S/H, v77
+  decoder/selector, test, export and online fire control remain frozen. Use
+  `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays powered off
+  but retained and must not be released.

@@ -2196,3 +2196,61 @@
   never overwritten or deleted. Rebuilds use new r3/r2 artifact roots. Compute
   remains local in the Windows `yolov8` CUDA environment; the rented RTX 3090
   stays powered off but retained and must not be released.
+
+## 2026-07-30 decision 173: v6 replaces adjacent differences with robust physical-time scales
+
+- The latest-32 rebuild passed its train/validation-only survival audit with
+  11/11 active ACK segments in every validation session and zero test access.
+  The unchanged v5 control (v77) improves heldout velocity/yaw error to
+  0.492 m/s and 1.893 rad/s, but still misses the state gates; conditional
+  future Mean is 208.64 mm versus 156.24 mm when the same learned decoder is
+  supplied with truth state. The state magnitude, not additional selector or
+  decoder epochs, is the next authorized target.
+- Read-only stratification shows the strongest within-session correlate is
+  combined translation speed. Matched clean-observation substitution improves
+  validation state error only about 10--15%; high-speed combined windows still
+  fail. Distance, short history and PnP increment noise amplify the error but
+  do not independently explain it. The v5 adjacent same-handle velocity divides
+  PnP displacement noise by roughly 10-ms intervals, then uses lane last/mean
+  and cross-handle mean/max without explicit physical-time scales or robust
+  reliability.
+- V6 keeps the exact four-dimensional state contract and existing learned
+  decoder/selector. It replaces only the state estimator with causal,
+  non-overlapping 10/30/70/150/280-ms same-handle displacement bands, an
+  unordered two-visible-armor relative-motion edge based on temporal changes
+  of `(a-b)(a-b)^T`, a two-pass bounded learned consensus, symmetric cyclic
+  interaction and availability-aware per-coordinate scale fusion. The pair
+  vector is subtracted before its outer product in autocast-disabled FP32, so
+  large common translation cannot numerically leak into the rotation branch.
+  Learned weight mass and effective sample size enter handle pooling and scale
+  fusion; pair-only evidence may support yaw but not translational coordinates.
+  Missing long scales are masked and never reject an otherwise eligible history.
+- State forward is a separate six-field API and may read only anonymous
+  relative observations, observation/primary/event masks, relative q0 history
+  times and switch steps. Its dedicated loss does not instantiate the decoder
+  path or read q0/future labels. Physical plate ID, session/epoch, motion
+  class, absolute timestamp, current position/range, q0 relation or quality,
+  future observations, truth state and labels are forbidden. Truth supervises
+  the fused and available per-scale four-vectors only. Scale uncertainty is a
+  training/diagnostic output and never reaches decoder or selector. This is a
+  learned temporal estimator, not analytic finite-difference rollout or a
+  physics decoder.
+- The first formal comparison is one complete equal-budget 800-update
+  state-only artifact on the same frozen Mapper/S/H, dataset, sampler and seed
+  as v77. The exact v77 update-800 learned decoder/selector modules are loaded
+  by hash and remain frozen; their before/after hashes must match. The formal
+  wrapper cannot silently continue into later stages and binds control
+  checkpoint SHA-256 `f823f147...a91b99662` plus contract
+  `c36717df...fec53871`. Primary targets are overall velocity <=0.35 m/s, yaw <=1.5
+  rad/s and normalized MAE <=0.08. Because the stated objective is specifically
+  combined motion, the same pre-run hard gate also requires combined velocity
+  <=0.57 m/s, combined yaw <=2.10 rad/s, speed>1.7-m/s combined velocity
+  <=0.80 m/s, combined-11 normalized MAE <=0.12 and overall yaw-sign accuracy
+  >=0.963. Session macro, all five validation sessions and history bins remain
+  mandatory diagnostics. A passing state gate may resume the fixed trajectory,
+  selector and joint stages; a failed gate ends the run without extra epochs.
+- The implementation gate is 454 Stage3 tests, both repository boundary checks,
+  a complete state-only CUDA smoke and a bit-exact 150->200 interruption/resume
+  comparison. Compute remains local in Windows `yolov8`. The rented RTX 3090 is powered off
+  but retained and must not be released. Test, export, online integration and
+  fire control remain sealed.
