@@ -1858,3 +1858,54 @@
   later v3 will use multiple-choice expert training followed by history-only
   routing; if it cannot, expert selection is not identifiable from the current
   causal state and the MotionContext representation must change again.
+
+## 2026-07-30 decision 164: reject post-hoc discrete routing as the next F basis
+
+- The hash-locked v70 trajectory bank was frozen and only its history gate was
+  trained for 600 updates from clean commit `e32397e`. Future truth generated
+  one detached best-expert label per window using the true modulo-four role;
+  forward still consumed anonymous causal history only. A real interruption at
+  update 150 resumed with update-175/200 objectives identical to an
+  uninterrupted control. Mapper/S/H, MotionContext and all trajectory-expert
+  hashes remain unchanged; test stayed sealed.
+- The fixed endpoint
+  `20260730-v71-history-router-full-r1/checkpoints/checkpoint-update-000600.pt`
+  has SHA-256
+  `38118a8ad88a290ea8e107d5feb551a89416b7be5cc8b7cd66fdba88db94631e`.
+  It fails the predeclared gate. Train/validation macro recall is
+  95.52%/48.70%; validation closes only 5.08% of the overall oracle gap and
+  9.47% for 8--15-event rotation. It does not beat the expert selected from
+  train overall. Of 185 validation windows whose best expert is expert 1, only
+  one is classified correctly.
+- Label ambiguity is not the explanation: 90.29% of validation windows have a
+  best/second-best margin of at least 20 mm. Combined validation needs expert 1
+  on 183/406 windows while the learned gate chooses it zero times; the same
+  gate classifies expert 1 accurately on the training combined sessions. The
+  arbitrary expert identity therefore does not have a stable cross-session
+  observable meaning in the current MotionContext.
+- A session-level read-only audit confirms that the aggregate train score hides
+  the same instability. Three combined training sessions reach 97.91--99.21%
+  gate accuracy, while held-out combined is 49.75%; one rotation training
+  session is already only 44.54% despite the other two reaching about 98--99%.
+  Held-out combined requires expert 1 on 182/406 windows but predicts it zero
+  times. This rules out interpreting the failure as a single unlucky aggregate
+  threshold and strengthens the cross-session semantic-shift diagnosis.
+- The mismatch is also explicit in the v2 interface: each expert's trajectory
+  coefficient reads absolute `current_position_m`, but the history gate does
+  not. The future-best expert label may therefore change with absolute pose,
+  anchor error or session-specific PnP error direction that the gate cannot
+  observe. The next trajectory latent and selector must be translation
+  equivariant: absolute current position may be added back only after a
+  history-relative delta has been predicted.
+- Hard-router ballistic evaluation from clean commit `ba767ce` retains 581/587
+  windows and all frozen hashes. Rotation conditional/hard Mean is
+  306.39/305.71 mm; combined is 153.46/173.92 mm. This is materially unchanged
+  from the rejected v70 ballistic result, so neither more gate epochs nor
+  post-hoc relabelling of the same three experts is authorized.
+- The next F redesign must remove the assumption that one globally named
+  discrete expert can be recovered from current MotionContext. It must learn a
+  session-invariant continuous motion representation from normalized causal
+  increments and predict the future trajectory directly. Any multi-hypothesis
+  outputs must be trained jointly with stable semantics or evaluated as an
+  uncertainty set; a future-derived expert ID may not become a deployment
+  target again.

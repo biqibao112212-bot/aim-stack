@@ -1238,12 +1238,25 @@
   oracle best-of-three remain explicitly secondary/noncausal. The fixed
   baseline expert is selected from train overall and then held fixed on
   validation. All 357 Stage3 tests and both repository boundary checks pass.
-- [ ] Active: run a bounded CUDA interruption/resume smoke, then the fixed
-  600-update full routing diagnostic from the same clean commit. Accept only
-  if frozen hashes, deterministic recovery, hard-router regret reduction,
-  reliable-margin recall and train/validation generalization gates pass; do
-  not promote the v70 trajectory bank or open test from this diagnostic.
-- [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
-  train/validation corpus under decisions 154--157, verify native 6 mm
-  provenance, and execute the formal run. If provenance cannot establish 6 mm,
-  collect new 6 mm sessions rather than silently mixing focal domains.
+- [x] Complete the CUDA interruption/resume smoke and fixed 600-update full
+  routing diagnostic. Recovery is deterministic and every frozen hash is
+  unchanged, but the statistical gate fails: train/validation macro recall is
+  95.52%/48.70%, overall oracle-gap closure is 5.08%, short-rotation closure is
+  9.47%, and the trained router is worse than the train-selected fixed expert.
+  The result rejects more gate epochs and post-hoc routing of the frozen v70
+  experts; test remains unopened.
+- [x] Evaluate the hard history router at range/22 m/s and copy the requested
+  rotation/combined distance-error plots and tables through GitHub to
+  `D:\仿真\runtime\stage3-evaluations\20260730-v71-history-router-ballistic-r2`.
+  Rotation conditional/hard Mean is 306.39/305.71 mm and combined is
+  153.46/173.92 mm, materially unchanged from v70. The same 581/587 windows
+  are eligible and all frozen hashes remain unchanged.
+- [ ] Active: define the next F interface around a session-invariant continuous
+  motion representation built from normalized causal increments, with direct
+  trajectory prediction and no future-derived discrete expert ID. Before a new
+  full run, prove on held-out sessions that the representation preserves
+  motion information without encoding absolute/session-specific pose; keep S,
+  Mapper/H, v70/v71 checkpoints, test, export and online fire control frozen.
+  Per the user's instruction, all subsequent training runs use the local
+  `D:\Anaconda\envs\yolov8\python.exe` GPU environment. The rented RTX 3090
+  server was shut down after v71 results and plots were synchronized locally.
