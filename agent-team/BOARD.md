@@ -1354,19 +1354,47 @@
   accuracy is 0.8187. Clean-observation and truth-yaw-conditioned
   interventions do not remove the failure. More V7 epochs or fine tuning are
   not authorized.
-- [ ] Active: run the bounded V8 rigid-flow structural screen from a clean
-  commit. Train three arms for exactly 200 state-only updates under seeds
-  20260730 and 20260731: an equally trained V7 control; a separated model whose
-  translation reads only handle-common flow and yaw reads only exact
-  same-visible-set 10/30/70-ms pair differential flow; and a joint 4D twist
-  model that may combine handle, pair and current anonymous geometry. All arms
-  use the same dataset, sampler, frozen Mapper/S/H/future modules, V6 state
-  loss, batch order and seed/update-determined ramp augmentation. A candidate
-  may authorize a full 800-update V8 only if both seeds improve overall and
-  combined yaw by at least 30%, also improve high-speed combined yaw by at
-  least 30%, regress yaw-sign by at most 0.01 and regress overall/combined/
-  high-speed-combined velocity by at most 0.03 m/s. No future-position fine
-  tuning or scatter plots begin unless this state-structure screen passes.
+- [x] Complete and reject the bounded V8 rigid-flow structural screen. The
+  checkpoint-bound six-arm aggregate is protected at
+  `20260730-v80-v8-probe-aggregate-r1`; source commit is `3c5c704`, test is
+  unopened and no full candidate is authorized. Joint is clearly strongest:
+  its two-seed overall/combined/high-speed-combined yaw means are
+  1.861/2.425/3.945 rad/s and combined velocity is 0.772 m/s. It passes every
+  gate for seed 20260731, but seed 20260730 combined yaw improves 29.42%
+  against a required 30%. Separated fails both seeds. The miss is not a bad
+  high-speed tail: joint improves high-speed yaw by 40.52%; it is concentrated
+  in the low-speed, history-32, all-three-pair-scales-available body.
+- [ ] Active: implement and run the V9 anonymous geometry--velocity paired-set
+  structural screen. Train exactly two 200-update state-only candidates under
+  seeds 20260730/20260731 and compare them to the existing same-seed V8 joint
+  update-200 checkpoints. Every local handle edge must retain its endpoint
+  geometry and velocity in one token; same-set pair edges remain local
+  10/30/70-ms tokens. A permutation-invariant latent-query pool provides local,
+  steady full-history and handle-only fallback experts; an observation-only
+  router uses one scalar mixture per expert for the complete 4D twist, never a
+  separate scale choice per coordinate. No ID, class, session, truth, future,
+  q0 quality or analytic future decoder enters forward. Gradient-reachable
+  state capacity must remain within 5% of V8 joint; permanently dead legacy
+  V8 modules do not count toward the comparison.
+- [ ] The V9 200-update gate must pass both seeds: overall velocity improves at
+  least 10%; combined and high-speed-combined velocity improve at least 15%;
+  overall/combined/high-speed yaw regress no more than 5%; yaw-sign regresses
+  no more than 0.01; and the low-speed<=1.2 m/s, history-32, pair3 combined
+  core improves yaw by at least 10%. A validation-only intervention that breaks
+  geometry--velocity pairing while retaining token support/type/scale and each
+  within-stream, within-scale geometry marginal must worsen high-speed combined
+  velocity by at least 10% or 0.15 m/s. Failure ends the hypothesis without
+  extra updates; success alone authorizes a full V9 run.
+- [x] V9 implementation preflight passes 513 Stage3 tests and both repository
+  boundary checks. Its 1,536,217 gradient-reachable state parameters are 3.26%
+  above the audited V8-joint reachable count of 1,487,688 (V8 optimizer total
+  1,898,569). All 3,016 train/validation samples have recent local support;
+  all 637 pair-free samples have handle fallback support. A formal BF16
+  channels=96/batch=64 CUDA backward has finite loss, gradients on every V9
+  state parameter, no frozen-future gradients and 859.3 MiB peak allocation.
+  The full 750-sample diagnostic exactly reproduces the protected V8 control
+  metrics and retains the 300 combined, 82 high-speed-combined and 149 core
+  supports. Test remains unopened.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs

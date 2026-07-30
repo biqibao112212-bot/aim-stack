@@ -2412,3 +2412,59 @@
   scatter plots remain frozen until a state candidate passes. Compute remains
   local in Windows `yolov8`; the rented RTX 3090 is powered off, retained and
   not released.
+
+## 2026-07-30 decision 179: V9 preserves geometry--velocity pairing before learned pooling
+
+- The protected V8 six-arm screen is `failed`, so no 800-update V8 run is
+  authorized. Joint nevertheless identifies the correct direction: across two
+  seeds it reaches overall/combined/high-speed-combined yaw means of
+  1.861/2.425/3.945 rad/s, combined velocity 0.772 m/s and yaw-sign accuracy
+  0.9667. Seed 20260731 passes every V8 gate; seed 20260730 misses only combined
+  yaw, improving 29.42% rather than the required 30%. The aggregate is retained
+  at `20260730-v80-v8-probe-aggregate-r1`; all six checkpoints remain protected
+  and test is unopened.
+- Exact checkpoint forward stratification rejects the hypothesis that the miss
+  is caused by the difficult tail. Seed-20260730 high-speed combined yaw
+  improves 40.52%. Combined-11 improves 44.76%, while the 231-sample
+  combined-02 session improves only 6.60%. Combined history-32 regresses 3.03%
+  while histories 8--31 improve 35--70%. The concentrated core is combined,
+  speed<=1.2 m/s, all three local pair scales available and history=32
+  (149 samples): V7/joint yaw is 1.584/1.565 rad/s. This is a body-calibration
+  and evidence-fusion failure, not a few bad tail samples.
+- V8 joins evidence only after handle flow, pair differential and current
+  geometry have already been pooled separately. It therefore discards which
+  observed velocity occurred at which anonymous geometry and lets different
+  state coordinates select different scale hypotheses. V9 moves the join to
+  the causal edge: each handle token carries matched endpoint geometry,
+  displacement/velocity, elapsed time, primary/switch/support and local scale;
+  exact-same-visible-set pair tokens carry their matched geometry change.
+- V9 uses permutation-invariant latent queries over all local tokens. Separate
+  learned local, steady-full-history and handle-only fallback queries provide
+  proposals, but an observation-only router applies one common expert weight
+  to the complete `[vx,vy,vz,yaw_rate]` twist. Thus the model can average many
+  phase-safe local increments in the low-speed full-history body without
+  restoring V7's aliased 150/280-ms projective axes, while retaining a local
+  expert for short/high-speed histories and a pair-missing fallback. Temporary
+  handles establish within-window causal edges only; there is no handle
+  embedding, physical ID, class, session, truth/future input, q0 quality or
+  hand-written future decoder.
+- The V9 state loss supervises only the final unified twist. Planar velocity is
+  a two-dimensional robust term, vertical velocity and yaw are separate, and
+  no local scale is forced to predict a complete state independently. The same
+  seed/update-determined common-ramp augmentation still enforces yaw invariance
+  and planar translation equivariance. Gradient-reachable state capacity must
+  be within 5% of V8 joint; V8's permanently unreachable legacy pair/vehicle
+  modules cannot be used to inflate the control capacity denominator.
+- The fixed screen is two 200-update V9 candidates compared to the existing
+  same-seed V8 joint update-200 checkpoints. Both seeds must improve overall
+  velocity by >=10%, combined and high-speed-combined velocity by >=15%, keep
+  overall/combined/high-speed yaw within +5%, keep yaw-sign within -0.01, and
+  improve yaw in the speed<=1.2/history32/pair3 combined core by >=10%. A
+  validation-only within-sample intervention rolls geometry independently
+  within each anonymous stream and local time scale while preserving token
+  support/type/scale and each group's geometry marginal. It must worsen
+  high-speed combined velocity by >=10% or >=0.15 m/s; otherwise the added
+  structure was not used. Failure stops without more updates. Future-position
+  training and simple distance/error scatter plots remain frozen until the
+  state screen passes. Compute remains local; the retained RTX 3090 server
+  stays powered off.
