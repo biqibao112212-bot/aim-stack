@@ -1462,14 +1462,30 @@
   BF16 batch-64 backward is finite and reaches every state tensor while future
   modules remain frozen. Fourteen focused and 540 full Stage3 tests pass; all
   read-only design/finalizer reviews are READY. Test remains unopened.
-- [ ] Active: commit the validated global-state/history-closure structure, then
-  run exactly two local CUDA seeds for 200 state-only updates and independently
-  aggregate them against the protected same-seed V8 controls. Each seed must
-  separately pass the predeclared overall, combined, high-speed, pair1/2/3,
-  zero-refinement, broken-geometry and crossed-factor gates. A failure ends
-  this structure without added epochs. Only a two-seed pass may unfreeze a new
-  learned future-position decoder and the simple per-motion distance/error
-  scatter plots; the current insensitive decoder is not promoted.
+- [x] The fixed V11 two-seed screen completed and was validly rejected at
+  `20260730-v83-v11-global-flow-closure-aggregate-r1`, bound to clean commit
+  `a11bdda`; both runs reached update 200, checkpoints and controls are
+  hash-bound, and test remains unopened. Seeds pass 15/24 and 16/24 gates.
+  V11 genuinely improves high-speed combined velocity by 14.65/23.21% and yaw
+  by 22.54/24.59%, and pair1 velocity/yaw by about 20--24%. It nevertheless
+  regresses overall velocity by 7.42/9.78%, pair3 yaw by 10.04/20.72%, and the
+  low-speed full-history core yaw by 39.83/53.70%. Overall P50 velocity and yaw
+  both regress while P95 often improves, so most aggregate benefit is tail
+  trimming rather than a better body. No extra updates or future-position
+  training are authorized. Both checkpoints and the failed aggregate are
+  retained as protected evidence.
+- [ ] Active: replace V11's shared four-dimensional refinement with a strict
+  omega-first, typed, event-ordered closure estimator. Centered-handle and pair
+  relative factors alone infer one signed q0 angular rate. That angular state
+  and prior geometry predict rotational handle displacement; only the
+  de-rotated common residual may infer translation velocity. Relative residuals
+  may update omega only, common residuals may update velocity only, and the
+  sole cross-state edge is omega-to-velocity. Preserve event order and
+  per-support precision instead of averaging every correlated edge equally.
+  Preflight must prove fixed-state pairing closure, separate omega/v refinement
+  isolation, 2x2 common/relative source crossing, ramp/reversal equivariance,
+  and nonzero intervention touch counts for pair0/1/2/3. Only then run the same
+  fixed two-seed 200-update local screen; do not tune V11 or add epochs.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs

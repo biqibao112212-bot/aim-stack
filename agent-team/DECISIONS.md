@@ -2620,3 +2620,52 @@
   recomputes reachable capacity, replays the final diagnostics from the fixed
   checkpoint, and binds the protected V8 path/SHA and recorded control metrics.
   Candidate self-reported capacity or controls cannot satisfy the gate.
+
+## 2026-07-31 decision 184: V11 closes history but couples the wrong state updates
+
+- The clean fixed V11 aggregate at
+  `20260730-v83-v11-global-flow-closure-aggregate-r1` is a valid `failed`
+  result from commit `a11bdda`; both seeds reached update 200 and test remains
+  unopened. Seed checkpoints are retained with SHA-256
+  `0a8b1555be9e092c5791ddc4e27ce9a7995904f313170e0a970d9372e5569e37`
+  and `33b2c2eb13c04cdd18963db88adab6d636b97c5398f7450b587860e7e943e1e8`.
+  The aggregate SHA-256 is
+  `0768ee1034b7a14215781c0691fc0d5d6f572ff3364a948ca6bb682ebf3e5964`.
+- V11 is not a uniform failure. Relative to the protected V8 controls,
+  high-speed combined velocity improves 14.65/23.21% and yaw improves
+  22.54/24.59%; pair1 velocity/yaw improve about 20--24%, and pair2 yaw
+  improves about 20--22%. In contrast, overall velocity regresses 7.42/9.78%,
+  pair3 yaw regresses 10.04/20.72%, and low-speed full-history core yaw
+  regresses 39.83/53.70%. Overall velocity P50 becomes 0.452/0.441 m/s versus
+  V8's 0.373/0.353, and yaw P50 becomes 1.504/1.493 rad/s versus 1.275/1.100,
+  even though several P95 tails improve. The model therefore trims difficult
+  tails while damaging the dense long-history body; extra epochs are not the
+  justified action.
+- Closure refinement is active but its state incidence is wrong. Removing both
+  refinements makes combined yaw 56.5/80.8% worse relative to the final model,
+  while combined velocity changes only 4.9/4.3%. The shared handle update can
+  write all four state coordinates, so an angular correction can perturb
+  velocity; on high-speed and pair1/2 strata this refinement in fact worsens
+  velocity. Breaking handle geometry changes overall velocity by only
+  0.50/0.60%, showing that the handle path can bypass geometry through raw
+  kinematics. Pair correspondence has measurable effect mainly under pair3
+  support; a within-group roll cannot touch a single pair1 factor and must not
+  be treated as evidence that pair1 used correspondence.
+- The crossed diagnostic shows a coarse but uncalibrated decomposition:
+  velocity is much closer to its common-flow source than to the rotation donor,
+  and yaw is closer to the rotation donor, but donor yaw-sign accuracy is only
+  0.805/0.835. Re-estimating state after a broken cross lets the network absorb
+  the break: yaw worsens while history closure changes only 2.81/3.58% and
+  velocity can improve. Future pairing diagnostics must hold the intact state
+  fixed and recompute only decoder residuals; a small re-optimized closure is
+  not physical-consistency evidence.
+- The q0 constant-twist target remains valid because every joined window is
+  bounded inside one constant-motion segment. The replacement is therefore a
+  strict typed estimator, not a new target: event-ordered relative factors
+  alone estimate signed omega; omega and prior geometry predict rotation;
+  de-rotated common handle residuals alone estimate velocity. Relative closure
+  may update only omega, common closure only velocity, and omega-to-velocity is
+  the only cross-state direction. Acceptance requires fixed-state pairing
+  closure, isolated omega/v refinement effects, a 2x2 common/relative source
+  cross, common-ramp and relative-reversal equivariance, and explicit touched
+  counts for pair0/1/2/3. Future-position decoding remains frozen.
