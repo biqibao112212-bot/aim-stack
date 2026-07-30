@@ -1164,3 +1164,23 @@
   while S and all accepted checkpoints remain frozen baselines. Do not launch
   training, reuse a stale truth-nearest ballistic label, or continue selector/
   V67 epoch tuning until this interface is accepted.
+
+## 2026-07-30 anonymous multi-handle MotionContext training
+
+- [x] User approved the structural change. Keep V50/V66/V67 as immutable
+  single-stream baselines and keep Mapper/S/H frozen for the first causal PnP
+  pilot. The new component is an explicit vehicle-level MotionContext, not
+  hidden cross-handle transfer inside the old single-handle F definition.
+- [ ] Active: implement the fixed four-handle causal interface, C4/reflection
+  structural tests, true-branch trajectory loss, ordered selector loss and
+  short-suffix augmentation. Inputs may contain mapped anonymous history and
+  frozen H relative q0 support only; physical ID, motion class, truth state,
+  future PnP and session identity are forbidden from forward.
+- [ ] Run one non-overwriting Windows `yolov8`/CUDA r2 pilot with fixed
+  trajectory, selector and controlled-joint update budgets. Report rotation,
+  combined, 8--15-event and 3+-history-switch slices; never select an
+  intermediate checkpoint from validation.
+- [ ] Only if the r2 structure gate passes, rebuild the larger train/validation
+  corpus under decisions 154--157 after verifying native 6 mm provenance, then
+  execute the formal three-stage run. If provenance cannot establish 6 mm,
+  collect new 6 mm sessions rather than silently mixing focal domains.

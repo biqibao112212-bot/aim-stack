@@ -1644,3 +1644,35 @@
   r3 attempt is not a model result. Until an arbitrary-time label is rebuilt
   from a nearby actual observation, the accepted r2 comparison is exact-query
   only. No new training architecture is approved by this decision.
+
+## 2026-07-30 decision 159: authorize an explicit anonymous vehicle MotionContext
+
+- The user authorizes the structural experiment proposed after decision 158.
+  The old single-handle F and its V50/V66/V67 descendants remain frozen
+  baselines. They are not widened with hidden cross-handle pooling. Instead a
+  separately named vehicle-level MotionContext consumes the existing causal
+  four-handle anonymous observation memory and provides shared evidence to new
+  trajectory and selection heads, as anticipated by decision 122.
+- MotionContext receives only mapped `[T,4,3]` window-local handle observations,
+  masks, primary/event time and signed history transitions, plus frozen H q0
+  relations, uncertainty, support and age. It must be invariant/equivariant to
+  C4 origin changes and consistent under direction reflection. A handle is a
+  temporary relative cyclic memory location, never a persistent physical armor
+  identity. Motion class, pair/session IDs, truth state and future PnP are
+  forbidden forward inputs.
+- The trajectory head is a learned continuous-time candidate operator. It may
+  enforce exact tau-zero identity through its parameterization, but may not
+  contain a circle/ellipse equation, constant-twist rollout, hand-written
+  switch schedule or physical-ID lookup. The selector learns sample-specific
+  direction and ordered boundary intervals from the same MotionContext.
+- The r2 run is a bounded structure pilot, not a deployment or checkpoint
+  promotion. Mapper, V19-r2 S and H remain frozen. Train in three fixed stages:
+  true-branch trajectory, selector with detached candidate positions, then a
+  low-rate joint stage that must not regress conditional trajectory metrics by
+  more than 5%. Validation uses natural suffixes; random 8--31-event suffix
+  shortening is training-only.
+- The current SF data remains explicitly oracle-associated and
+  `deployable_pipeline=false`; the pilot tests whether retained multi-handle
+  evidence fixes the representation bottleneck, not whether online association
+  is solved. Formal training requires a larger decision-157-compatible native
+  6 mm corpus and preserves test sealing.
