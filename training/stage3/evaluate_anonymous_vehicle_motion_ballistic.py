@@ -30,6 +30,9 @@ from .anonymous_vehicle_motion_v2 import (
 from .continuous_invariant_anonymous_future import (
     ContinuousInvariantAnonymousFutureModel,
 )
+from .stable_motion_bottleneck_future import (
+    StableMotionBottleneckAnonymousFutureModel,
+)
 from .cyclic_future_foundation import load_frozen_v19
 from .evaluate_final_visible_position_ballistic import (
     TruthState,
@@ -49,6 +52,7 @@ from .train_anonymous_vehicle_motion import (
 )
 from .train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
 from .train_continuous_invariant_anonymous_future import RUN_SCHEMA as V3_RUN_SCHEMA
+from .train_stable_motion_bottleneck_future import RUN_SCHEMA as V5_RUN_SCHEMA
 from .train_visibility_aware_expert_router import (
     RUN_SCHEMA as ROUTER_RUN_SCHEMA,
     _hard_expert_role_position,
@@ -62,6 +66,7 @@ EVALUATION_SCHEMA = "stage3-anonymous-vehicle-motion-ballistic-v1"
 V2_EVALUATION_SCHEMA = "stage3-visibility-aware-anonymous-motion-ballistic-v2"
 ROUTER_EVALUATION_SCHEMA = "stage3-visibility-aware-hard-router-ballistic-v1"
 V3_EVALUATION_SCHEMA = "stage3-continuous-invariant-anonymous-future-ballistic-v3"
+V5_EVALUATION_SCHEMA = "stage3-stable-motion-bottleneck-future-ballistic-v5"
 FLIGHT_TIME_FORMULA = "norm(frozen_upstream_current_position_m)/bullet_speed_mps"
 MOTION_NAMES = {2: "rotation", 3: "combined"}
 DISTANCE_EDGES_M = tuple(float(value) for value in range(1, 8))
@@ -70,6 +75,7 @@ EXPECTED_FINAL_UPDATE = 2100
 EXPECTED_V2_FINAL_UPDATE = 2400
 EXPECTED_ROUTER_FINAL_UPDATE = 600
 EXPECTED_V3_FINAL_UPDATE = 2100
+EXPECTED_V5_FINAL_UPDATE = 2900
 OPPOSITE_SOURCE_FAILURE = "observable target jumped to an opposite source slot"
 
 
@@ -188,12 +194,16 @@ def _load_motion_checkpoint(
     path: Path,
 ) -> tuple[
     AnonymousVehicleFutureModel | VisibilityAwareAnonymousVehicleFutureModel
-    | ContinuousInvariantAnonymousFutureModel,
+    | ContinuousInvariantAnonymousFutureModel
+    | StableMotionBottleneckAnonymousFutureModel,
     dict[str, Any],
 ]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     schema = payload.get("schema_version")
-    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA, V3_RUN_SCHEMA}:
+    if schema not in {
+        V1_RUN_SCHEMA, V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA, V3_RUN_SCHEMA,
+        V5_RUN_SCHEMA,
+    }:
         raise ValueError("anonymous motion checkpoint schema mismatch")
     if not bool(payload.get("fixed_endpoint", False)):
         raise ValueError("ballistic evaluation requires the fixed final endpoint")
@@ -204,6 +214,7 @@ def _load_motion_checkpoint(
         V2_RUN_SCHEMA: EXPECTED_V2_FINAL_UPDATE,
         ROUTER_RUN_SCHEMA: EXPECTED_ROUTER_FINAL_UPDATE,
         V3_RUN_SCHEMA: EXPECTED_V3_FINAL_UPDATE,
+        V5_RUN_SCHEMA: EXPECTED_V5_FINAL_UPDATE,
     }[schema]
     if int(payload.get("progress", {}).get("global_update", -1)) != expected_update:
         raise ValueError(f"anonymous motion checkpoint is not update {expected_update}")
@@ -242,13 +253,23 @@ def _load_motion_checkpoint(
         else:
             model_version = "v2_hard_router"
             evaluation_schema = ROUTER_EVALUATION_SCHEMA
-    else:
+    elif schema == V3_RUN_SCHEMA:
         model = ContinuousInvariantAnonymousFutureModel(
             **common,
             basis_count=int(config["basis_count"]),
         )
         model_version = "v3"
         evaluation_schema = V3_EVALUATION_SCHEMA
+    else:
+        scale = config["motion_state_scale"]
+        model = StableMotionBottleneckAnonymousFutureModel(
+            **common,
+            basis_count=int(config["basis_count"]),
+            velocity_scale_mps=tuple(float(value) for value in scale[:3]),
+            yaw_rate_scale_rad_s=float(scale[3]),
+        )
+        model_version = "v5"
+        evaluation_schema = V5_EVALUATION_SCHEMA
     model.load_state_dict(payload["model"], strict=True)
     actual_hash = state_dict_sha256(model.state_dict())
     if actual_hash != payload.get("model_state_dict_sha256"):
@@ -616,7 +637,7 @@ def run(args: argparse.Namespace) -> Path:
             (len(eligible_rows), 1), dtype=torch.bool, device=device,
         )
         prediction = model(_forward_only(dynamic))
-        if model_info["model_version"] in {"v2", "v2_hard_router", "v3"}:
+        if model_info["model_version"] in {"v2", "v2_hard_router", "v3", "v5"}:
             role = target_roles(
                 dynamic["target_switch_count"], dynamic["target_query_mask"],
             )
@@ -662,7 +683,7 @@ def run(args: argparse.Namespace) -> Path:
         q0_error = torch.linalg.vector_norm(
             current - dynamic["truth_current_position_m"], dim=-1,
         )
-        signed_step_available = model_info["model_version"] != "v3"
+        signed_step_available = model_info["model_version"] not in {"v3", "v5"}
         if signed_step_available:
             predicted_step = prediction[
                 "selected_switch_step_aux"

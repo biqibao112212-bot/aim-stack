@@ -11,6 +11,9 @@ from training.stage3.anonymous_vehicle_motion_v2 import (
 from training.stage3.continuous_invariant_anonymous_future import (
     ContinuousInvariantAnonymousFutureModel,
 )
+from training.stage3.stable_motion_bottleneck_future import (
+    StableMotionBottleneckAnonymousFutureModel,
+)
 from training.stage3.evaluate_anonymous_vehicle_motion_ballistic import (
     OPPOSITE_SOURCE_FAILURE,
     _canonical_ballistic_label,
@@ -25,6 +28,9 @@ from training.stage3.train_anonymous_vehicle_motion import RUN_SCHEMA
 from training.stage3.train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
 from training.stage3.train_continuous_invariant_anonymous_future import (
     RUN_SCHEMA as V3_RUN_SCHEMA,
+)
+from training.stage3.train_stable_motion_bottleneck_future import (
+    RUN_SCHEMA as V5_RUN_SCHEMA,
 )
 from training.stage3.train_visibility_aware_expert_router import (
     RUN_SCHEMA as ROUTER_RUN_SCHEMA,
@@ -235,6 +241,39 @@ def test_motion_checkpoint_loader_accepts_v3_only_at_update_2100(tmp_path) -> No
     rejected = tmp_path / "rejected-v3.pt"
     torch.save(payload, rejected)
     with pytest.raises(ValueError, match="update 2100"):
+        _load_motion_checkpoint(rejected)
+
+
+def test_motion_checkpoint_loader_accepts_v5_only_at_update_2900(tmp_path) -> None:
+    model = StableMotionBottleneckAnonymousFutureModel(
+        velocity_scale_mps=(3.0, 3.2, 0.25), yaw_rate_scale_rad_s=17.25,
+        channels=32, dropout=0.0, message_layers=2, basis_count=6,
+    )
+    payload = {
+        "schema_version": V5_RUN_SCHEMA,
+        "fixed_endpoint": True,
+        "checkpoint_role": "fixed_final_endpoint",
+        "progress": {"global_update": 2900},
+        "provenance": {
+            "oracle_association": True,
+            "deployable_pipeline": False,
+            "test_accessed": False,
+        },
+        "model_config": model.config,
+        "model": model.state_dict(),
+        "model_state_dict_sha256": state_dict_sha256(model.state_dict()),
+    }
+    accepted = tmp_path / "accepted-v5.pt"
+    torch.save(payload, accepted)
+    loaded, info = _load_motion_checkpoint(accepted)
+    assert info["global_update"] == 2900
+    assert info["model_version"] == "v5"
+    assert state_dict_sha256(loaded.state_dict()) == payload["model_state_dict_sha256"]
+
+    payload["progress"]["global_update"] = 2899
+    rejected = tmp_path / "rejected-v5.pt"
+    torch.save(payload, rejected)
+    with pytest.raises(ValueError, match="update 2900"):
         _load_motion_checkpoint(rejected)
 
 
