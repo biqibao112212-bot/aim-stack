@@ -1197,14 +1197,25 @@
   conditional Mean is 267.18/255.70 mm with 56.25% modulo-4 role accuracy;
   combined is 166.10/159.56 mm with 71.36% role accuracy. The frozen states
   remain unchanged.
-- [ ] Active: replace the short-history trajectory representation rather than
-  tuning the present selector. Per-handle temporal encoding must advance only
-  on actually visible events and retain true inter-observation time gaps;
-  motion-regime separation must be inferred from history rather than a truth
-  class input; the continuous decoder must predict one query-independent
-  trajectory state evaluated by a shared learned time basis. Train with equal
-  window/motion/history-bin weighting and make modulo-4 role the firing loss,
-  with signed crossing count retained only as an auxiliary task.
+- [x] Implement the independent v2 structure without changing the immutable
+  v1 model or runner. Each anonymous handle is compacted to its actually
+  visible event stream and same-handle velocity uses the full timestamp gap.
+  A history-inferred three-way latent mixture predicts query-independent
+  trajectory coefficients, evaluated by one shared learned continuous-time
+  basis. Duplicate candidate rows are reconstructed from the same modulo-four
+  role state, so `k` and `k+/-4` are exactly one trajectory.
+- [x] Make modulo-four role the primary firing output. Exact signed crossing
+  probability is normalized within each role and is auxiliary only; final XYZ
+  is gathered directly from the selected role. Add equal-within-window loss,
+  the existing equal motion/history-bin sampler, and fixed trajectory,
+  selector, short-joint and frozen-trajectory recalibration stages. Twenty v2
+  contract/gradient tests and all 348 Stage3 tests pass; architecture and
+  consumer-boundary checks pass.
+- [ ] Active: run a small fixed r2 CUDA overfit/smoke acceptance, including a
+  checkpoint-resume exercise. If finite gradients, frozen upstream hashes,
+  stage isolation and endpoint metrics pass, run exactly one non-overwriting
+  full r2 v2 pilot. Do not select a validation checkpoint or tune the fixed
+  schedule from intermediate metrics.
 - [ ] Only after the corrected r2 structure pilot passes, rebuild the larger
   train/validation corpus under decisions 154--157, verify native 6 mm
   provenance, and execute the formal run. If provenance cannot establish 6 mm,

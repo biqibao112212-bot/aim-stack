@@ -1758,3 +1758,43 @@
   window, motion and history bin, followed by a short joint stage and a final
   frozen-trajectory selector recalibration. More epochs on the current head and
   another final-position residual remain closed.
+
+## 2026-07-30 decision 162: v2 is a separate visibility-driven role model
+
+- Preserve `AnonymousVehicleFutureModel` and its v1 training schema unchanged
+  so the fixed update-2,100 artifact remains strictly loadable and its recovery
+  source contract stays meaningful. The structural successor is separately
+  named `VisibilityAwareAnonymousVehicleFutureModel` with an independent v2
+  run schema; a v1 state dictionary must fail strict loading into v2.
+- Each handle's history is compacted to visible events before the shared causal
+  encoder. Inactive or active-but-invisible coordinates are sanitized and do
+  not occupy a temporal slot. Same-handle velocity and elapsed features use the
+  timestamps of the two most recent visible observations, including arbitrary
+  gaps. Q0 support remains the only fallback for a handle with no visible
+  history.
+- The trajectory head produces per-role, per-latent-regime coefficients once
+  from the causal history. A shared learned basis reads only continuous query
+  time; explicit multiplication by normalized tau makes q0 identity exact.
+  The regime gate is inferred from the anonymous vehicle history and never
+  receives the offline rotation/combined label. This is a learned operator,
+  not a circle, ellipse, constant-twist or switch-time physics decoder.
+- Candidate-row metadata is not allowed to split a physical role. Every
+  candidate trajectory is gathered from `step mod 4`, and the complete unique
+  signed range is validated. The primary role head predicts four relative
+  roles. The ordered signed-crossing distribution is normalized within those
+  roles, so its modulo-four aggregate exactly equals the primary role
+  probability, while final firing XYZ depends only on selected role.
+- Losses first average valid queries inside each window, then average windows;
+  the existing sampler balances motion class and history-length strata only in
+  the offline loader, never in forward. The immutable four-stage pilot is
+  trajectory, selector, short joint with selector context detached, and final
+  frozen-trajectory selector recalibration. Exact crossing CE has weight 0.15
+  relative to role CE 1.0.
+- Acceptance is structural before statistical. The focused suite covers
+  visibility isolation, sparse same-handle elapsed time, complete candidate
+  range, query/candidate permutations, C4/reflection, tau zero, same-role
+  identity, role aggregation, forbidden inputs, four actual optimizer steps
+  and joint gradient isolation. Twenty focused tests, all 348 Stage3 tests and
+  both repository boundary checks pass. A small r2 CUDA run and resume test are
+  required before the one full diagnostic pilot; neither run may open test or
+  promote a checkpoint by validation.
