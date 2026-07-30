@@ -1208,8 +1208,8 @@
   probability is normalized within each role and is auxiliary only; final XYZ
   is gathered directly from the selected role. Add equal-within-window loss,
   the existing equal motion/history-bin sampler, and fixed trajectory,
-  selector, short-joint and frozen-trajectory recalibration stages. Twenty v2
-  contract/gradient tests and all 348 Stage3 tests pass; architecture and
+  selector, short-joint and frozen-trajectory recalibration stages. Twenty-one
+  v2 contract/gradient/recovery tests and all 349 Stage3 tests pass; architecture and
   consumer-boundary checks pass.
 - [ ] Active: run a small fixed r2 CUDA overfit/smoke acceptance, including a
   checkpoint-resume exercise. If finite gradients, frozen upstream hashes,

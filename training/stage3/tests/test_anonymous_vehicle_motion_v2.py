@@ -346,3 +346,41 @@ def test_joint_selector_loss_is_strictly_detached_from_trajectory() -> None:
         selector_loss, trajectory_parameters, allow_unused=True,
     )
     assert all(value is None or torch.count_nonzero(value) == 0 for value in gradient)
+
+
+def test_recovery_payload_preserves_joint_isolation_gate() -> None:
+    from training.stage3.train_anonymous_vehicle_motion import (
+        BalancedMotionHistorySampler,
+    )
+    from training.stage3.train_anonymous_vehicle_motion_v2 import (
+        SELECTOR_MODULES,
+        TRAJECTORY_MODULES,
+        _checkpoint_payload,
+    )
+
+    model = _model()
+    trajectory = [
+        parameter
+        for name in TRAJECTORY_MODULES
+        for parameter in getattr(model, name).parameters()
+    ]
+    selector = [
+        parameter
+        for name in SELECTOR_MODULES
+        for parameter in getattr(model, name).parameters()
+    ]
+    payload = _checkpoint_payload(
+        model=model,
+        trajectory_optimizer=torch.optim.AdamW(trajectory),
+        selector_optimizer=torch.optim.AdamW(selector),
+        scaler=torch.amp.GradScaler("cuda", enabled=False),
+        provenance={}, contract_sha256="contract", global_update=7,
+        stage="joint", stage_update=1, validation_history=[],
+        sampler=BalancedMotionHistorySampler({
+            (2, "8-15"): [0], (3, "8-15"): [1],
+        }, seed=1),
+        prefix_generator=torch.Generator().manual_seed(2),
+        stage_endpoint=False, fixed_endpoint=False, run_id="run",
+        gradient_isolation_verified=True,
+    )
+    assert payload["gradient_isolation_verified"] is True

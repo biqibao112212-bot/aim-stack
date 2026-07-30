@@ -1794,7 +1794,14 @@
   visibility isolation, sparse same-handle elapsed time, complete candidate
   range, query/candidate permutations, C4/reflection, tau zero, same-role
   identity, role aggregation, forbidden inputs, four actual optimizer steps
-  and joint gradient isolation. Twenty focused tests, all 348 Stage3 tests and
+  and joint gradient isolation. Twenty-one focused tests, all 349 Stage3 tests and
   both repository boundary checks pass. A small r2 CUDA run and resume test are
   required before the one full diagnostic pilot; neither run may open test or
   promote a checkpoint by validation.
+- The first deliberate interruption at update 575 resumes deterministically
+  from immutable update 525: repeated update-550 and update-575 losses are
+  identical. It also exposes a recovery-metadata omission: the verified joint
+  gradient-isolation flag was not stored in the checkpoint and became false
+  after resuming directly into recalibration. The v2 recovery payload now
+  persists and restores this gate, with a focused regression test. The affected
+  smoke is diagnostic-only and cannot pass the final recovery acceptance.

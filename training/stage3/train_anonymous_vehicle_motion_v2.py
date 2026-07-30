@@ -330,6 +330,7 @@ def _checkpoint_payload(
     stage_endpoint: bool,
     fixed_endpoint: bool,
     run_id: str,
+    gradient_isolation_verified: bool,
 ) -> dict[str, Any]:
     return {
         "schema_version": RUN_SCHEMA,
@@ -358,6 +359,7 @@ def _checkpoint_payload(
         "stage_endpoint": stage_endpoint,
         "checkpoint_selected_by_validation": False,
         "run_id": run_id,
+        "gradient_isolation_verified": gradient_isolation_verified,
     }
 
 
@@ -512,6 +514,7 @@ def train(args: argparse.Namespace) -> Path:
     contract_sha256 = _json_sha256(contract)
     run_id = str(uuid.uuid4())
     global_update = 0
+    gradient_isolation_verified = False
     validation_history: list[dict[str, Any]] = []
     if resume is not None:
         payload = torch.load(resume, map_location="cpu", weights_only=False)
@@ -535,6 +538,9 @@ def train(args: argparse.Namespace) -> Path:
         validation_history = list(payload.get("validation_history", []))
         provenance = payload["provenance"]
         run_id = str(payload.get("run_id", run_id))
+        gradient_isolation_verified = bool(
+            payload.get("gradient_isolation_verified", False)
+        )
         _restore_rng_state(payload["rng"], sampler, prefix_generator)
     else:
         validation_history.append({
@@ -561,7 +567,6 @@ def train(args: argparse.Namespace) -> Path:
     _atomic_json(output / "run_manifest.json", manifest_payload)
     started = time.time()
     previous_stage: str | None = None
-    gradient_isolation_verified = False
     while global_update < total_updates:
         next_update = global_update + 1
         stage, stage_update, stage_total = stage_for_update(args, next_update)
@@ -693,6 +698,7 @@ def train(args: argparse.Namespace) -> Path:
                 validation_history=validation_history, sampler=sampler,
                 prefix_generator=prefix_generator, stage_endpoint=stage_endpoint,
                 fixed_endpoint=fixed_endpoint, run_id=run_id,
+                gradient_isolation_verified=gradient_isolation_verified,
             ))
             manifest_payload["progress"] = {
                 "global_update": global_update, "stage": stage,
