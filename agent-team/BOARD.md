@@ -1364,7 +1364,7 @@
   against a required 30%. Separated fails both seeds. The miss is not a bad
   high-speed tail: joint improves high-speed yaw by 40.52%; it is concentrated
   in the low-speed, history-32, all-three-pair-scales-available body.
-- [ ] Active: implement and run the V9 anonymous geometry--velocity paired-set
+- [x] Implement and run the V9 anonymous geometry--velocity paired-set
   structural screen. Train exactly two 200-update state-only candidates under
   seeds 20260730/20260731 and compare them to the existing same-seed V8 joint
   update-200 checkpoints. Every local handle edge must retain its endpoint
@@ -1376,7 +1376,15 @@
   q0 quality or analytic future decoder enters forward. Gradient-reachable
   state capacity must remain within 5% of V8 joint; permanently dead legacy
   V8 modules do not count toward the comparison.
-- [ ] The V9 200-update gate must pass both seeds: overall velocity improves at
+- [x] The V9 r2 two-seed aggregate is valid and rejected at
+  `20260730-v81-v9-paired-twist-aggregate-r2`; SHA-256 is
+  `a163e0a51d15cb16babf5c36ac51ffdf138a9ce00937b07c372c8b9a9c3d3c00`,
+  source commit is `640cb0d`, test is unopened and no full V9 is authorized.
+  Seed 20260730 improves overall/combined/high-speed velocity by only
+  1.10/10.48/9.65%; seed 20260731 regresses overall velocity 6.74% and overall
+  yaw 11.35%. Broken pairing improves rather than worsens high-speed velocity
+  in both seeds. The V9 200-update gate required both seeds: overall velocity
+  improves at
   least 10%; combined and high-speed-combined velocity improve at least 15%;
   overall/combined/high-speed yaw regress no more than 5%; yaw-sign regresses
   no more than 0.01; and the low-speed<=1.2 m/s, history-32, pair3 combined
@@ -1395,7 +1403,7 @@
   The full 750-sample diagnostic exactly reproduces the protected V8 control
   metrics and retains the 300 combined, 82 high-speed-combined and 149 core
   supports. Test remains unopened.
-- [ ] The first two V9 r1 runs reached their fixed update-200 checkpoints, but
+- [x] The first two V9 r1 runs reached their fixed update-200 checkpoints, but
   aggregation correctly stopped before any gate report because a diagnostic
   callable launched through `python -m` was recorded under runtime module
   `__main__`; the normal imported finalizer saw its canonical package module.
@@ -1403,6 +1411,35 @@
   and is not promoted. `_callable_contract` now canonicalizes a `python -m`
   entrypoint through `__main__.__spec__.name`; after its clean commit, rerun
   both fixed seeds under new r2 roots and aggregate only those r2 artifacts.
+- [x] Replace V9's mutually exclusive complete-4D experts with a V10
+  paired-residual state estimator. One full-history anonymous handle set emits
+  a single 3D velocity baseline. Every available pair1/pair2/pair3 event-scale
+  bundle contributes an angular vote and a learned multiplicative
+  geometry--velocity interaction; their aggregate emits yaw plus a planar
+  rotation-compensation residual. There is no local/steady/fallback router,
+  no per-coordinate scale choice and no complete-4D expert mixture. Pair-free
+  histories use the handle baseline and handle angular fallback by deterministic
+  support, not by class or learned identity. The six-field causal API and all
+  frozen upstream/future boundaries remain unchanged. The final strict
+  zero-preserving implementation has no paired learned query, affine
+  normalization or linear bias: independently zeroing any geometry or
+  kinematics projection makes the paired yaw vote and planar residual exactly
+  zero even when common motion changes. It has 1,498,568 gradient-reachable
+  state parameters, 0.731% above V8 joint. A formal CUDA BF16 batch-64 backward
+  reaches every state parameter while all future parameters remain frozen.
+  The full diagnostic retains 750/300/82/149/48 samples in the
+  overall/combined/high-speed/core/pair1-2 groups and exactly replays the V8
+  controls. Three independent read-only reviews are READY; 526 Stage3 tests
+  and both repository boundary checks pass. Test remains unopened.
+- [ ] Active: screen V10 for exactly 200 updates under both existing seeds against the
+  same protected V8-joint controls and original V9 gates. Add two causal-use
+  requirements: broken pairing must worsen high-speed-combined velocity by at
+  least 10% or 0.15 m/s, and zeroing the learned planar rotation compensation
+  must worsen combined or high-speed-combined velocity by at least 8% or
+  0.10 m/s. A dedicated pair1/pair2 group must improve both velocity and yaw
+  by at least 10%; breaking pairing in that group must worsen velocity by at
+  least 5% or 0.05 m/s and yaw by at least 10% or 0.30 rad/s. Failure stops the
+  structure without extra updates.
 - [x] V7 implementation and preflight are complete. The model preserves the
   exact six-field API, common-ramp/C4/reflection invariance and the one-way
   angular-to-planar conditioning boundary. The formal finalizer reconstructs

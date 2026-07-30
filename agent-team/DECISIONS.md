@@ -2489,3 +2489,73 @@
   a clean commit into new r2 roots so checkpoint, manifest, callable contract
   and aggregate all bind the same canonical source identity. Test remains
   unopened; no gate is weakened.
+
+## 2026-07-30 decision 181: V9 fails because evidence availability and 4D calibration are coupled
+
+- The clean V9 r2 aggregate is a valid `failed` result at
+  `20260730-v81-v9-paired-twist-aggregate-r2`, bound to source commit
+  `640cb0d`; test remains unopened. Seed 20260730 improves overall, combined
+  and high-speed-combined velocity by 1.10%, 10.48% and 9.65%, while seed
+  20260731 regresses overall velocity by 6.74%. Core yaw improves 10.22% in the
+  first seed but regresses 36.57% in the second. Both seeds fail the pairing
+  intervention because broken pairing slightly improves high-speed velocity.
+- This does not mean every pair token is unused. On full-history pair3 samples,
+  breaking pairing worsens velocity by 0.138/0.086 m/s and yaw by
+  0.357/0.587 rad/s. The structural hole is partial support: 143 pair1/pair2
+  samples cannot enter the steady expert, and 24.8% of all validation samples
+  are forced to local. Combined pair1/pair2 error is about 1.15 m/s and
+  3.84 rad/s. A per-sample available-expert oracle recovers only 7% velocity
+  and 9--12% yaw overall and almost nothing in high-speed combined motion, so
+  router tuning alone is insufficient.
+- The complete observation latent remains identifiable: nearest nonlocal
+  combined neighbours do not show strong same-input/different-truth conflicts.
+  Instead V9 contracts planar magnitude and couples its calibration to yaw.
+  The two seed yaw predictions correlate at 0.997 but differ by 0.739 rad/s in
+  mean. Combined signed y-velocity error and yaw error correlate at 0.87 even
+  though the corresponding truth correlation is only -0.17. One expert scalar
+  applied to the complete 4D twist is therefore rejected as the next state
+  definition.
+- The frozen learned future decoder is also nearly insensitive to the supplied
+  4D state: on combined validation, replacing candidate yaw, planar velocity
+  or the complete state by truth changes conditional future error by less than
+  0.02 mm around 409.7 mm. State learning remains independently measurable,
+  but a later accepted state must be followed by a learned decoder redesign
+  with counterfactual state-sensitivity tests. The user-rejected analytic
+  future decoder is not reintroduced.
+
+## 2026-07-30 decision 182: V10 uses paired residual subspaces without a 4D router
+
+- V10 retains the anonymous local-edge encoders but deletes the complete-4D
+  local/steady/fallback proposals and their scalar router. A single handle-set
+  latent emits one coherent 3D velocity baseline. Every available 10/30/70-ms
+  pair scale, including pair1 and pair2 support, forms an event-scale bundle
+  with the matching handle summary. A multiplicative learned interaction
+  prevents geometry and kinematics from bypassing their pairing on the yaw and
+  rotation-compensation paths.
+- Pair bundles emit local angular votes with direct yaw-only supervision and
+  learned reliability. Their aggregate emits yaw plus a planar correction to
+  the handle velocity baseline; z velocity is never corrected by planar
+  rotation. With no pair bundle, the correction is structurally zero and yaw
+  uses a handle-only fallback. This is an observation-support rule, not a
+  physical ID, class, session, truth, future or quality input. The two
+  subspaces share the causal token trunk and train jointly; there is no V7-style
+  detached one-way boundary and no per-coordinate expert selection.
+- The paired path is structurally zero-preserving, not merely encouraged by a
+  loss. Geometry and kinematics are projected separately by bias-free layers;
+  their products form the handle and pair interactions, and the resulting
+  event-scale bundle is the only source of paired yaw and planar correction.
+  The bundle, yaw-vote and correction normalizations have no affine terms, the
+  downstream paired linears have no bias, and no learned query reads pair
+  evidence. Thus zeroing any one paired marginal makes both paired outputs
+  exactly zero, and the common handle latent cannot synthesize a residual by
+  itself. The handle-only fallback is used only when pair support is absent.
+- The first screen is two fixed 200-update seeds against the existing V8-joint
+  controls, with gradient-reachable capacity within 5%. All V9 gates remain.
+  In addition, pair1/pair2 combined velocity and yaw must each improve at least
+  10%; broken pairing must worsen high-speed-combined velocity by at least 10%
+  or 0.15 m/s; and zeroing the planar paired residual must worsen combined or
+  high-speed-combined velocity by at least 8% or 0.10 m/s. Broken pairing in
+  the pair1/pair2 group must also worsen velocity by at least 5% or 0.05 m/s
+  and yaw by at least 10% or 0.30 rad/s. Both seeds pass separately or the
+  structure ends without extra epochs. Future fine tuning, scatter plots,
+  export and online integration remain frozen.

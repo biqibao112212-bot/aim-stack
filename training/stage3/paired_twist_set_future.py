@@ -569,6 +569,12 @@ class AnonymousPairedTwistTokenContext(nn.Module):
         return {
             "_token": token,
             "_token_valid": token_valid,
+            "_handle_geometry_raw": handle_geometry,
+            "_handle_kinematics_raw": handle_kinematics,
+            "_handle_raw_valid": handle_token_valid,
+            "_pair_geometry_raw": pair_geometry,
+            "_pair_kinematics_raw": pair_kinematics,
+            "_pair_raw_valid": pair_token_valid,
             "_local_token_valid": local_token_valid,
             "_steady_token_valid": token_valid,
             "_handle_token_valid": torch.cat((
