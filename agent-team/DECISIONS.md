@@ -2711,3 +2711,70 @@
   Both seeds must pass every gate; otherwise V12 ends without extra updates.
   Only a pass can start learned future-position redesign/fine-tuning and the
   requested per-motion distance/flight-time versus error scatter plots.
+
+## 2026-07-31 decision 186: V12 is rejected; V13 alternates signed equivariant state updates
+
+- V12 completed two clean fixed-200-update seeds and is validly rejected. The
+  runs pass 44/94 and 45/94 gates. Across seeds, overall velocity changes from
+  initial mean/P50/P95 0.543/0.116/2.086 m/s to
+  0.616/0.455/1.853 m/s, versus V8 0.511/0.363/1.453 m/s. Overall yaw changes
+  from 8.578/9.005/14.192 rad/s to 3.958/2.185/13.173 rad/s, versus V8
+  1.861/1.188/5.574 rad/s. Combined/high-speed body and tail metrics likewise
+  remain worse than V8. Breaking pair correspondence improves pair0/1/2 yaw in
+  the dominant evidence, while pair3 is only weakly causal. Pure-rotation
+  velocity grows from about 0.082 to 0.375 m/s. These are structural failures,
+  not a request for more epochs.
+- The mechanism diagnosis supersedes V12's strict ordering. Its masked mean of
+  visible-factor apparent rates is a gauge, not vehicle-center velocity, and
+  absorbs rotation before omega. The velocity objective can also backpropagate
+  through omega-conditioned de-rotation unless the closure is typed at the loss
+  boundary. Pooling handle/scale evidence before recurrence and hard reliance
+  on sparse pair support further weaken pair0/1/2. The replacement therefore
+  alternates estimates and detaches every cross-stage state rather than making
+  omega-to-velocity the only one-way dependency.
+- V13 fixes the computation as
+  `omega0 -> velocity0 -> omega1 -> velocity1`, with fixed screen lengths
+  35/20/25/20 and an independently reset LR phase for each. Omega stages use
+  reflection-even ordered handle/pair encoders plus explicit signed angle,
+  orbital and curvature pseudoscalars. Learned coefficients are unrestricted,
+  so the estimator can reverse or replace a wrong carrier and still receives a
+  real-loss gradient when the analytic angle carrier is zero. Handle evidence
+  requires two midpoint-ordered consecutive chords; pair and handle estimates
+  use soft support/dispersion precision weights. Omega1 is exactly
+  `detach(omega0) + delta_omega` after recomputing the gauge from detached
+  velocity0.
+- V13 velocity analytically de-rotates observed handle displacement, solves a
+  supported-row WLS carrier and learns only scalar combinations of
+  carrier-centred residual vectors. The correction is common-ramp invariant and
+  O(2)-equivariant by construction; it cannot emit a free XYZ bias. WLS rows
+  below the denominator threshold are explicitly unsupported, return high
+  uncertainty and do not enter state/equivariance losses. Irregular acceleration
+  divides chord-rate differences by chord-midpoint time. A dataset preflight
+  bounds physical train/validation yaw at 15 rad/s; over the maximum 0.105-s lag
+  its 1.575-rad phase remains below pi and prevents atan2 alias.
+- The typed loss macro-balances motion class x exact pair-scale support x
+  history length; the hierarchical sampler additionally balances motion,
+  session, history, stationary/active state and pair0/1/2/3 support without
+  exposing any of those labels to forward. Each substage trains its state
+  coordinate, the matching observed-history closure, common-ramp equivariance
+  and physical reflection. Real training-loss autograd tests require finite
+  nonzero gradients only under the active module prefix at updates
+  1/36/56/81. Future labels are unread and future modules remain frozen.
+- Formal V13 acceptance is a two-seed, fixed-100-update local RTX 4060 screen,
+  not full continuation. Each result is reconstructed from its checkpoint and
+  bound to a clean non-unknown commit, semantic callable contracts, current
+  source hashes, exact update counts/transitions, branch-hash changes,
+  validation history, diagnostics, source dataset and unchanged future tensor
+  hashes. Protected same-seed V12 result paths, result SHA-256 and checkpoint
+  SHA-256 are constants. Numeric domains and sample counts are validated before
+  evaluating mean/P50 improvements, P95 catastrophe guards, pair0 handle and
+  pair1/2/3 pair causality, common-ramp/reflection and exact write isolation.
+  The finalizer reopens only train/validation, verifies truth-shard hashes,
+  repeats the exact truth joins and recomputes the complete yaw-alias summary;
+  phase, sample-count or maximum-yaw report forgery is rejected even if contract,
+  provenance and checkpoint payload are rewritten together. The reviewed source
+  passes 35/35 focused and 596/596 complete Stage3 tests plus both repository
+  boundary checks.
+  The aggregate independently reruns this validator for both seeds. A failure
+  ends V13 without update piling; future-position fine-tuning and user-facing
+  distance/flight-time scatter plots remain frozen until a state gate passes.

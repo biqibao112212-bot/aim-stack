@@ -2,44 +2,63 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-31 omega-first ordered closure V12 (active)
+## 2026-07-31 equivariant alternating twist V13 (active)
 
-- V11 is a valid rejected baseline, not an unfinished run. Its separate
-  mechanism audit corrected the old crossed-metric interpretation: the masked
-  mean of visible-plate apparent rates is not vehicle-center translation.
-  V11 does learn useful high-speed/pair1/pair2 behaviour, but contracts yaw
-  magnitude and contaminates velocity through its shared four-dimensional
-  update; more epochs or small loss tuning are not authorized.
-- V12 replaces the shared update with a strict typed computation. Event-ordered
-  relative factors estimate omega first. A learned history decoder then uses
-  omega, causal geometry and elapsed time to remove rotation; only the remaining
-  common handle residual estimates velocity. Relative/pair factors cannot write
-  velocity, velocity cannot write omega, and all recurrent/update paths are
-  bias-free and exactly zero-preserving. Inference still receives exactly the
-  six anonymous causal observation fields; it receives no physical armor ID,
-  class, session, truth, future or PnP-only quality input.
-- The frozen learned future decoder remains hash-protected and is not trained in
-  this screen. V12 has 1,547,652 gradient-reachable state parameters versus
-  V8's 1,487,688 (+4.03%). Focused tests pass 15/15 and the full Stage3 suite
-  passes 561/561. A formal-shape CUDA BF16 batch-64 backward reached every
-  state module with finite nonzero gradients at about 3,742 MiB. Consumer and
-  architecture boundary checks pass; simulator, SDK and Release remain read-only.
-- Validation is body-aware and fail-closed. Exact validation group counts are
-  750 overall, 300 combined, 82 high-speed combined, 149 core and
-  pair0/1/2/3 = 127/25/23/229. Pair interventions use full-validation
-  equal-support derangements and have changed-row support 15/6/11 for
-  pair1/2/3. The AA/AB/BA/BB diagnostic resynthesizes target history support
-  from independent truth velocity/omega sources, tests x and y translation
-  separately across all four direction quadrants, and retains common-ramp and
-  relative-reflection equivariance. Exact schemas reject booleans, non-finite
-  values, unexpected fields, bad counts and impossible percentile ordering.
-- Current in-progress item: commit the reviewed implementation from a clean
-  source tree, then run exactly two local RTX 4060 fixed-200-update seeds and
-  aggregate every state/causal gate independently. Failure stops this
-  architecture without epoch piling. Only a two-seed pass may authorize a new
-  learned future-position decoder and its final fine-tune; the later plots stay
-  simple: one distance-or-flight-time versus position-error scatter per motion
-  state, evaluated on validation rather than tail-only summaries.
+- V12 is complete and validly rejected, not an unfinished run. Its two fixed
+  seeds pass only 44/94 and 45/94 gates. Relative to V8, overall velocity and
+  yaw body metrics regress, pair0/1/2 yaw correspondence often improves when
+  broken, and pure-rotation velocity is contaminated. The mechanism evidence
+  shows why: the visible-factor apparent-rate mean was used as a translation
+  gauge before omega and absorbed rotation; strict omega-first ordering then
+  had no way to recover it. More V12 updates or small threshold tuning are not
+  authorized. Protected V12 checkpoints and the failed aggregate remain intact.
+- V13 is a structural replacement with four typed, detached stages:
+  `omega0 -> velocity0 -> omega1 -> velocity1`. Omega is no longer an analytic
+  carrier multiplied by a positive gain. Reflection-even temporal networks
+  emit unrestricted scalar coefficients over several explicit signed
+  pseudoscalar proposals, so a zero or wrong-sign angle carrier remains
+  learnable. Handle curvature needs at least two consecutive chords/three
+  positions; pair and handle evidence are precision-weighted softly, never
+  switched by a physical armor ID or a hard any-pair rule. Omega1 is explicitly
+  `detach(omega0) + delta_omega(detach(velocity0), history)`.
+- Velocity uses analytic de-rotation followed by exact supported-row WLS. Its
+  learned correction is an O(2)-equivariant combination of WLS-residual vector
+  bases, so a common planar velocity ramp transfers exactly and physical-Y
+  reflection flips only the Y component. Unsupported WLS rows are explicit and
+  excluded from state/equivariance losses. Irregular chord acceleration uses
+  chord-midpoint time, and the fixed 0.105-s lag/yaw-scale alias envelope is
+  asserted. The observed-history closure diagnostic now uses the same analytic
+  decoder as forward.
+- Training is a fixed 35/20/25/20 update structural screen with a reset LR
+  phase per typed stage. The sampler is balanced by motion, session, history,
+  active/stationary state and exact observable pair-scale support 0/1/2/3; the
+  training loss also macro-balances motion x pair-support x history. Direct
+  state supervision, typed observed-history closure, common-ramp equivariance
+  and physical reflection are trained together. Real-loss tests require a
+  finite nonzero gradient in exactly one typed module at every boundary.
+- The six-field anonymous causal inference API is unchanged. No armor ID,
+  session, motion class, truth, future, absolute range or PnP-only quality is a
+  forward input. The learned future-position decoder remains frozen and
+  hash-protected. V13 has 1,359,040 state parameters versus V8's 1,487,688,
+  within the fixed capacity ceiling. Focused tests pass 35/35 and the complete
+  Stage3 suite passes 596/596; all three independent reviews are READY.
+- The formal result validator reconstructs the model strictly, binds the clean
+  commit, source hashes, checkpoint payload, 35/20/25/20 transitions, per-stage
+  branch hashes, validation, diagnostics, frozen-future hashes and source
+  dataset. It reloads only train/validation truth, verifies every truth shard,
+  reattaches exact join keys and recomputes the yaw-alias report, so synchronized
+  contract/checkpoint report tampering cannot pass. Same-seed V12 result paths
+  and SHA-256 values are constants, not
+  report-selected inputs. Numeric schema validation precedes all gates;
+  pair1/2/3 causal breaks, absolute-or-relative closure worsening and P95
+  disaster guards supplement mean/P50 body metrics. The aggregate reruns the
+  complete validator for both seeds.
+- Current step: commit the reviewed source tree, then execute exactly two local
+  RTX 4060 fixed-100-update seeds and aggregate. Consumer-boundary and
+  architecture checks already pass. Failure stops V13 without epoch
+  piling. Only a two-seed pass can authorize later state continuation; the
+  learned future-position fine-tune and the requested per-motion
+  distance/flight-time versus position-error scatter plots remain deferred.
 
 ## 2026-07-23 cyclic-track clean physical experts (historical; superseded)
 

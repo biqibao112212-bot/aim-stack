@@ -494,6 +494,8 @@ def train(
     loss_function: Any = stable_motion_future_loss,
     state_loss_function: Any | None = None,
     state_step_function: Any | None = None,
+    motion_state_cell_function: Any | None = None,
+    dataset_preflight_function: Any | None = None,
     final_diagnostic_function: Any | None = None,
     run_schema: str = RUN_SCHEMA,
     extra_source_paths: dict[str, Path] | None = None,
@@ -511,6 +513,8 @@ def train(
     )
     state_step_contract = _callable_contract(state_step_function)
     state_loss_contract = _callable_contract(state_loss_function)
+    motion_state_cell_contract = _callable_contract(motion_state_cell_function)
+    dataset_preflight_contract = _callable_contract(dataset_preflight_function)
     final_diagnostic_contract = _callable_contract(final_diagnostic_function)
     if state_gate_only:
         if args.motion_state_updates <= 0 or any(value != 0 for value in stage_lengths[1:]):
@@ -573,8 +577,21 @@ def train(
     motion_scale = fit_motion_scales(train_dataset)
     normalize_attached_motion(train_dataset, motion_scale)
     normalize_attached_motion(validation_dataset, motion_scale)
+    dataset_preflight_report = (
+        None if dataset_preflight_function is None
+        else dataset_preflight_function(train_dataset, validation_dataset)
+    )
+    if dataset_preflight_function is not None and not isinstance(
+        dataset_preflight_report, dict,
+    ):
+        raise ValueError("dataset preflight hook must return a report")
+    sampler_cells = (
+        motion_state_cells(train_dataset)
+        if motion_state_cell_function is None
+        else motion_state_cell_function(train_dataset)
+    )
     sampler = HierarchicalSessionHistorySampler(
-        motion_state_cells(train_dataset), seed=args.seed + 1,
+        sampler_cells, seed=args.seed + 1,
     )
     prefix_generator = torch.Generator().manual_seed(args.seed + 2)
     validation_loader = DataLoader(
@@ -684,6 +701,9 @@ def train(
         "state_gate_only": state_gate_only,
         "state_loss_function": state_loss_contract,
         "state_step_function": state_step_contract,
+        "motion_state_cell_function": motion_state_cell_contract,
+        "dataset_preflight_function": dataset_preflight_contract,
+        "dataset_preflight_report": dataset_preflight_report,
         "final_diagnostic_function": final_diagnostic_contract,
         "trainable_initial_state_dict_sha256": trainable_initial,
         "frozen_module_initialization": frozen_initialization,
@@ -699,8 +719,11 @@ def train(
         "frozen_initial_state_dict_sha256": frozen_initial,
         "sampler": {
             "strategy": (
+                "custom bound motion-state cells"
+                if motion_state_cell_contract is not None else
                 "equal motion/session/history/stationary-active hierarchical v1"
             ),
+            "cell_function": motion_state_cell_contract,
             "support": sampler.support,
         },
         "runtime": {
@@ -718,6 +741,9 @@ def train(
         "state_gate_only": state_gate_only,
         "state_loss_function": state_loss_contract,
         "state_step_function": state_step_contract,
+        "motion_state_cell_function": motion_state_cell_contract,
+        "dataset_preflight_function": dataset_preflight_contract,
+        "dataset_preflight_report": dataset_preflight_report,
         "final_diagnostic_function": final_diagnostic_contract,
         "frozen_module_initialization": frozen_initialization,
         "args": {
@@ -881,9 +907,24 @@ def train(
             optimizer.zero_grad(set_to_none=True)
         if stage == "motion_state":
             active_optimizers = (optimizers["state"],)
+            state_lr_update = components.get(
+                "state_lr_phase_update", stage_update,
+            )
+            state_lr_total = components.get(
+                "state_lr_phase_total", stage_total,
+            )
+            if (
+                isinstance(state_lr_update, bool)
+                or not isinstance(state_lr_update, int)
+                or isinstance(state_lr_total, bool)
+                or not isinstance(state_lr_total, int)
+                or not 1 <= state_lr_update <= state_lr_total
+                or state_lr_total > stage_total
+            ):
+                raise RuntimeError("state substage LR progress differs")
             lr_state = _set_phase_lr(
                 optimizers["state"], base_lr=args.motion_state_learning_rate,
-                stage_update=stage_update, stage_total=stage_total,
+                stage_update=state_lr_update, stage_total=state_lr_total,
             )
             lr_decoder = lr_selector = 0.0
         elif stage == "trajectory":
