@@ -1329,7 +1329,46 @@
   give rotation conditional/hard Mean 153.55/164.58 mm and combined
   180.89/201.58 mm. State and future gates fail, although both materially beat
   the prior v5 baseline; role accuracy is not the primary bottleneck.
-- [ ] Active: implement and run the fixed 800-update state-only v6 A/B. V77
+- [x] Complete the sampler-qualified v6 r2 state-only gate. It is bit-exact
+  with diagnostic r1 and fails six of the eight predeclared gates: overall
+  velocity/yaw/normalized error is 0.3994 m/s, 1.6206 rad/s and 0.0650;
+  combined is 0.6105 m/s and 2.3662 rad/s; speed>1.7-m/s combined velocity is
+  1.1318 m/s; combined-11 normalized MAE is 0.1795. Only normalized overall
+  error and overall yaw-sign accuracy pass. The protected r2 checkpoint SHA-256
+  is `e30759ab...8782a5`, source commit is `eae8ef1`, sampler/frozen-future
+  hashes match v77, and test remains unopened.
+- [x] Reject further v6 tuning. The clean-observation counterfactual changes
+  speed>1.7-m/s combined velocity/yaw error only from 1.132/4.141 to
+  1.108/4.174, and every single v6 scale is already bad in that stratum. The
+  failure is translation/rotation entanglement and magnitude contraction, not
+  tanh saturation, one bad scale, PnP noise, pair-only evidence or insufficient
+  external state dimension.
+- [ ] Active: implement and run the fixed 800-update state-only v7 factorized
+  common/relative motion A/B. Keep the exact six-field causal input and external
+  `[vx,vy,vz,yaw_rate]` output. An unordered relative-shape branch estimates
+  signed yaw from normalized current/prior `rrT`, deltas, rates and commutator
+  features. A separate same-handle/common-centroid branch estimates planar
+  translation, conditioned only by detached predicted yaw; `vz` has an
+  independent head. Pair latent may not directly enter translation, translation
+  may not enter yaw, and no shared projection may emit all four coordinates.
+  Common-velocity ramp augmentation enforces yaw invariance and translation
+  equivariance without entering deployed forward. Updates 1--250 specialize
+  yaw, 251--600 freeze yaw and train translation/z, and 601--800 jointly
+  calibrate the separated heads and fusers. Mapper/S/H and exact v77-update-800
+  decoder/selector remain frozen; failure stops before future training.
+- [x] V7 implementation and preflight are complete. The model preserves the
+  exact six-field API, common-ramp/C4/reflection invariance and the one-way
+  angular-to-planar conditioning boundary. The formal finalizer reconstructs
+  the full model strictly from the fixed update-800 checkpoint, binds its file,
+  contract, validation, diagnostic, substage and module hashes to the manifest,
+  rejects non-finite metrics, requires all four intervention groups and uses
+  planar speed for the >1.7-m/s combined stratum. All 482 Stage3 tests and both
+  repository boundary checks pass. Formal-capacity CUDA smoke completed 150
+  updates at channels=96/batch=64 without OOM. Diagnostic cross-250 and an
+  abrupt-stop cross-600 recovery both reproduced model, optimizer, scaler, RNG,
+  validation, substage and branch-hash state exactly; rerun current verifier
+  once from the clean commit before the formal gate.
+- [x] Historical v6 plan (superseded by the completed/rejected r2 gate): V77
   failure is strongest at high combined translation speed; replacing PnP by
   matched clean observations improves only about 10--15%, so the new state
   estimator uses causal non-overlapping 10/30/70/150/280-ms same-handle time
@@ -1346,12 +1385,14 @@
   passing state gate may start the predeclared trajectory and
   selector stages, followed by the two simple rotation/combined distance-error
   scatter plots.
-- [ ] V6 implementation has 455 passing Stage3 tests, both repository boundary
-  checks and a bit-exact 150->200 interruption/resume smoke. Mapper/S/H, v77
-  decoder/selector, test, export and online fire control remain frozen. Use
+- [x] The historical V6 implementation had 455 passing Stage3 tests, both
+  repository boundary checks and a bit-exact 150->200 interruption/resume
+  smoke; it is superseded by the completed/rejected V6 r2 result and the V7
+  implementation above. Mapper/S/H, v77 decoder/selector, test, export and
+  online fire control remain frozen. Use
   `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090 stays powered off
   but retained and must not be released.
-- [ ] The first v6 r1 state run reached all 800 updates before the parent could
+- [x] The first v6 r1 state run reached all 800 updates before the parent could
   terminate it and is retained as diagnostic-only because the final review
   found that "same sampler" was not yet machine-bound. It failed six of eight
   gates but improved v77 overall velocity/yaw/normalized error from

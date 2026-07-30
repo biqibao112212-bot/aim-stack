@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import nullcontext
+import hashlib
 import inspect
 import json
 import math
@@ -11,6 +12,7 @@ from pathlib import Path
 import platform
 import sys
 import time
+import textwrap
 from typing import Any
 import uuid
 
@@ -70,6 +72,18 @@ DECODER_MODULES = (
 )
 SELECTOR_MODULES = ("role_coefficient_head",)
 ALL_TRAINABLE_MODULES = STATE_MODULES + DECODER_MODULES + SELECTOR_MODULES
+
+
+def _callable_contract(value: Any | None) -> dict[str, str] | None:
+    """Bind an optional training hook to recoverable semantic source."""
+    if value is None:
+        return None
+    source = textwrap.dedent(inspect.getsource(value)).strip() + "\n"
+    return {
+        "module": str(value.__module__),
+        "qualname": str(value.__qualname__),
+        "semantic_source_sha256": hashlib.sha256(source.encode("utf-8")).hexdigest(),
+    }
 
 
 def motion_state_cells(dataset: Any) -> dict[tuple[int, str, str], list[int]]:
@@ -426,6 +440,10 @@ def _checkpoint_payload(
     fixed_endpoint: bool,
     run_id: str,
     gradient_isolation_verified: dict[str, bool],
+    state_substage_counts: dict[str, int] | None = None,
+    state_substage_transitions: list[dict[str, Any]] | None = None,
+    state_branch_hash_history: list[dict[str, Any]] | None = None,
+    final_diagnostics: dict[str, Any] | None = None,
     schema_version: str = RUN_SCHEMA,
 ) -> dict[str, Any]:
     return {
@@ -454,6 +472,10 @@ def _checkpoint_payload(
         "checkpoint_selected_by_validation": False,
         "run_id": run_id,
         "gradient_isolation_verified": gradient_isolation_verified,
+        "state_substage_counts": state_substage_counts,
+        "state_substage_transitions": state_substage_transitions,
+        "state_branch_hash_history": state_branch_hash_history,
+        "final_diagnostics": final_diagnostics,
     }
 
 
@@ -465,6 +487,8 @@ def train(
     ),
     loss_function: Any = stable_motion_future_loss,
     state_loss_function: Any | None = None,
+    state_step_function: Any | None = None,
+    final_diagnostic_function: Any | None = None,
     run_schema: str = RUN_SCHEMA,
     extra_source_paths: dict[str, Path] | None = None,
     state_gate_only: bool = False,
@@ -479,10 +503,12 @@ def train(
         args.motion_state_updates, args.trajectory_updates,
         args.selector_updates, args.decoder_joint_updates,
     )
+    state_step_contract = _callable_contract(state_step_function)
+    final_diagnostic_contract = _callable_contract(final_diagnostic_function)
     if state_gate_only:
         if args.motion_state_updates <= 0 or any(value != 0 for value in stage_lengths[1:]):
             raise ValueError("state-only gate requires one positive state stage and zero later stages")
-        if state_loss_function is None:
+        if state_loss_function is None and state_step_function is None:
             raise ValueError("state-only gate requires a dedicated state loss")
     elif min(stage_lengths) <= 0:
         raise ValueError("all four fixed stages need positive updates")
@@ -649,6 +675,8 @@ def train(
         "physics_decoder": False,
         "selected_model_family": model.config.get("family"),
         "state_gate_only": state_gate_only,
+        "state_step_function": state_step_contract,
+        "final_diagnostic_function": final_diagnostic_contract,
         "trainable_initial_state_dict_sha256": trainable_initial,
         "frozen_module_initialization": frozen_initialization,
         "truth_history": truth_index.provenance,
@@ -680,6 +708,8 @@ def train(
     contract = {
         "schema_version": run_schema,
         "state_gate_only": state_gate_only,
+        "state_step_function": state_step_contract,
+        "final_diagnostic_function": final_diagnostic_contract,
         "frozen_module_initialization": frozen_initialization,
         "args": {
             name: value for name, value in vars(args).items()
@@ -707,6 +737,15 @@ def train(
     global_update = 0
     validation_history: list[dict[str, Any]] = []
     isolation = {"future_to_state": False, "selector_to_decoder": False}
+    state_substage_counts: dict[str, int] = {}
+    state_substage_transitions: list[dict[str, Any]] = []
+    state_branch_hash_history: list[dict[str, Any]] = []
+    final_diagnostics: dict[str, Any] | None = None
+    if state_step_function is not None and hasattr(model, "state_branch_hashes"):
+        state_branch_hash_history.append({
+            "global_update": 0, "reason": "initial",
+            "hashes": model.state_branch_hashes(),
+        })
     if resume is not None:
         if resume.parent != checkpoint_dir:
             raise ValueError("resume checkpoint must be inside output/checkpoints")
@@ -730,6 +769,14 @@ def train(
         provenance = payload["provenance"]
         run_id = str(payload.get("run_id", run_id))
         isolation = dict(payload.get("gradient_isolation_verified", isolation))
+        state_substage_counts = dict(payload.get("state_substage_counts") or {})
+        state_substage_transitions = list(
+            payload.get("state_substage_transitions") or []
+        )
+        state_branch_hash_history = list(
+            payload.get("state_branch_hash_history") or []
+        )
+        final_diagnostics = payload.get("final_diagnostics")
         _restore_rng_state(payload["rng"], sampler, prefix_generator)
     else:
         validation_history.append({
@@ -747,6 +794,9 @@ def train(
         "state_gate_only": state_gate_only,
         "progress": {"global_update": global_update},
         "validation_history": validation_history,
+        "state_substage_counts": state_substage_counts,
+        "state_substage_transitions": state_substage_transitions,
+        "state_branch_hash_history": state_branch_hash_history,
     }
     _atomic_json(output / "run_manifest.json", manifest_payload)
     started = time.time()
@@ -768,7 +818,11 @@ def train(
         raw = _to_device(raw_cpu, device)
         with torch.autocast("cuda", dtype=amp_dtype):
             batch = _prepare_batch(mapper, s_model, h_model, raw)
-            if stage == "motion_state" and state_loss_function is not None:
+            if stage == "motion_state" and state_step_function is not None:
+                prediction, loss, components = state_step_function(
+                    model, batch, stage_update, stage_total,
+                )
+            elif stage == "motion_state" and state_loss_function is not None:
                 state_output = model.estimate_motion_state(
                     history_obs_rel_m=batch["history_obs_rel_m"],
                     history_obs_mask=batch["history_obs_mask"],
@@ -868,6 +922,27 @@ def train(
         if any(not bool(torch.isfinite(value).all()) for value in model.parameters()):
             raise RuntimeError("optimizer produced non-finite parameters")
         global_update = next_update
+        if state_step_function is not None and stage == "motion_state":
+            substage = components.get("state_substage")
+            if not isinstance(substage, str) or not substage:
+                raise RuntimeError("state-step hook did not report its substage")
+            state_substage_counts[substage] = state_substage_counts.get(substage, 0) + 1
+            if (
+                not state_substage_transitions
+                or state_substage_transitions[-1]["substage"] != substage
+            ):
+                state_substage_transitions.append({
+                    "global_update": global_update, "substage": substage,
+                })
+            if bool(components.get("state_substage_endpoint", False)):
+                if not hasattr(model, "state_branch_hashes"):
+                    raise RuntimeError("state-step endpoint lacks branch hash reporter")
+                state_branch_hash_history.append({
+                    "global_update": global_update,
+                    "reason": "state_substage_endpoint",
+                    "substage": substage,
+                    "hashes": model.state_branch_hashes(),
+                })
 
         if global_update % args.log_interval == 0 or stage_update == stage_total:
             print(json.dumps({
@@ -890,6 +965,10 @@ def train(
                     model, validation_loader, mapper, s_model, h_model, device,
                 ),
             })
+            if fixed_endpoint and final_diagnostic_function is not None:
+                final_diagnostics = final_diagnostic_function(
+                    model, validation_loader, mapper, s_model, h_model, device,
+                )
             configure_stage(model, stage)
         if global_update % CHECKPOINT_INTERVAL == 0 or stage_endpoint or fixed_endpoint:
             assert_frozen_upstream_unchanged(
@@ -905,6 +984,10 @@ def train(
                 prefix_generator=prefix_generator, stage_endpoint=stage_endpoint,
                 fixed_endpoint=fixed_endpoint, run_id=run_id,
                 gradient_isolation_verified=isolation,
+                state_substage_counts=state_substage_counts,
+                state_substage_transitions=state_substage_transitions,
+                state_branch_hash_history=state_branch_hash_history,
+                final_diagnostics=final_diagnostics,
                 schema_version=run_schema,
             ))
             manifest_payload["progress"] = {
@@ -913,6 +996,9 @@ def train(
             }
             manifest_payload["validation_history"] = validation_history
             manifest_payload["gradient_isolation_verified"] = isolation
+            manifest_payload["state_substage_counts"] = state_substage_counts
+            manifest_payload["state_substage_transitions"] = state_substage_transitions
+            manifest_payload["state_branch_hash_history"] = state_branch_hash_history
             _atomic_json(output / "run_manifest.json", manifest_payload)
             if args.stop_after_update and global_update == args.stop_after_update:
                 manifest_payload.update({
@@ -928,6 +1014,8 @@ def train(
     if not final_checkpoint.is_file():
         raise RuntimeError("fixed final endpoint checkpoint is missing")
     final_metrics = validation_history[-1]["metrics"]
+    if final_diagnostic_function is not None and final_diagnostics is None:
+        raise RuntimeError("fixed endpoint lacks its bound final diagnostics")
     trainable_final = {
         name: state_dict_sha256(getattr(model, name).state_dict())
         for name in ALL_TRAINABLE_MODULES
@@ -955,9 +1043,13 @@ def train(
         },
         "validation_history": validation_history,
         "final_validation": final_metrics,
+        "final_diagnostics": final_diagnostics,
         "frozen_final_state_dict_sha256": frozen_initial,
         "frozen_state_hashes_unchanged": True,
         "gradient_isolation_verified": isolation,
+        "state_substage_counts": state_substage_counts,
+        "state_substage_transitions": state_substage_transitions,
+        "state_branch_hash_history": state_branch_hash_history,
         "trainable_initial_state_dict_sha256": trainable_initial,
         "trainable_final_state_dict_sha256": trainable_final,
         "state_gate_future_modules_unchanged": (

@@ -2276,3 +2276,80 @@
 - R1 and all checkpoints remain protected diagnostic evidence and are never
   overwritten. The qualified rerun uses a new r2 root from a clean commit.
   Test and later trajectory/selector stages remain sealed regardless of r1.
+
+## 2026-07-30 decision 175: v7 factorizes angular, planar-common and vertical motion
+
+- The sampler-qualified v6 r2 run is complete and protected but fails six of
+  eight hard gates. It improves v77 overall velocity/yaw error from
+  0.492/1.893 to 0.399/1.621, yet speed>1.7-m/s combined error remains
+  1.132 m/s and 4.141 rad/s and combined-11 remains 1.154 m/s,
+  4.808 rad/s and 0.1795 normalized MAE. The qualified checkpoint SHA-256 is
+  `e30759ab441b9113f07c9bab6c525c55814905a06fcb9443310454ad586782a5`;
+  sampler, lineage and frozen-future hashes match the v77 control and test was
+  not accessed.
+- Read-only interventions reject incremental v6 tuning. Clean observations
+  leave high-speed combined error at 1.108 m/s and 4.174 rad/s; all single
+  scales fail there, activations are not saturated, and pair-only samples are
+  easier rather than harder. The dominant failure is systematic magnitude
+  contraction caused by mixing common translation and orbital rotation inside
+  one shared latent/four-coordinate projection.
+- V7 keeps the external state definition, normalization and exact six-field
+  causal API. The angular branch primarily reads unordered normalized
+  relative-shape evidence: current/prior `rrT`, delta/rate, matrix commutator,
+  dot/norm, causal elapsed time, q0-relative time, switch and effective support.
+  A scale without pair evidence may use a same-handle higher-order curvature
+  fallback, but that fallback may read only consecutive velocity differences,
+  acceleration differences and their normalized cross/dot terms; absolute
+  velocity direction/magnitude are forbidden and common constant-velocity ramp
+  invariance is tested. It emits signed yaw and reliability through a yaw-only
+  multi-scale head. A same-handle plus
+  same-unordered-set centroid branch emits planar common motion. Its only
+  rotational input is detached predicted yaw/reliability used by a learned
+  bounded residual; pair latent never enters directly. Vertical velocity uses
+  a separate robust head. Translation cannot enter yaw, no shared head emits
+  the four-vector, and uncertainty remains loss/diagnostic-only.
+- A training-only common ramp adds `u*t` to 50% of histories and adds `u` to
+  the planar velocity label. It supervises yaw invariance and planar
+  equivariance; it is absent from deployed forward and never supplies truth yaw
+  to the model. Fixed updates 1--250 train angular evidence/head only; 251--600
+  freeze angular and train planar/z using detached predicted yaw; 601--800
+  jointly calibrate the separated branches while preserving the one-way
+  boundary. Mapper/S/H and exact v77-update-800 future modules remain frozen.
+- The original eight v6 gates remain mandatory. Additional diagnostics report
+  per-session/history bins, PnP-to-clean and predicted-to-truth-yaw translation
+  interventions, but do not weaken the gate. If every high-speed combined
+  single scale still fails, v7 is rejected without extra epochs. External state
+  expansion is not authorized unless truth 4D plus truth q0/current and a fixed
+  decoder later show a systematic residual explained by a missing physical
+  quantity.
+- Compute is local in `D:\Anaconda\envs\yolov8`; the rented RTX 3090 is powered
+  off but retained. No cloud resource release or protected-asset deletion is
+  authorized.
+
+## 2026-07-30 decision 176: v7 acceptance is checkpoint-bound and crash-consistent
+
+- The formal v7 result is accepted only from the exact fixed
+  `checkpoint-update-000800.pt` inside its run root. The finalizer recomputes
+  the checkpoint file SHA, contract hash and full state hash, strictly
+  reconstructs the declared v7 model/config, verifies every trainable module,
+  and requires checkpoint/manifest equality for provenance, validation
+  history, final validation, diagnostics, gradient isolation, substage counts,
+  transitions and branch hashes. This protects the formal workflow against
+  stale JSON, wrong endpoints, partial writes and accidental one-sided edits;
+  unsigned local artifacts do not claim authenticity against an attacker able
+  to rewrite every file and recompute every digest. Finalization also re-reads
+  Git and requires the checkout to remain clean at the same commit recorded at
+  training start, so source edits or commit changes during the run fail closed.
+- Final validation-only interventions are computed before the fixed checkpoint
+  is written and are stored in that checkpoint. They must declare
+  `validation_only=true`, `test_accessed=false`, match the validation audit and
+  provide exactly overall, rotation, combined and planar-speed>1.7-m/s combined
+  groups. Every required distribution must be non-empty, finite and
+  nonnegative; accuracy must be finite and within `[0,1]`; PnP distributions
+  must exactly reproduce the checkpoint-bound final validation baseline.
+- The implementation has 482 passing Stage3 tests and both consumer boundary
+  checks pass. A channels=96/batch=64 CUDA capacity smoke completed 150 updates
+  without OOM. The recovery harness demonstrated exact model, optimizer,
+  scaler, RNG, validation, substage and branch-hash recovery across both
+  internal boundaries; the current committed verifier is rerun once before the
+  formal 800-update gate. All smoke and recovery outputs remain protected.
