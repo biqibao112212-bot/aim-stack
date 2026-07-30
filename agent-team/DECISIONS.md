@@ -1972,3 +1972,47 @@
   introduce a new shortcut. A future augmentation must preserve the captured
   dt distribution through causal resampling and must beat an identical v4-A
   no-augmentation control. V4-A first isolates the representation change.
+
+## 2026-07-30 decision 167: supervise a stable physical state and hard-isolate it from F
+
+- V73 completed the v4-A structure test rather than merely undertraining it.
+  Its fixed endpoint preserves all frozen hashes and test sealing, but train
+  conditional/hard Mean of 69.34/89.27 mm becomes 230.85/247.35 mm on unseen
+  sessions. Rotation is 301.88/320.07 mm and combined 202.11/217.92 mm.
+  Hence raw-position deletion slightly helps combined motion while removing
+  necessary rotation phase; the unrestricted high-dimensional state still
+  memorizes sessions. Additional v4 epochs and small feature edits are rejected.
+- V5 gives the temporal representation stable cross-session semantics. A
+  pure-increment context, before q0 geometry or first-origin injection,
+  predicts four physical values in the tracker/chassis frame: target-center
+  velocity XYZ and physical yaw rate. These labels already exist in the
+  qualified truth-history dataset and are strictly joined to paired windows by
+  `(split, session_id, exposure t0_ns)`. All 2,559 paired rows match uniquely;
+  missing, duplicate and split/motion mismatch counts are zero. Extra truth
+  rows are allowed and audited. Test is never opened.
+- Anonymous slot reflection only applies `[0,3,2,1]` role reordering and
+  reverses signed switch metadata. It does not reflect XYZ coordinates, so all
+  four physical motion labels, including yaw rate, remain unchanged. Truth
+  manifest, key-set and label hashes, exact join counts and normalization are
+  part of the immutable training contract.
+- Truth is loss/diagnostic data only. Forward receives no motion target,
+  session, timestamp, motion class, physical ID or future truth. The explicit
+  learned decoder consumes predicted normalized 4D state, S-owned ordered q0
+  relative geometry/support and continuous query time. Current absolute
+  position is added only at the end. Zero 4D state yields exact zero dynamic
+  displacement for arbitrary geometry and time; no analytic physics rollout
+  or teacher-forced truth state is used for formal prediction.
+- Four fixed stages prevent the 4D floats from becoming another hidden latent:
+  state pretraining updates only pure-increment context and state head;
+  trajectory training freezes them and reads a detached prediction; selector
+  training freezes both state and trajectory; decoder-joint training keeps
+  the state encoder frozen and detaches selector gradients from trajectory
+  modules. Recovery saves all three optimizers, scaler, global RNG,
+  hierarchical motion/session/history/stationary-active sampler and prefix RNG.
+- Validation is heldout-session primary because each capture session contains
+  only a stationary state plus one or two nearly constant active states. Train
+  state loss alone is not evidence. Report physical velocity/yaw error,
+  active yaw sign, combined velocity cosine, truth-state decoder headroom,
+  conditional/hard future errors and session macro. Ten focused v5 tests and
+  all 406 Stage3 tests pass before CUDA work begins. The rented RTX 3090 stays
+  shut down but retained; v5 runs locally in the Windows `yolov8` environment.

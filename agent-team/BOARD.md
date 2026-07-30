@@ -1268,14 +1268,23 @@
   Rotation conditional/hard Mean is 250.51/287.09 mm; combined is
   166.97/201.22 mm. The broad bodies and distance clusters reject a simple
   monotone range explanation; 581/587 labels are eligible and all hashes pass.
-- [ ] Active: replace the remaining v2 temporal shortcut with v4-A. Its TCN
-  receives only same-handle adjacent displacement, real visible-event gap,
-  velocity, time/switch masks and first-visible offset relative to that
-  handle's q0 relation. Raw historical position and q0 quality fields never
-  enter learned motion features. Do not add naive time-scaling augmentation:
-  review found that it would alter sampling cadence and jointly scale linear
-  and angular speed. Fifteen focused v4 tests and all 396 Stage3 tests pass;
-  local CUDA smoke/recovery remains before the fixed full run.
+- [x] Complete and reject v73 v4-A as another cross-session failure. The fixed
+  endpoint reaches 69.34/89.27 mm train conditional/hard Mean but
+  230.85/247.35 mm heldout; rotation regresses to 301.88/320.07 mm while
+  combined is 202.11/217.92 mm. Removing raw origins alone therefore does not
+  create a stable motion law, and deleting phase information wholesale hurts
+  rotation. More v4 epochs are not authorized.
+- [ ] Active: train v5 through an explicit supervised physical-motion
+  bottleneck. A pure-increment history encoder predicts tracker/chassis
+  `[vx,vy,vz,physical_yaw_rate]`; physical truth is joined exactly by
+  `(split,session_id,t0_ns)` and enters loss/metrics only. The learned future
+  decoder and selector can read only the predicted 4D state, S-owned q0
+  relative geometry/support and query time. They cannot read the high-
+  dimensional temporal state, session, motion class, ID or truth. State,
+  trajectory, selector and decoder-joint stages keep the state encoder frozen
+  outside its own stage; future loss always sees a detached predicted state.
+  Ten focused v5 tests and all 406 Stage3 tests pass. Run local CUDA capacity
+  and exact recovery gates before one fixed full endpoint.
 - [ ] Mapper/S/H, v70/v71/v72 checkpoints, test, export and online fire control
   remain frozen. Use `D:\Anaconda\envs\yolov8\python.exe`; the rented RTX 3090
   stays powered off but retained and must not be released.
