@@ -45,18 +45,25 @@ from .train_anonymous_vehicle_motion import (
     frozen_upstream_batch,
 )
 from .train_anonymous_vehicle_motion_v2 import RUN_SCHEMA as V2_RUN_SCHEMA
+from .train_visibility_aware_expert_router import (
+    RUN_SCHEMA as ROUTER_RUN_SCHEMA,
+    _hard_expert_role_position,
+    expert_counterfactual_role_position,
+)
 from .train_causal_physical_ab import _git_state, _to_device
 from .train_pnp_window_mapper_distillation import _atomic_json
 
 
 EVALUATION_SCHEMA = "stage3-anonymous-vehicle-motion-ballistic-v1"
 V2_EVALUATION_SCHEMA = "stage3-visibility-aware-anonymous-motion-ballistic-v2"
+ROUTER_EVALUATION_SCHEMA = "stage3-visibility-aware-hard-router-ballistic-v1"
 FLIGHT_TIME_FORMULA = "norm(frozen_upstream_current_position_m)/bullet_speed_mps"
 MOTION_NAMES = {2: "rotation", 3: "combined"}
 DISTANCE_EDGES_M = tuple(float(value) for value in range(1, 8))
 DISPLAY_BODY_PERCENTILE = 95.0
 EXPECTED_FINAL_UPDATE = 2100
 EXPECTED_V2_FINAL_UPDATE = 2400
+EXPECTED_ROUTER_FINAL_UPDATE = 600
 OPPOSITE_SOURCE_FAILURE = "observable target jumped to an opposite source slot"
 
 
@@ -179,15 +186,17 @@ def _load_motion_checkpoint(
 ]:
     payload = torch.load(path, map_location="cpu", weights_only=False)
     schema = payload.get("schema_version")
-    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA}:
+    if schema not in {V1_RUN_SCHEMA, V2_RUN_SCHEMA, ROUTER_RUN_SCHEMA}:
         raise ValueError("anonymous motion checkpoint schema mismatch")
     if not bool(payload.get("fixed_endpoint", False)):
         raise ValueError("ballistic evaluation requires the fixed final endpoint")
     if payload.get("checkpoint_role") != "fixed_final_endpoint":
         raise ValueError("anonymous motion checkpoint is not the final endpoint")
-    expected_update = (
-        EXPECTED_FINAL_UPDATE if schema == V1_RUN_SCHEMA else EXPECTED_V2_FINAL_UPDATE
-    )
+    expected_update = {
+        V1_RUN_SCHEMA: EXPECTED_FINAL_UPDATE,
+        V2_RUN_SCHEMA: EXPECTED_V2_FINAL_UPDATE,
+        ROUTER_RUN_SCHEMA: EXPECTED_ROUTER_FINAL_UPDATE,
+    }[schema]
     if int(payload.get("progress", {}).get("global_update", -1)) != expected_update:
         raise ValueError(f"anonymous motion checkpoint is not update {expected_update}")
     provenance = payload.get("provenance", {})
@@ -219,8 +228,12 @@ def _load_motion_checkpoint(
             basis_count=int(config["basis_count"]),
             latent_experts=int(config["latent_experts"]),
         )
-        model_version = "v2"
-        evaluation_schema = V2_EVALUATION_SCHEMA
+        if schema == V2_RUN_SCHEMA:
+            model_version = "v2"
+            evaluation_schema = V2_EVALUATION_SCHEMA
+        else:
+            model_version = "v2_hard_router"
+            evaluation_schema = ROUTER_EVALUATION_SCHEMA
     model.load_state_dict(payload["model"], strict=True)
     actual_hash = state_dict_sha256(model.state_dict())
     if actual_hash != payload.get("model_state_dict_sha256"):
@@ -560,11 +573,20 @@ def run(args: argparse.Namespace) -> Path:
             (len(eligible_rows), 1), dtype=torch.bool, device=device,
         )
         prediction = model(_forward_only(dynamic))
-        if model_info["model_version"] == "v2":
+        if model_info["model_version"] in {"v2", "v2_hard_router"}:
             role = target_roles(
                 dynamic["target_switch_count"], dynamic["target_query_mask"],
             )
-            conditional = prediction["role_position_m"].gather(
+            role_position = prediction["role_position_m"]
+            if model_info["model_version"] == "v2_hard_router":
+                expert_position = expert_counterfactual_role_position(
+                    model, prediction, dynamic,
+                )
+                hard_expert = prediction["motion_regime_logits"].float().argmax(dim=1)
+                role_position = _hard_expert_role_position(
+                    expert_position, hard_expert,
+                )
+            conditional = role_position.gather(
                 2, role[:, :, None, None].expand(-1, -1, 1, 3),
             ).squeeze(2).squeeze(1)
         else:
@@ -575,7 +597,15 @@ def run(args: argparse.Namespace) -> Path:
             conditional = prediction["conditional_position_m"].gather(
                 2, row[:, :, None, None].expand(-1, -1, 1, 3),
             ).squeeze(2).squeeze(1)
-        hard = prediction["position_m"].squeeze(1)
+        if model_info["model_version"] == "v2_hard_router":
+            hard = role_position.gather(
+                2,
+                prediction["selected_role"].to(torch.long)[:, :, None, None].expand(
+                    -1, -1, 1, 3,
+                ),
+            ).squeeze(2).squeeze(1)
+        else:
+            hard = prediction["position_m"].squeeze(1)
         target = dynamic["truth_current_position_m"] + dynamic["target_visible_delta_m"].squeeze(1)
         current = dynamic["current_position_m"]
         conditional_error = torch.linalg.vector_norm(conditional - target, dim=-1)
@@ -591,7 +621,7 @@ def run(args: argparse.Namespace) -> Path:
         )
         predicted_step = prediction[
             "selected_switch_step_aux"
-            if model_info["model_version"] == "v2"
+            if model_info["model_version"] in {"v2", "v2_hard_router"}
             else "selected_switch_step"
         ].squeeze(1)
         values = {
