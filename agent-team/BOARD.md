@@ -1366,8 +1366,19 @@
   repository boundary checks pass. Formal-capacity CUDA smoke completed 150
   updates at channels=96/batch=64 without OOM. Diagnostic cross-250 and an
   abrupt-stop cross-600 recovery both reproduced model, optimizer, scaler, RNG,
-  validation, substage and branch-hash state exactly; rerun current verifier
-  once from the clean commit before the formal gate.
+  validation, substage and branch-hash state exactly; the next item records the
+  required current-verifier clean-commit rerun.
+- [x] The clean-commit cross-250 recovery rerun passed at protected root
+  `20260730-v79-v7-factorized-recovery-cross250-r4`: continuous and
+  150-update-interrupted paths reached update 300 with exact model, optimizer,
+  scaler, RNG, validation, substage, branch-hash and isolation state. The first
+  formal V7 r1 then completed all 800 updates but finalization correctly refused
+  it because the intervention path omitted the CUDA autocast context used by
+  the main validation path. R1 is protected diagnostic evidence, not a formal
+  result. Recomputing the fixed r1 checkpoint after the repair makes PnP speed
+  and yaw distributions exactly equal in overall, rotation, combined and
+  planar-speed>1.7 combined groups. Commit the precision-contract repair and
+  rerun the complete deterministic gate at a new r2 root.
 - [x] Historical v6 plan (superseded by the completed/rejected r2 gate): V77
   failure is strongest at high combined translation speed; replacing PnP by
   matched clean observations improves only about 10--15%, so the new state

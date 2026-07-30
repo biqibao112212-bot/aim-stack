@@ -2353,3 +2353,19 @@
   scaler, RNG, validation, substage and branch-hash recovery across both
   internal boundaries; the current committed verifier is rerun once before the
   formal 800-update gate. All smoke and recovery outputs remain protected.
+
+## 2026-07-30 decision 177: intervention and gate baseline share one precision contract
+
+- V7 r1 completed its fixed 800 updates, but the checkpoint-bound finalizer
+  rejected it before producing a state gate. Main validation executed frozen
+  upstream plus the state model under the trainer's CUDA autocast context;
+  validation-only interventions executed the same operations in FP32. This
+  created small but real PnP distribution differences and demonstrated that
+  exact baseline equality was correctly fail-closed.
+- The intervention now wraps `_prepare_batch`, PnP state, clean state and the
+  truth-yaw-conditioned diagnostic in the exact `_cuda_amp_dtype()` context
+  used by main validation. A read-only recomputation from the protected r1
+  update-800 checkpoint makes all overall/rotation/combined/high-speed PnP
+  velocity and yaw distributions exactly equal to final validation. R1 remains
+  `state_gate_invalid` and is never overwritten or promoted; the repaired
+  clean commit runs from scratch at a new protected r2 root.

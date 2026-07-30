@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 import json
 import math
 from pathlib import Path
@@ -29,6 +30,7 @@ from .train_robust_multiscale_motion_future import (
 )
 from .train_stable_motion_bottleneck_future import (
     ALL_TRAINABLE_MODULES,
+    _cuda_amp_dtype,
     _prepare_batch,
     build_parser,
     train,
@@ -63,51 +65,61 @@ def factorized_validation_interventions(
     }
     for raw_cpu in validation_loader:
         raw = _to_device(raw_cpu, device)
-        batch = _prepare_batch(mapper, s_model, h_model, raw)
-        state_input = {
-            name: batch[name] for name in (
-                "history_obs_rel_m", "history_obs_mask", "history_primary_mask",
-                "history_event_mask", "history_time_s", "history_switch_step",
-            )
-        }
-        pnp_output = model.estimate_motion_state(**state_input)
-        pnp_state = pnp_output["state"]["motion_state_physical"]
-        history = pnp_output["history"]
-        truth_conditioned = model.motion_state_head(
-            history["translation_scale_latent"],
-            history["rotation_scale_latent"],
-            history["translation_scale_available"],
-            history["rotation_scale_available"],
-            history["translation_scale_reliability"],
-            history["rotation_scale_reliability"],
-            rotation_condition_override=batch["target_motion_state_normalized"][:, 3],
-        )["motion_state_normalized"] * model.motion_state_scale.to(pnp_state.dtype)
+        amp = (
+            torch.autocast("cuda", dtype=_cuda_amp_dtype())
+            if device.type == "cuda" else nullcontext()
+        )
+        with amp:
+            batch = _prepare_batch(mapper, s_model, h_model, raw)
+            state_input = {
+                name: batch[name] for name in (
+                    "history_obs_rel_m", "history_obs_mask", "history_primary_mask",
+                    "history_event_mask", "history_time_s", "history_switch_step",
+                )
+            }
+            pnp_output = model.estimate_motion_state(**state_input)
+            pnp_state = pnp_output["state"]["motion_state_physical"]
+            history = pnp_output["history"]
+            truth_conditioned = model.motion_state_head(
+                history["translation_scale_latent"],
+                history["rotation_scale_latent"],
+                history["translation_scale_available"],
+                history["rotation_scale_available"],
+                history["translation_scale_reliability"],
+                history["rotation_scale_reliability"],
+                rotation_condition_override=(
+                    batch["target_motion_state_normalized"][:, 3]
+                ),
+            )["motion_state_normalized"] * model.motion_state_scale.to(pnp_state.dtype)
 
-        clean_active = raw["clean_s_event_mask"].to(torch.bool)
-        clean_visible = raw["clean_s_obs_mask"].to(torch.bool) & clean_active.unsqueeze(-1)
-        clean_primary = (
-            raw["clean_s_primary_mask"].to(torch.bool) & clean_active.unsqueeze(-1)
-        )
-        last = model.context._last_active(clean_active)
-        rows = torch.arange(last.shape[0], device=device)
-        primary = clean_primary[rows, last].to(torch.long).argmax(dim=1)
-        clean_obs = raw["clean_s_obs_m"]
-        clean_current = clean_obs[rows, last, primary]
-        clean_relative = torch.where(
-            clean_visible.unsqueeze(-1),
-            clean_obs - clean_current[:, None, None],
-            torch.zeros_like(clean_obs),
-        )
-        clean_output = model.estimate_motion_state(
-            history_obs_rel_m=clean_relative,
-            history_obs_mask=clean_visible,
-            history_primary_mask=clean_primary,
-            history_event_mask=clean_active,
-            history_time_s=raw["clean_s_event_time_s"],
-            history_switch_step=raw["clean_s_switch_step"],
-        )
-        clean_state = clean_output["state"]["motion_state_physical"]
-        truth = batch["target_motion_state_physical"]
+            clean_active = raw["clean_s_event_mask"].to(torch.bool)
+            clean_visible = (
+                raw["clean_s_obs_mask"].to(torch.bool) & clean_active.unsqueeze(-1)
+            )
+            clean_primary = (
+                raw["clean_s_primary_mask"].to(torch.bool)
+                & clean_active.unsqueeze(-1)
+            )
+            last = model.context._last_active(clean_active)
+            rows = torch.arange(last.shape[0], device=device)
+            primary = clean_primary[rows, last].to(torch.long).argmax(dim=1)
+            clean_obs = raw["clean_s_obs_m"]
+            clean_current = clean_obs[rows, last, primary]
+            clean_relative = torch.where(
+                clean_visible.unsqueeze(-1),
+                clean_obs - clean_current[:, None, None],
+                torch.zeros_like(clean_obs),
+            )
+            clean_output = model.estimate_motion_state(
+                history_obs_rel_m=clean_relative,
+                history_obs_mask=clean_visible,
+                history_primary_mask=clean_primary,
+                history_event_mask=clean_active,
+                history_time_s=raw["clean_s_event_time_s"],
+                history_switch_step=raw["clean_s_switch_step"],
+            )
+            clean_state = clean_output["state"]["motion_state_physical"]
+            truth = batch["target_motion_state_physical"]
         motion_class = batch["motion_class"].to(torch.long)
         group_mask = {
             "overall": torch.ones_like(motion_class, dtype=torch.bool),
