@@ -454,6 +454,16 @@ def train(args: argparse.Namespace) -> Path:
     )
     if min(stage_lengths) <= 0:
         raise ValueError("all four fixed stages need positive updates")
+    if args.stop_after_update < 0 or args.stop_after_update >= sum(stage_lengths):
+        if args.stop_after_update != 0:
+            raise ValueError("stop-after-update must be inside the fixed schedule")
+    stage_endpoints = set(np.cumsum(stage_lengths).tolist())
+    if (
+        args.stop_after_update
+        and args.stop_after_update % CHECKPOINT_INTERVAL != 0
+        and args.stop_after_update not in stage_endpoints
+    ):
+        raise ValueError("stop-after-update must coincide with an immutable checkpoint")
     if CHECKPOINT_INTERVAL != 150:
         raise RuntimeError("immutable recovery checkpoint interval changed")
     signature = inspect.signature(StableMotionBottleneckAnonymousFutureModel.forward)
@@ -597,7 +607,7 @@ def train(args: argparse.Namespace) -> Path:
         "schema_version": RUN_SCHEMA,
         "args": {
             name: value for name, value in vars(args).items()
-            if name != "resume_checkpoint"
+            if name not in {"resume_checkpoint", "stop_after_update"}
         },
         "dataset_manifest_sha256": dataset_manifest_sha256,
         "truth_manifest_sha256": truth_index.manifest_sha256,
@@ -811,6 +821,14 @@ def train(args: argparse.Namespace) -> Path:
             manifest_payload["validation_history"] = validation_history
             manifest_payload["gradient_isolation_verified"] = isolation
             _atomic_json(output / "run_manifest.json", manifest_payload)
+            if args.stop_after_update and global_update == args.stop_after_update:
+                manifest_payload.update({
+                    "status": "interrupted",
+                    "stop_reason": "planned_recovery_exercise",
+                    "resume_checkpoint": str(checkpoint_path),
+                })
+                _atomic_json(output / "run_manifest.json", manifest_payload)
+                return checkpoint_path
 
     assert_frozen_upstream_unchanged(mapper, s_model, h_model, frozen_initial)
     final_checkpoint = checkpoint_dir / f"checkpoint-update-{total_updates:06d}.pt"
@@ -852,6 +870,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--h-checkpoint", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--resume-checkpoint")
+    parser.add_argument("--stop-after-update", type=int, default=0)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--seed", type=int, default=20260730)
     parser.add_argument("--batch-size", type=int, default=64)
