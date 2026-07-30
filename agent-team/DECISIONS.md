@@ -1681,3 +1681,41 @@
   restriction. The runtime may therefore use any Windows or Linux Python
   environment with a working CUDA PyTorch stack; this does not weaken any
   data, hash, diagnostic or test-sealing gate.
+
+## 2026-07-30 decision 160: selection count is not the current position bottleneck
+
+- The fixed 1,200 trajectory + 600 selector + 300 joint run completes normally
+  at update 2,100 in 416.2 seconds. It is an oracle-associated diagnostic, not
+  a deployable pipeline; Mapper/S/H remain hash-identical, test is unopened and
+  no intermediate validation checkpoint is selected.
+- At the final endpoint, overall conditional/hard Mean/P50/P95 is
+  207.63/212.74, 141.15/153.51 and 606.51/630.37 mm. Rotation conditional/hard
+  Mean is 280.41/280.67 mm; combined is 178.17/185.26 mm. Short 8--15-event
+  histories remain the dominant observed failure at 377.82/395.33 mm Mean.
+- The reported 61.44% selector score is exact signed crossing-count accuracy,
+  not physical armor-role accuracy. Candidate counts separated by four address
+  the same anonymous physical role and deliberately share one trajectory, so
+  an exact-count error can have zero XYZ consequence. A modulo-4 role score and
+  paired hard-minus-conditional error are required before any selector claim.
+- The selector stage is effective in its own metric: update 1,200 to 1,800
+  changes overall hard Mean from 243.16 to 210.52 mm and exact-count accuracy
+  from 24.87% to 62.50% while conditional output stays fixed. The final joint
+  stage gives no net validation benefit: hard Mean becomes 212.74 mm and exact
+  accuracy 61.44%. It therefore must not be extended by adding epochs.
+- Trajectory learning is imbalanced across the two motions even without a
+  motion-class input. From initialization to update 1,200, conditional Mean
+  improves from 318.22 to 179.44 mm for combined motion but regresses from
+  219.23 to 270.49 mm for rotation. This is evidence for shared-head negative
+  transfer or insufficient observable state, not a reason to expose the truth
+  motion class to the network.
+- The next action is evaluation-only. At one causal query per validation
+  window, use frozen-upstream range divided by 22 m/s, reconstruct the exact
+  future-visible truth label from the sealed truth history, and publish one
+  distance/error scatter plus one table for rotation and combined motion. The
+  evaluator must report exact-count and modulo-4 role accuracy, q0 error and
+  anchor-relative displacement error without changing any weight.
+- Do not compare this 587-window validation result directly to the prior
+  all-r2 V67 aggregate. Recompute every retained baseline on the identical
+  window/query set before claiming an improvement. A later structural run must
+  prioritize short-history trajectory evidence and motion-regime separation;
+  selector recalibration is secondary.

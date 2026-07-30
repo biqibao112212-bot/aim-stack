@@ -1171,17 +1171,30 @@
   single-stream baselines and keep Mapper/S/H frozen for the first causal PnP
   pilot. The new component is an explicit vehicle-level MotionContext, not
   hidden cross-handle transfer inside the old single-handle F definition.
-- [ ] Active: implement the fixed four-handle causal interface, C4/reflection
+- [x] Implement the fixed four-handle causal interface, C4/reflection
   structural tests, true-branch trajectory loss, ordered selector loss and
   short-suffix augmentation. Inputs may contain mapped anonymous history and
   frozen H relative q0 support only; physical ID, motion class, truth state,
-  future PnP and session identity are forbidden from forward.
-- [ ] Run one non-overwriting `yolov8`/CUDA r2 pilot on the user-selected
-  RTX 3090 server with fixed
+  future PnP and session identity are forbidden from forward. Ten focused
+  structural tests pass locally and on the server.
+- [x] Run one non-overwriting CUDA r2 pilot on the user-selected RTX 3090
+  server with fixed
   trajectory, selector and controlled-joint update budgets. Report rotation,
   combined, 8--15-event and 3+-history-switch slices; never select an
-  intermediate checkpoint from validation.
-- [ ] Only if the r2 structure gate passes, rebuild the larger train/validation
+  intermediate checkpoint from validation. The fixed update-2100 endpoint
+  completes in 416.2 s with frozen Mapper/S/H hashes unchanged and test
+  unopened. Overall conditional/hard Mean is 207.63/212.74 mm; rotation is
+  280.41/280.67 mm and combined is 178.17/185.26 mm. The 8--15-event slice
+  remains 377.82/395.33 mm.
+- [ ] Active: do not interpret the final 61.44% exact signed-step accuracy as
+  physical armor-role accuracy. `k` and `k+/-4` are one physical role in this
+  model, final hard exceeds conditional by only 5.12 mm overall, and the
+  3+-history-switch hard Mean is paradoxically 4.51 mm below conditional.
+  Complete the no-training ballistic-time evaluation with exact-step and
+  modulo-4 role metrics, one distance/error scatter and one table per motion
+  state before changing another weight.
+- [ ] Only if the corrected diagnostic supports it, replace the short-history
+  trajectory representation and then rebuild the larger train/validation
   corpus under decisions 154--157 after verifying native 6 mm provenance, then
   execute the formal three-stage run. If provenance cannot establish 6 mm,
   collect new 6 mm sessions rather than silently mixing focal domains.
