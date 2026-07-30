@@ -2,7 +2,7 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-31 equivariant alternating twist V13 (active)
+## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
 - V12 is complete and validly rejected, not an unfinished run. Its two fixed
   seeds pass only 44/94 and 45/94 gates. Relative to V8, overall velocity and
@@ -53,12 +53,45 @@
   pair1/2/3 causal breaks, absolute-or-relative closure worsening and P95
   disaster guards supplement mean/P50 body metrics. The aggregate reruns the
   complete validator for both seeds.
-- Current step: commit the reviewed source tree, then execute exactly two local
-  RTX 4060 fixed-100-update seeds and aggregate. Consumer-boundary and
-  architecture checks already pass. Failure stops V13 without epoch
-  piling. Only a two-seed pass can authorize later state continuation; the
-  learned future-position fine-tune and the requested per-motion
-  distance/flight-time versus position-error scatter plots remain deferred.
+- The clean local RTX 4060 screens completed normally at commit `e3dba305`.
+  Seed 20260730 passed 9/38 gates and seed 20260731 passed 8/38; the independent
+  aggregate is `failed` and does not authorize continuation. Both checkpoints,
+  manifests, screen results and the aggregate are protected evidence. Future
+  modules remained hash-identical and test stayed sealed.
+- This is a body failure, not a tail-only rejection. Two-seed V13 overall
+  velocity Mean/P50/P95 is 1.773/1.759/3.618 m/s versus V12
+  0.616/0.455/1.853 and V8 0.511/0.363/1.453. Yaw is
+  7.053/6.114/17.553 rad/s versus V12 3.958/2.185/13.173 and V8
+  1.861/1.188/5.574. Update 0 to 100 improves overall body Mean by only 0.9%
+  velocity and 2.5% yaw, so more V13 updates are forbidden.
+- Mechanism review found a concrete pair contract error. The upstream pair bank
+  already flips the prior vector when the current primary changes; V13 flips
+  current again and repeats the sign in closure. On all supported validation
+  rows, single-owner alignment gives yaw carrier Mean/P50/P95
+  4.863/2.472/17.261 rad/s and correlation 0.725, while the double flip gives
+  8.725/7.361/20.740 and correlation 0.165. For combined pair3 the aligned
+  carrier is 2.004/1.325/5.919 with correlation 0.943, versus
+  6.742/4.693/17.031 and 0.290 after the erroneous second flip.
+- Pair repair alone cannot fix velocity. With truth omega, V13's visible-gauge
+  WLS remains 1.759/1.754/3.533 m/s and even a truth-velocity gauge remains
+  1.644/1.671/3.349. A zero-training joint rigid profile over anonymous center,
+  velocity and per-window tracklets reaches useful body medians but unstable
+  means on short arcs. Supplying truth center only as an oracle mechanism bound
+  gives overall/rotation/combined velocity Mean/P50 of
+  0.708/0.123, 0.894/0.229 and 0.428/0.086 m/s. This identifies center--velocity
+  ambiguity as the next structural target, not a request to expose truth at
+  inference.
+- The interface decision is complete: the state estimator adds only
+  `q0_relation_m [B,4,3]` and `q0_supported [B,4]` from frozen S/H. A simple
+  anonymous q0 mean already reduces the truth-omega fixed-center validation
+  velocity to overall/rotation/combined Mean/P50
+  0.902/0.332, 1.082/0.484 and 0.633/0.239 m/s, recovering most of the oracle
+  center-prior body improvement without physical IDs, truth or future input.
+- Current step: implement a supervised anonymous center-offset distribution and
+  a profiled joint center/velocity/yaw solver. Pair canonicalization has one
+  owner; velocity is never regularized; future-position modules and scatter
+  plots remain frozen until the new state mechanism passes its zero-update and
+  double-seed gates.
 
 ## 2026-07-23 cyclic-track clean physical experts (historical; superseded)
 

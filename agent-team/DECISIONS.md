@@ -2778,3 +2778,65 @@
   The aggregate independently reruns this validator for both seeds. A failure
   ends V13 without update piling; future-position fine-tuning and user-facing
   distance/flight-time scatter plots remain frozen until a state gate passes.
+
+## 2026-07-31 decision 187: reject V13 and move the nuisance center into the state definition
+
+- Both V13 screens completed normally from clean commit
+  `e3dba30503f431290a1f0f14c487e5d9003be0f9`. Seed 20260730 passes 9/38
+  checks and seed 20260731 passes 8/38. Their checkpoints have SHA-256
+  `f5ffe725b0c9b2daa9c2cbb8e52b4870116095a3ece3183d091f8cf881859224`
+  and `67ea204f744c0ac3a0754300186a00d6339cab3541da31a690e5e08907437933`;
+  the failed aggregate SHA-256 is
+  `75c1e492dbc66a16489382518d5e2e158ab0be3c4d80e69ac6c8665b589f6e0c`.
+  The complete validator reconstructs both results, future hashes are unchanged
+  and test is sealed. These assets are retained as protected negative evidence.
+- Rejection is based on the body distribution. Averaged across seeds, V13
+  overall velocity Mean/P50/P95 is 1.773/1.759/3.618 m/s and yaw is
+  7.053/6.114/17.553 rad/s. V12 is 0.616/0.455/1.853 and
+  3.958/2.185/13.173; V8 is 0.511/0.363/1.453 and
+  1.861/1.188/5.574. V13's own update-0 to update-100 Mean changes are only
+  -0.9% velocity and -2.5% yaw. Two seeds agree on 37/38 gates and final body
+  metrics differ by about 0.1%, so neither random variance nor more updates is
+  a credible remedy.
+- V13 double-canonicalizes pair direction. The paired context already negates
+  the prior vector when primary changes, placing prior and current in the same
+  current-primary frame. V13 then negates current again and repeats that sign in
+  analytic closure, introducing an artificial pi rotation. On supported
+  validation rows, removing only the second flip improves the raw yaw carrier
+  Mean/P50/P95 from 8.725/7.361/20.740 to 4.863/2.472/17.261 rad/s and raises
+  truth correlation from 0.165 to 0.725. On combined pair3 it improves from
+  6.742/4.693/17.031 to 2.004/1.325/5.919 and correlation from 0.290 to 0.943.
+  Therefore the V13 pair intervention cannot be used to reject pair evidence;
+  all future pair geometry has exactly one canonicalization owner.
+- Velocity remains independently misdefined. With truth omega, the old WLS is
+  still 1.759/1.754/3.533 m/s overall; using a truth translation gauge only
+  reaches 1.644/1.671/3.349. The visible-factor mean and a window-wide mean
+  center are not the chassis center, so their rotation error is absorbed as
+  translation. A validation-only profiled rigid equation jointly treating
+  center and local tracklet positions as nuisance obtains useful medians but is
+  ill-conditioned on short arcs. Giving the same equation truth center and
+  truth omega only as an oracle mechanism bound reaches overall, rotation and
+  combined Mean/P50 of 0.708/0.123, 0.894/0.229 and 0.428/0.086 m/s. Thus a
+  learned anonymous center prior has measurable headroom, while the remaining
+  long tail requires robust likelihood and explicit uncertainty rather than
+  sample deletion.
+- The next state definition learns a distribution for the current-primary to
+  chassis-center offset from causal anonymous relative geometry. Center truth
+  is a loss-only label derived from `anchor_center_position_m` and the current
+  primary truth position; it is forbidden from forward, export and inference.
+  The offset is a per-window vector, not a physical armor identity. For fixed
+  omega, a profiled solver jointly eliminates center and per-tracklet geometry
+  while estimating unregularized common velocity. Learned precision/bias is
+  restricted to ramp-invariant O(2)-legal features so PnP ellipse/noise is an
+  observation likelihood, not a hard-coded future decoder. The learned future
+  and selector stay frozen until zero-update mechanics, center-prior recovery
+  and a fixed double-seed state screen all pass.
+- The forward-interface decision is to expose only frozen S/H
+  `q0_relation_m [B,4,3]` and `q0_supported [B,4]` to this state estimator.
+  There is no physical ID or fixed-slot embedding. Validation-only zero-training
+  diagnostics show the simple anonymous q0 mean reaches overall, rotation and
+  combined velocity Mean/P50 of 0.902/0.332, 1.082/0.484 and 0.633/0.239 m/s
+  under truth omega. This recovers most of the body headroom between the zero
+  center prior and the correctly framed truth-center oracle. Confidence, sigma,
+  age and support-class stay outside the first learned center-prior input so an
+  uncalibrated S/H metadata fingerprint cannot replace relative geometry.
