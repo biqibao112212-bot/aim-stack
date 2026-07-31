@@ -56,6 +56,20 @@ FIXED_FOLDS = 2
 DEFAULT_UPDATES = 200
 
 
+def _fixed_validation_scope(
+    *, parent_checkpoint_sha256: str,
+    dataset_manifest_sha256: str,
+    truth_manifest_sha256: str,
+) -> dict[str, str]:
+    """Return the immutable, globally unique V15-A0 validation scope."""
+    return {
+        "stage_slot": "v15-a0-single-validation",
+        "parent_checkpoint_sha256": parent_checkpoint_sha256,
+        "dataset_manifest_sha256": dataset_manifest_sha256,
+        "truth_manifest_sha256": truth_manifest_sha256,
+    }
+
+
 def validate_reliability_a0_artifacts(
     output: str | Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -73,6 +87,13 @@ def validate_reliability_a0_artifacts(
         or result.get("diagnostic_only") is not True
         or result.get("truth_omega_forward_input") is not True
         or result.get("formal_v15") is not False
+        or result.get("validation_accessed") is not True
+        or result.get("test_accessed") is not False
+        or result.get("future_modules_loaded") is not False
+        or result.get("authorized_formal_two_stage") is not True
+        or run_state.get("validation_claimed") is not True
+        or run_state.get("validation_consumed") is not True
+        or run_state.get("test_accessed") is not False
     ):
         raise ValueError("V15-A0 artifact status/schema/scope differs")
     contract = result.get("experiment_contract")
@@ -107,20 +128,54 @@ def validate_reliability_a0_artifacts(
         "reliability_state_dict_sha256"
     ):
         raise ValueError("V15-A0 reliability state hash differs")
+    parent = result.get("parent")
+    if not isinstance(parent, dict):
+        raise ValueError("V15-A0 parent identity is missing")
+    parent_sha = parent.get("sha256")
+    dataset_sha = result.get("dataset_manifest_sha256")
+    truth_sha = result.get("truth_manifest_sha256")
+    if (
+        contract.get("parent_checkpoint_sha256") != parent_sha
+        or contract.get("dataset_manifest_sha256") != dataset_sha
+        or contract.get("truth_manifest_sha256") != truth_sha
+    ):
+        raise ValueError("V15-A0 scope inputs differ from experiment contract")
+    validation_scope = _fixed_validation_scope(
+        parent_checkpoint_sha256=parent_sha,
+        dataset_manifest_sha256=dataset_sha,
+        truth_manifest_sha256=truth_sha,
+    )
+    validation_scope_sha = _json_sha256(validation_scope)
+    if (
+        result.get("validation_scope") != validation_scope
+        or result.get("validation_scope_sha256") != validation_scope_sha
+    ):
+        raise ValueError("V15-A0 validation scope differs")
     result_sha = sha256_file(result_path)
     if run_state.get("screen_result_sha256") != result_sha:
         raise ValueError("V15-A0 run-state result hash differs")
     ledger_path = Path(result["validation_ledger"]).resolve()
+    parent_checkpoint_path = Path(parent["checkpoint"]).resolve()
+    canonical_ledger_path = (
+        parent_checkpoint_path.parent.parent.parent
+        / "_v15-validation-access-ledger"
+        / f"{validation_scope_sha}.json"
+    ).resolve()
+    if ledger_path != canonical_ledger_path:
+        raise ValueError("V15-A0 validation ledger path is not canonical")
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     if (
         ledger.get("schema_version") != RUN_SCHEMA
         or ledger.get("status") != "consumed"
+        or ledger.get("validation_scope") != validation_scope
         or ledger.get("experiment_contract_sha256") != contract_sha
-        or ledger.get("validation_scope_sha256")
-        != result.get("validation_scope_sha256")
+        or ledger.get("validation_scope_sha256") != validation_scope_sha
         or ledger.get("screen_result_sha256") != result_sha
         or ledger.get("reliability_checkpoint_sha256") != checkpoint_sha
-        or ledger.get("parent_checkpoint_sha256") != result["parent"]["sha256"]
+        or ledger.get("parent_checkpoint_sha256") != parent_sha
+        or ledger.get("dataset_manifest_sha256") != dataset_sha
+        or ledger.get("test_accessed") is not False
+        or Path(ledger.get("output", "")).resolve() != root
     ):
         raise ValueError("V15-A0 validation ledger binding differs")
     return payload, result
@@ -886,12 +941,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "inherited_parent_validation": True,
     }
     experiment_contract_sha = _json_sha256(experiment_contract)
-    validation_scope = {
-        "stage_slot": "v15-a0-single-validation",
-        "parent_checkpoint_sha256": parent_sha256,
-        "dataset_manifest_sha256": experiment_contract["dataset_manifest_sha256"],
-        "truth_manifest_sha256": truth_sha,
-    }
+    validation_scope = _fixed_validation_scope(
+        parent_checkpoint_sha256=parent_sha256,
+        dataset_manifest_sha256=experiment_contract["dataset_manifest_sha256"],
+        truth_manifest_sha256=truth_sha,
+    )
     validation_scope_sha = _json_sha256(validation_scope)
     _atomic_json(output / "run_state.json", {
         "schema_version": RUN_SCHEMA, "status": "train_cv",

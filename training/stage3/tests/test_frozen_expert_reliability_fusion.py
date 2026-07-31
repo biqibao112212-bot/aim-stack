@@ -313,12 +313,22 @@ def test_counterfactual_metrics_use_profile_common_support_and_motion_groups() -
 
 def _write_artifact_fixture(root: Path) -> None:
     root.mkdir()
-    ledger_path = root.parent / "validation-ledger.json"
+    parent_checkpoint_path = (
+        root.parent / "parent-run" / "checkpoints" / "checkpoint.pt"
+    ).resolve()
     checkpoint_path = root / "reliability-head.pt"
-    contract = {"schema_version": RUN_SCHEMA, "seed": 1}
+    parent_sha = "a" * 64
+    dataset_sha = "c" * 64
+    truth_sha = "d" * 64
+    contract = {
+        "schema_version": RUN_SCHEMA,
+        "seed": 1,
+        "parent_checkpoint_sha256": parent_sha,
+        "dataset_manifest_sha256": dataset_sha,
+        "truth_manifest_sha256": truth_sha,
+    }
     contract_sha = _json_sha256(contract)
     model = _fitted_model().state_dict()
-    parent_sha = "a" * 64
     torch.save({
         "schema_version": RUN_SCHEMA,
         "diagnostic_only": True,
@@ -329,18 +339,38 @@ def _write_artifact_fixture(root: Path) -> None:
         "model": model,
     }, checkpoint_path)
     checkpoint_sha = sha256_file(checkpoint_path)
-    scope_sha = "b" * 64
+    scope = {
+        "stage_slot": "v15-a0-single-validation",
+        "parent_checkpoint_sha256": parent_sha,
+        "dataset_manifest_sha256": dataset_sha,
+        "truth_manifest_sha256": truth_sha,
+    }
+    scope_sha = _json_sha256(scope)
+    ledger_path = (
+        parent_checkpoint_path.parent.parent.parent
+        / "_v15-validation-access-ledger"
+        / f"{scope_sha}.json"
+    )
+    ledger_path.parent.mkdir()
     result = {
         "schema_version": RUN_SCHEMA, "status": "passed",
         "diagnostic_only": True, "truth_omega_forward_input": True,
         "formal_v15": False, "experiment_contract": contract,
+        "validation_accessed": True, "test_accessed": False,
+        "future_modules_loaded": False,
+        "authorized_formal_two_stage": True,
         "experiment_contract_sha256": contract_sha,
         "reliability_checkpoint": str(checkpoint_path.resolve()),
         "reliability_checkpoint_sha256": checkpoint_sha,
         "reliability_state_dict_sha256": state_dict_sha256(model),
+        "validation_scope": scope,
         "validation_scope_sha256": scope_sha,
         "validation_ledger": str(ledger_path.resolve()),
-        "parent": {"sha256": parent_sha},
+        "parent": {
+            "checkpoint": str(parent_checkpoint_path), "sha256": parent_sha,
+        },
+        "dataset_manifest_sha256": dataset_sha,
+        "truth_manifest_sha256": truth_sha,
     }
     result_path = root / "screen_result.json"
     result_path.write_text(json.dumps(result), encoding="utf-8")
@@ -348,13 +378,19 @@ def _write_artifact_fixture(root: Path) -> None:
     ledger_path.write_text(json.dumps({
         "schema_version": RUN_SCHEMA, "status": "consumed",
         "experiment_contract_sha256": contract_sha,
+        "validation_scope": scope,
         "validation_scope_sha256": scope_sha,
         "screen_result_sha256": result_sha,
         "reliability_checkpoint_sha256": checkpoint_sha,
         "parent_checkpoint_sha256": parent_sha,
+        "dataset_manifest_sha256": dataset_sha,
+        "output": str(root.resolve()),
+        "test_accessed": False,
     }), encoding="utf-8")
     (root / "run_state.json").write_text(json.dumps({
         "schema_version": RUN_SCHEMA, "status": "passed",
+        "validation_claimed": True, "validation_consumed": True,
+        "test_accessed": False,
         "experiment_contract_sha256": contract_sha,
         "screen_result_sha256": result_sha,
         "reliability_checkpoint_sha256": checkpoint_sha,
@@ -369,7 +405,34 @@ def test_a0_artifact_loader_accepts_bound_fixture(tmp_path: Path) -> None:
     assert result["status"] == "passed"
 
 
-@pytest.mark.parametrize("tamper", ["checkpoint", "result", "ledger", "run_state"])
+def _write_result_tamper_with_valid_outer_hashes(
+    root: Path, result: dict[str, object],
+) -> None:
+    """Keep outer bindings valid so a test reaches its targeted check."""
+    result_path = root / "screen_result.json"
+    result_path.write_text(json.dumps(result), encoding="utf-8")
+    result_sha = sha256_file(result_path)
+    state_path = root / "run_state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["screen_result_sha256"] = result_sha
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+    ledger_path = Path(str(result["validation_ledger"]))
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    ledger["screen_result_sha256"] = result_sha
+    ledger_path.write_text(json.dumps(ledger), encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "checkpoint", "result", "ledger", "run_state", "scope",
+        "ledger_path", "validation_accessed", "validation_consumed",
+        "validation_claimed", "run_test_accessed", "result_test_accessed",
+        "future_modules_loaded", "formal_authorized",
+        "ledger_scope", "ledger_output", "ledger_test_accessed",
+        "ledger_dataset",
+    ],
+)
 def test_a0_artifact_loader_rejects_tampering(tmp_path: Path, tamper: str) -> None:
     root = tmp_path / "run"
     _write_artifact_fixture(root)
@@ -390,10 +453,53 @@ def test_a0_artifact_loader_rejects_tampering(tmp_path: Path, tamper: str) -> No
         value = json.loads(ledger.read_text(encoding="utf-8"))
         value["status"] = "claimed"
         ledger.write_text(json.dumps(value), encoding="utf-8")
-    else:
+    elif tamper == "run_state":
         state_path = root / "run_state.json"
         value = json.loads(state_path.read_text(encoding="utf-8"))
         value["status"] = "running"
         state_path.write_text(json.dumps(value), encoding="utf-8")
+    elif tamper == "scope":
+        result["validation_scope"]["stage_slot"] = "forged-slot"
+        _write_result_tamper_with_valid_outer_hashes(root, result)
+    elif tamper == "ledger_path":
+        forged = root.parent / "forged-ledger.json"
+        forged.write_text(
+            Path(result["validation_ledger"]).read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+        result["validation_ledger"] = str(forged.resolve())
+        _write_result_tamper_with_valid_outer_hashes(root, result)
+    elif tamper in {
+        "validation_consumed", "validation_claimed", "run_test_accessed",
+    }:
+        state_path = root / "run_state.json"
+        value = json.loads(state_path.read_text(encoding="utf-8"))
+        field = "test_accessed" if tamper == "run_test_accessed" else tamper
+        value[field] = True if field == "test_accessed" else False
+        state_path.write_text(json.dumps(value), encoding="utf-8")
+    elif tamper == "result_test_accessed":
+        result["test_accessed"] = True
+        _write_result_tamper_with_valid_outer_hashes(root, result)
+    elif tamper.startswith("ledger_"):
+        ledger_path = Path(result["validation_ledger"])
+        value = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if tamper == "ledger_scope":
+            value["validation_scope"]["stage_slot"] = "forged-slot"
+        elif tamper == "ledger_output":
+            value["output"] = str(root.parent.resolve())
+        elif tamper == "ledger_test_accessed":
+            value["test_accessed"] = True
+        else:
+            value["dataset_manifest_sha256"] = "e" * 64
+        ledger_path.write_text(json.dumps(value), encoding="utf-8")
+    else:
+        result[tamper] = {
+            "validation_accessed": False,
+            "future_modules_loaded": True,
+            "formal_authorized": False,
+        }[tamper]
+        if tamper == "formal_authorized":
+            result["authorized_formal_two_stage"] = result.pop(tamper)
+        _write_result_tamper_with_valid_outer_hashes(root, result)
     with pytest.raises(ValueError):
         validate_reliability_a0_artifacts(root)
