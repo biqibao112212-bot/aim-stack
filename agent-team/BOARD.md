@@ -2,6 +2,50 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
+## 2026-07-31 local-precision profiled F successor (oracle gate ready)
+
+- [x] Replaced whole-window q0/history scalar selection with an anonymous
+  local state space: per-observation log precision, four endpoint-prior
+  interpolation coefficients and one independent center-prior coefficient.
+  The weights enter the frozen fixed-omega V14 normal equations and two
+  shared-parameter IRLS steps return velocity directly. There is no global
+  velocity/coefficient output, role/physical-ID embedding, session, class,
+  absolute pose/range, future or truth field in deployed forward.
+- [x] The FP32 weighted Schur solver is complete. Neutral/history and q0
+  endpoints delegate the frozen V14 implementation per sample, including
+  mixed endpoint batches; the general path has no velocity ridge or clamp.
+  Hidden NaN padding is cleaned before the solve and before the unchanged
+  translation-only fallback, and support is false whenever the reported
+  velocity is non-finite. S4, planar O(2)/reflection and common-ramp tests
+  pass.
+- [x] Cross-fit proper-risk primitives retain both Mahalanobis and Gaussian
+  log-determinant terms, estimate noise only from fit rows with at least two
+  residual degrees of freedom, and expose leverage/covariance/refit-drift
+  scalar diagnostics. Dense XY/Z designs reproduce frozen V14 q0/history
+  solutions to float64 tolerance `2e-10`. Nested full/LBO covariance sums are
+  explicitly treated only as deterministic scales, not probabilistic
+  Mahalanobis distances.
+- [x] The loss-only state-space ceiling is sealed before any network training.
+  It uses the exact deployable visible-center/clamp projection, three fixed
+  starts and 32 Adam steps, while truth velocity remains outside all forward
+  caches. The local candidate must be a weighted profile solution; fallback
+  cannot become a third expert. Each fold and overall/rotation/combined group
+  must retain at least the sealed A2 common count, cover that domain 100%, have
+  at least `0.02 m/s` parent-to-projection Mean/P50 headroom, improve the
+  parent by at least `0.01 m/s`, and recover at least 40% of both Mean and P50
+  headroom.
+- [x] The oracle runner has immutable generation checkpoints and an atomic
+  `run_state.json` commit pointer. It resumes across orphan sidecars, orphan
+  regular checkpoints, a written final result without its checkpoint, and a
+  written final checkpoint without its pointer. The final validator reopens
+  only train truth, rehashes train truth/observation shards, and recomputes
+  every fold metric, gate and authorization. Independent mathematical and
+  recovery reviews are READY; all 789 Stage3 tests pass.
+- [ ] Next: commit the clean implementation and run only the train-fold local-
+  precision state-space oracle on local CUDA. Do not train the 200-update
+  local-precision network unless the fixed oracle authorizes it. Validation,
+  test, future-position tuning and plots remain unopened.
+
 ## 2026-07-31 profiled anonymous center/twist V14 (rejected; V15 active)
 
 - V14 replaces residual/alternating state heads with a constrained current-state

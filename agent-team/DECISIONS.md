@@ -3165,3 +3165,47 @@
   passes but the learned model fails two session folds or local/time/assignment
   counterfactuals, the available observations do not identify the weights and
   the next move is a different state parameterization, not more optimization.
+
+## 2026-07-31 decision 197: seal a profile-only local-precision ceiling before training
+
+- The successor state is not a selector between two full-window velocities.
+  A shared anonymous head emits projected log precisions for each observed
+  event-role factor, four q0 endpoint prior alphas and an independent q0 center
+  prior alpha. Two shared IRLS calls insert those values into the frozen
+  fixed-omega V14 equations and return the solved velocity. Global context may
+  only multiply nonzero local evidence; with neutral local evidence it cannot
+  change any output.
+- Prior interpolation is in Gaussian natural parameters. History endpoints
+  retain `q_ridge=1e-5`, the history center retains precision `0.01`, and the
+  informed endpoint precision remains `10`. Strict all-history/all-q0 rows
+  delegate frozen V14 per sample. The general solver is FP32, has no velocity
+  ridge/clamp, preserves the original unweighted fallback, cleans hidden
+  padding before every affine/solve path, and fails support closed on
+  non-finite velocity.
+- Predictive evidence must be proper and fit-only: Gaussian heldout scores
+  retain both residual quadratic and log determinant, covariance/noise cannot
+  read heldout residuals, and at least two residual degrees of freedom are
+  required. Full/LBO covariance sums may be used as invariant deterministic
+  feature scales but are not called sampling Mahalanobis distances because the
+  nested fits are correlated.
+- A separate truth-isolated oracle decides whether this output space is worth
+  training. It optimizes exactly the deployable projected observation logits
+  and bounded prior alphas from neutral/history/q0 starts for exactly 32 steps.
+  Only `profile_supported` candidates are valid, so truth cannot choose the
+  translation fallback as a third expert. Truth, motion class, session and
+  oracle outputs never enter a forward cache or deployed model kwargs.
+- Authorization requires both train-session folds and all of overall,
+  rotation and combined motion to preserve the sealed A2 full count, retain
+  at least the sealed A2 intact common count, cover every reference-common row
+  with a local profile, have parent-to-projection Mean and P50 headroom at
+  least `0.02 m/s`, improve parent Mean and P50 by at least `0.01 m/s`, and
+  recover at least 40% of both headrooms. Metrics always use the predeclared
+  reference mask and cannot drop a local failure.
+- Oracle artifacts use immutable generation checkpoints with an atomic state
+  commit pointer. Recovery converges all checkpoint/state/result crash windows
+  without overwriting accepted sidecars. Final validation reopens train-only
+  truth, verifies train observation/truth shards and frozen dependencies, and
+  recomputes metrics/gates. The implementation has two independent READY
+  reviews and 789 passing Stage3 tests. This authorizes only running the
+  train-only ceiling; it does not yet authorize local-precision network
+  training, validation, test, future-position tuning or plots.
