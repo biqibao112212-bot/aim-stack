@@ -3060,3 +3060,60 @@
   must keep anonymous endpoint temporal evolution available at the final
   reliability decision and must independently prove that this temporal path,
   rather than a global/session shortcut, supplies the gain.
+
+## 2026-07-31 decision 195: test cross-fitted anonymous temporal reliability
+
+- A2 changes the information boundary rather than the optimizer budget. It
+  leaves fixed two-event blocks out of each training history and refits only
+  the frozen q0-informed and history-only physical profilers on the remaining
+  events. Those block-fit states explain the original untouched observations;
+  their per-role innovations are therefore out-of-fit evidence. The deployed
+  expert velocities still come from full-history frozen profiles. Mapper/S/H,
+  V14 geometry, center construction and observations are never cross-fitted or
+  updated, so A2 isolates F/reliability selection rather than mixing a new
+  upstream estimator into the experiment.
+- Each event-role token contains eleven scalar invariant channels. Channels
+  `0:3` are fixed as time, primary visibility and switch context; association
+  and dose interventions may permute only the residual suffix `3:` and must
+  preserve its visible-value multiset. Six same-time unordered role pairs use
+  channelwise mean, absolute difference and product. Shared masked recurrent
+  encoders, undirected pair-to-role messages and symmetric role pooling retain
+  temporal evolution without a role index, physical armor ID or role
+  embedding. The forward path excludes session, motion class, truth velocity,
+  future and absolute pose.
+- A local-only logit receives coefficient and component-preference supervision
+  so that the global feature cannot silently absorb the task. The final logit
+  combines local and global evidence and still emits only a continuous convex
+  coefficient between the same frozen q0/history experts. Training remains a
+  fixed two-fold, 200-update, width-32 screen with intact/global/hard arm
+  weights `0.50/0.25/0.25`; local auxiliary weight is `0.50`. There is no
+  additional local velocity-regression loss and no authorization to tune the
+  update count or thresholds after observing the result.
+- Mechanism acceptance is stricter than aggregate improvement. In both heldout
+  session folds and in overall/rotation/combined families, A2 must recover at
+  least 30% of both Mean and P50 oracle headroom, reach preference AUC 0.75,
+  and materially worsen when the local path or temporal ordering is removed.
+  Residual/time association is broken independently within every anonymous
+  role. Cross-event role continuity is averaged over the complete 24-element
+  S4 conjugacy orbit. Damage-dose metrics average only anonymous subsets whose
+  damaged roles have valid temporal donors. Only complete two-event blocks and
+  at least two distinct heldout instants establish cross-fit support; multiple
+  visible roles at one instant never count as multiple temporal exposures.
+  Each anonymous intervention is scored before averaging losses (AUC is first
+  computed as a weighted flattened Mann--Whitney statistic with equal total
+  mass per recipient), so opposite changes cannot cancel through prediction
+  ensembling and per-sample role relabelling cannot change the statistic. Main
+  body metrics retain every base-valid sample; each counterfactual uses its own
+  eligibility domain and recomputes the full baseline on that exact domain.
+  Nominal dose 1/2/4 saturates at all anonymous roles with valid
+  temporal donors; it never requires an unobserved plate and never counts
+  changing an unavailable role as damage. Pair-message AUC gain must reach
+  `0.02`; the sealed A1 corrupted
+  component-AUC, paired-coverage and intact-minus-corrupt weight-separation
+  gates are retained, preventing a constant history choice from passing. P95
+  is retained only as a corruption-safety guard.
+- A2 is diagnostic, train-only and truth-omega-profiled. A pass authorizes only
+  a separately sealed train-only counterfactual stage; it does not authorize
+  validation, formal V15, free-omega training, test, plots or future-position
+  tuning. A failure rejects the temporal-reliability mechanism at this
+  definition and cannot be repaired by extra epochs.

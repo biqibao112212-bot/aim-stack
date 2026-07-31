@@ -156,6 +156,39 @@
   selection. Do not add epochs: the next structural probe must preserve
   anonymous per-endpoint temporal evolution until the final decision instead
   of collapsing it through unordered mean/max summaries.
+- A2 is the fixed train-only test of that missing mechanism. For every history
+  it leaves two events out, refits only the frozen q0/history physical
+  profilers on the remaining events, and evaluates their prediction residuals
+  on the untouched observations. The final q0/history experts still use the
+  full history; Mapper/S/H, geometry and V14 remain fixed. Shared recurrent
+  role and unordered-pair encoders preserve the complete anonymous temporal
+  sequence to the reliability decision, with no physical ID, role embedding,
+  motion class, session or truth velocity in forward.
+- A2 counterfactuals separately remove the local path, collapse time, remove
+  pair messages, break each role's residual/time association, break role
+  continuity under a complete 24-element S4 conjugacy average, and damage all
+  anonymous subsets of one, two or four roles. Static time/primary/switch
+  channels and visibility are unchanged, and pair tokens are recomputed after
+  every intervention. Only complete two-event heldout blocks count, and two
+  roles at one instant remain one exposure. Anonymous interventions are scored
+  by expected per-variant loss rather than loss after averaging predictions.
+  Dose 1/2/4 saturates at the number of anonymous roles that actually have a
+  valid temporal donor, so unavailable plates neither discard the sample nor
+  masquerade as a successful intervention.
+  The screen remains two session-disjoint folds, width 32 and 200 updates;
+  success requires body Mean and P50 oracle-gap recovery, causal use of the
+  local temporal and pair-message evidence, and the sealed A1 corruption AUC,
+  paired-coverage and weight-separation gates. It cannot access validation,
+  test, free omega or future position.
+- A2 implementation preflight passes 711 Stage3 tests and both repository
+  boundary checks; two independent final reviews are READY. A real RTX 4060
+  rotation/combined smoke constructs `[24,32,4,11]` role tokens and
+  `[24,32,6,33]` pair tokens from split-scoped train data. It retains 23/24
+  base, association, continuity and saturated-dose eligible rows; dose1/2/4
+  evaluate 57/85/23 valid anonymous variants without shrinking the main body.
+  A one-update forward/backward is finite and the complete counterfactual
+  evaluation peaks at 143.0 MiB allocated CUDA memory. Commit cleanly, then
+  start exactly one fixed A2 screen.
 
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
