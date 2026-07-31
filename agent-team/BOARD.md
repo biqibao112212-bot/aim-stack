@@ -2,7 +2,7 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-31 profiled anonymous center/twist V14 (active)
+## 2026-07-31 profiled anonymous center/twist V14 (rejected; V15 active)
 
 - V14 replaces residual/alternating state heads with a constrained current-state
   estimator. For supplied omega it profiles the anonymous chassis center and
@@ -38,14 +38,44 @@
   final-state coverage are both 100%; history-only uses explicit fallback on
   1.47% of rows. Audit SHA-256 is
   `3aadb3ddf624b4ee57fb7d127a10a19ecdcfecb08b64aca02fbfb59ce974b6db`.
-- Three independent read-only reviews are READY, 25 focused and 621 complete
-  Stage3 tests pass, and test remains unopened. Current step: commit the reviewed
-  implementation, prove an interrupted 25-to-100 update run is exactly
-  reproducible against an uninterrupted same-seed control, then run exactly two
-  local RTX 4060 100-update center-prior/gate screens. Each screen must report
-  intact, history-blind and cross-sample shuffled-H distributions and solver
-  coverage. Free-omega training, the learned future and user-facing scatter
-  plots remain frozen until both center screens pass.
+- The implementation was committed at `12ca34e`; 25-update interruption,
+  75-update interruption and uninterrupted seed-20260730 paths all finish with
+  identical model state SHA-256
+  `ba9c489c73615a7e1a2a68615e04488b65eec656f523b21c28377d07189cfaf9`
+  and identical metrics/gates. V14 is therefore deterministically rejected,
+  not an interrupted or unlucky run. It improves center Mean/P50 by 3.83/2.58%
+  and velocity P50 by 5.66%, but velocity Mean improves only 1.22%. The learned
+  gate remains nearly constant: intact/shuffled q0 weights are 0.7959/0.7912,
+  while their loss-only oracle responsibilities are 0.583/0.271. Shuffled H
+  raises P50 from history-only 0.299 to 0.819 m/s, so this is a body failure,
+  not tail-only rejection. Do not run the second V14 seed or add updates.
+
+## 2026-07-31 frozen-expert continuous reliability fusion V15 (active)
+
+- V14's two velocity components are retained only as frozen diagnostic experts.
+  On the sealed 750-window validation split, a loss-only continuous projection
+  oracle reaches intact Mean/P50 0.641/0.152 m/s and shuffled-H 0.808/0.176,
+  versus the trained mixture's 0.850/0.286 and 1.549/0.819. Existing observable
+  compatibility features predict component preference with grouped linear-probe
+  AUC about 0.813 and distinguish intact/shuffled inputs with AUC about 0.958.
+  The components and forward information have headroom; the joint gate training
+  definition is the rejected part.
+- V15 separates the stages. It freezes the center prior and both profiled
+  experts, trains only an anonymous reliability fusion head, replaces minibatch
+  roll corruption with precomputed hash-bound global and matched-hard
+  derangements, and supervises the actual continuous convex coefficient
+  `clip(((truth-vh) dot (vq-vh))/||vq-vh||^2,0,1)`. Intact and corruption arms
+  receive equal weight. The head must use deployable O(2)/permutation/common-ramp
+  invariant compatibility evidence and make q0 weight monotonically decrease as
+  explicit incompatibility increases. Truth remains loss-only; truth omega is
+  still the declared B0 mechanism slice. Test, free omega, future-position and
+  scatter plots remain frozen.
+- First run a reliability-only diagnostic parented to the fixed V14 checkpoint.
+  It must recover at least 30% of the intact oracle gap (approximately Mean <=
+  0.787 and P50 <= 0.246 m/s), keep both global and matched-hard shuffled
+  Mean/P50 within 1.02x history-only, separate intact/shuffled mean q0 weight by
+  at least 0.15, and reach component-preference AUC at least 0.75. Only a passing
+  probe authorizes a clean two-stage, two-seed formal rerun.
 
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 

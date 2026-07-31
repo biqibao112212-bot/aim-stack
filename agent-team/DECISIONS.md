@@ -2889,3 +2889,32 @@
   profiled velocity loss and gate responsibility loss. Truth
   yaw is explicitly declared as a diagnostic forward input; truth velocity and
   center remain loss-only. No future module is loaded.
+
+## 2026-07-31 decision 189: reject joint gating and isolate reliability fusion
+
+- V14-B0 seed 20260730 is a deterministic structural rejection. Runs resumed at
+  update 25 and 75 and an uninterrupted control produce the exact same final
+  model SHA-256
+  `ba9c489c73615a7e1a2a68615e04488b65eec656f523b21c28377d07189cfaf9`
+  and identical metrics. Center Mean/P50 improve, velocity P50 improves 5.66%,
+  but velocity Mean improves only 1.22%. Intact/shuffled q0 weights differ by
+  only 0.0047 although their oracle responsibilities differ by 0.312. The
+  shuffled P50 regression from 0.299 to 0.819 m/s affects the distribution body,
+  so it cannot be excused as a small tail.
+- The two frozen experts are not the blocker. Their loss-only continuous convex
+  oracle reaches intact Mean/P50 0.641/0.152 m/s and shuffled Mean/P50
+  0.808/0.176. Existing forward-visible compatibility features have grouped
+  probe AUC 0.813 for component preference and 0.958 for intact versus shuffled
+  H. V14 failed because a biased gate, moving experts, minibatch-roll negatives,
+  unequal intact/corrupt velocity weights and weak BCE supervision were trained
+  jointly; extra epochs do not repair that definition.
+- V15 makes reliability a separate frozen-expert stage. Its target is the
+  actual loss-only optimal projection coefficient
+  `w*=clip(((truth-vh) dot (vq-vh))/||vq-vh||^2,0,1)` rather than a probability
+  that one endpoint is better. Counterfactual donors are generated over the
+  whole split, have no fixed points, are hash-bound and include both global and
+  motion/support-matched hard corruption. The forward head is anonymous and
+  invariant, consumes explicit compatibility evidence, and structurally makes
+  increased incompatibility reduce q0 reliance. A diagnostic frozen-parent
+  screen precedes any clean formal two-stage rerun; test, future and free omega
+  remain unopened until it passes.
