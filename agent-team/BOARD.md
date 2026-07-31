@@ -2,7 +2,7 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
-## 2026-07-31 local-precision profiled F successor (oracle gate ready)
+## 2026-07-31 local-precision profiled F successor (oracle passed; project paused)
 
 - [x] Replaced whole-window q0/history scalar selection with an anonymous
   local state space: per-observation log precision, four endpoint-prior
@@ -41,10 +41,44 @@
   only train truth, rehashes train truth/observation shards, and recomputes
   every fold metric, gate and authorization. Independent mathematical and
   recovery reviews are READY; all 789 Stage3 tests pass.
-- [ ] Next: commit the clean implementation and run only the train-fold local-
-  precision state-space oracle on local CUDA. Do not train the 200-update
-  local-precision network unless the fixed oracle authorizes it. Validation,
-  test, future-position tuning and plots remain unopened.
+- [x] The implementation is committed on `main` as `7181fb4` (`stage3: add
+  local precision oracle gate`). The exact clean commit passed all 789 Stage3
+  tests, Python compilation, the consumer boundary check and the architecture
+  check against Simulator 1.0.1 / SDK 1.0.0.
+- [x] The formal train-only CUDA oracle completed normally in about 129 s and
+  independently revalidated as `passed` with
+  `authorized_train_local_precision=true`. Both folds and all overall,
+  rotation and combined groups passed every fixed count, coverage, absolute
+  headroom, absolute improvement and Mean/P50 recovery gate. Validation and
+  test were not accessed; no network was trained and no plot was created.
+- [x] Fold-0 overall parent -> local Mean/P50/P95 is
+  `0.7490/0.3727/2.5254 -> 0.1467/0.0322/0.7656 m/s`; rotation is
+  `0.6341/0.2706/2.2277 -> 0.1104/0.0235/0.5656`; combined is
+  `0.9496/0.6211/2.7074 -> 0.2099/0.0495/0.9991`. Fold-1 overall is
+  `0.9121/0.6235/2.7927 -> 0.1993/0.0540/0.9579`; rotation is
+  `0.9671/0.6987/2.7993 -> 0.1972/0.0626/0.8492`; combined is
+  `0.8277/0.4883/2.7815 -> 0.2024/0.0391/1.0503`. Local coverage on every
+  fixed reference-common domain is exactly 100%.
+- [x] Protected oracle artifact:
+  `D:\仿真\models\engines\stage3-training\20260731-v94-v15-a3-local-precision-state-space-oracle-r1`
+  (147 files, 2.76 MiB). `screen_result.json` SHA-256 is
+  `fb4737d3310dc2eb336c4a1b4c72622bbec3b9e0c960645f0b1b917804d0f5fe`;
+  `run_state.json` SHA-256 is
+  `fd43a895d3b31cd7e849bcf40cc4de1bcf7dd1ab6b8f15a8a164c6e267dc328e`;
+  contract-file SHA-256 is
+  `7fd7535a230a06cc7885e747543f8e57e05d485a995b60348c771abbbf4f90f5`;
+  its canonical experiment-contract SHA-256 is
+  `ad5369fe68d9d39f736df326afa8e1614eee66cd1fefc978af1227b3a63272c8`;
+  final generation-73 checkpoint SHA-256 is
+  `f815732dbcc6bcc218949fa7f6189be79233ce304f9239a71e4f9a6d3030446a`.
+- [ ] USER PAUSE: stop the entire project here. No training or analysis process
+  is intentionally left running. The next conversation must first read
+  `PROJECT.md`, this BOARD entry and decisions 196--198, verify
+  `aim-stack/main` and the protected artifact hashes, then discuss the fixed
+  train-only two-session-fold, 200-update learned local-precision experiment.
+  Do not start it merely because the oracle authorized the state space: the
+  user requested a new discussion first. Validation, test, future-position
+  tuning and plots remain unopened.
 
 ## 2026-07-31 profiled anonymous center/twist V14 (rejected; V15 active)
 

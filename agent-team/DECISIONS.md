@@ -3209,3 +3209,58 @@
   reviews and 789 passing Stage3 tests. This authorizes only running the
   train-only ceiling; it does not yet authorize local-precision network
   training, validation, test, future-position tuning or plots.
+
+## 2026-07-31 decision 198: accept the local-precision state space, pause before learning it
+
+- Clean source commit `7181fb4` passed all 789 Stage3 tests, Python compilation,
+  consumer-boundary validation and architecture validation. The formal oracle
+  then completed on local CUDA in about 129 seconds. Its result is `passed` and
+  `authorized_train_local_precision=true`; the independent completion validator
+  reopened train-only truth, rehashed all dependencies and sidecars, and
+  reproduced every fold metric and gate. `validation_accessed=false`,
+  `test_accessed=false`, `network_trained=false`, and `plots_created=false`.
+- The accepted state-space conclusion is stronger than the old scalar expert
+  selection hypothesis. Fold-0 overall parent Mean/P50 `0.7490/0.3727 m/s`
+  becomes `0.1467/0.0322`; fold 1 `0.9121/0.6235` becomes
+  `0.1993/0.0540`. Rotation local Mean/P50 is `0.1104/0.0235` and
+  `0.1972/0.0626`; combined is `0.2099/0.0495` and `0.2024/0.0391`.
+  P95 also falls in every reported group, but remains a guard rather than the
+  sole objective. Every fixed reference-common domain has 100% local profile
+  coverage. Mean/P50 recovery exceeds 100% because local factor weighting is a
+  richer state space than the comparison projection between two frozen
+  full-window experts; it is not a percentage-accuracy claim.
+- Therefore the previous F bottleneck was principally a representation error:
+  choosing one convex coefficient between q0-informed and history-only whole-
+  window velocities cannot express which individual event-role observations
+  and which q0 priors should be trusted. Per-observation precisions, four
+  endpoint-prior alphas, one center-prior alpha and two shared IRLS solves can
+  express the needed correction. This is a train-only upper-bound result, not
+  evidence that causal observable features can yet infer those weights.
+- The retained protected artifact is
+  `D:\仿真\models\engines\stage3-training\20260731-v94-v15-a3-local-precision-state-space-oracle-r1`
+  (147 files, 2.76 MiB). Result/state/contract-file/final-checkpoint SHA-256
+  values are respectively
+  `fb4737d3310dc2eb336c4a1b4c72622bbec3b9e0c960645f0b1b917804d0f5fe`,
+  `fd43a895d3b31cd7e849bcf40cc4de1bcf7dd1ab6b8f15a8a164c6e267dc328e`,
+  `7fd7535a230a06cc7885e747543f8e57e05d485a995b60348c771abbbf4f90f5`,
+  and `f815732dbcc6bcc218949fa7f6189be79233ce304f9239a71e4f9a6d3030446a`.
+  The canonical experiment-contract SHA-256 stored inside the artifact is
+  `ad5369fe68d9d39f736df326afa8e1614eee66cd1fefc978af1227b3a63272c8`.
+  The rejected A2 artifact and all frozen Mapper/S/H/V14 assets remain
+  protected and unchanged.
+- A later learned experiment, if the user reauthorizes it in a new
+  conversation, must freeze Mapper/S/H/V14 and train only the anonymous
+  `PrequentialLocalPrecisionIRLS` output using two heldout train-session folds
+  and a predeclared 200-update budget. Truth velocity may enter the training
+  loss and heldout train-fold metric only; it must never enter the forward
+  cache. Network output remains only observation log precisions, four endpoint
+  alphas and one center alpha. It must retain S4 anonymity, planar O(2)/
+  reflection and common-ramp structure, fixed-domain Mean/P50 evaluation, P95
+  safety reporting, counterfactual evidence for local/time/assignment use, and
+  immutable resumable artifacts. Extra epochs may not repair a failure.
+- The user explicitly paused the entire project before that runner was designed
+  or implemented. Three newly dispatched read-only design reviews were
+  interrupted and are not evidence. No learned local-precision runner,
+  checkpoint, validation access, future-position fine-tuning or plot exists at
+  this handoff. The next conversation must discuss and reseal the detailed
+  learned experiment before execution.
