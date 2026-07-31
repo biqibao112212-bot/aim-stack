@@ -2918,3 +2918,56 @@
   increased incompatibility reduce q0 reliance. A diagnostic frozen-parent
   screen precedes any clean formal two-stage rerun; test, future and free omega
   remain unopened until it passes.
+
+## 2026-07-31 decision 190: reject window-pooled reliability and test paired endpoint evidence
+
+- V15-A0 is a valid train-only structural rejection. It ran from clean commit
+  `d2992d7` with fixed V14/Mapper/S/H hashes and stopped after both grouped
+  train-CV folds failed. It did not claim or load validation, did not access
+  test and did not load future modules. The immutable result is
+  `20260731-v89-v15-a0-frozen-reliability-oracle-omega-r1/screen_result.json`,
+  SHA-256
+  `0e161fee2fde0b4a4c4368f13871a46b120484336935ab6e4777b8ad68968e5c`.
+- This is not an optimization-length failure. The two folds' intact overall
+  component-preference AUC is `0.739/0.552`, while oracle-gap Mean recovery is
+  `-0.079/-0.151`. The learned intact mean q0 weights are `0.523/0.548` even
+  though the loss-only oracle means move from `0.522` to `0.636`. Corrupted
+  arms can often be ranked, especially in fold 0, but paired q0-weight
+  separation never exceeds about `0.06`. The scalar head collapses toward a
+  conservative half mixture and does not generalize which expert is right.
+- The rejected 13D representation pools the four anonymous endpoints before
+  reliability inference. It retains support count, center uncertainty, total
+  XY/Z profile energies and global Schur information, but discards which
+  endpoint conflicts with which observed history, whether that endpoint is
+  current or recently switched, and whether one severe local mismatch is
+  diluted by three compatible roles. Increasing MLP width, adding updates or
+  changing thresholds does not restore discarded information.
+- A train-fold-only non-parametric audit rules out a simple capacity or
+  normalization explanation. kNN-20 oracle-weight correlation is only
+  `0.426/0.220`, although fold 1 is closer to the fit-fold feature manifold
+  (`0.687` normalized nearest-neighbour distance versus `0.858`). Similar 13D
+  features map to oracle-weight neighbourhoods with standard deviation about
+  `0.35`. Moreover absolute q0 XY energy correlates positively, not negatively,
+  with oracle q0 weight (`+0.277/+0.035`). It mixes motion magnitude,
+  information and fit error and is not a cross-session monotone reliability
+  measure. The absolute-energy hard slope is deleted rather than retuned;
+  only an independently tested, information-normalized local innovation may
+  later receive a structural monotonic constraint.
+- The authorized A1 mechanism probe therefore moves the architectural boundary
+  before pooling. It forms shared event-role tokens, shared anonymous endpoint
+  tokens and six shared unordered-pair tokens. Each token compares q0-informed
+  and history-only explanations of the same local evidence; joint role
+  relabeling only permutes tokens and symmetric aggregation removes all fixed
+  slot identity. Only O(2)-invariant scalar contrasts reach the reliability
+  head, and common velocity ramps cancel because absolute expert velocity is
+  forbidden. The final state remains the continuous convex combination of the
+  same two frozen experts with deterministic single-expert/fallback states.
+- A1 is allowed exactly one fixed-budget, two-fold train-only endpoint probe.
+  It must prove that local paired evidence improves intact AUC and positive
+  oracle-gap recovery in each motion family and each fold, not merely detect
+  synthetic corruptions. Counterfactual tests must distinguish local
+  compatibility from session membership, verify dose response when one, two
+  and four endpoints are damaged, and show that breaking only endpoint pairing
+  changes the result while synchronous S4/C4 relabeling does not. Any failure
+  keeps formal two-seed training, validation, free omega and future position
+  unauthorized.

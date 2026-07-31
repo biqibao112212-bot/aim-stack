@@ -76,6 +76,39 @@
   Mean/P50 within 1.02x history-only, separate intact/shuffled mean q0 weight by
   at least 0.15, and reach component-preference AUC at least 0.75. Only a passing
   probe authorizes a clean two-stage, two-seed formal rerun.
+- V15-A0 completed locally at
+  `D:\仿真\models\engines\stage3-training\20260731-v89-v15-a0-frozen-reliability-oracle-omega-r1`
+  from clean commit `d2992d7`. The train-only two-fold screen ended
+  `cv_failed`; `validation_accessed=false`, no validation ledger was created,
+  and test/future stayed unopened. `screen_result.json` SHA-256 is
+  `0e161fee2fde0b4a4c4368f13871a46b120484336935ab6e4777b8ad68968e5c`.
+- The failure affects the distribution body in both held-out session folds.
+  Intact overall fused/parent/oracle Mean/P50 is
+  `0.767/0.381`, `0.749/0.373`, `0.518/0.192` m/s in fold 0 and
+  `0.950/0.682`, `0.912/0.624`, `0.661/0.397` m/s in fold 1. Oracle-gap
+  Mean recovery is `-7.9%/-15.1%`. Intact component AUC changes from
+  `0.739` to `0.552`; fold-1 rotation is `0.491`. Global/hard corruption
+  AUC is stronger in fold 0 (`0.802/0.819`) but falls in fold 1
+  (`0.602/0.624`), and intact-minus-corrupt q0-weight separation remains only
+  `0.03-0.06` instead of `0.15`. More updates or a wider 13D MLP are rejected.
+- A train-fold-only nearest-neighbour audit confirms this is missing
+  information rather than ordinary extrapolation: kNN-20 oracle-weight
+  correlation is `0.426/0.220` with MAE `0.309/0.305`, while fold 1 has the
+  smaller normalized nearest-neighbour distance (`0.687` versus `0.858`).
+  Absolute q0 XY energy is not a valid monotone unreliability variable: its
+  held-out correlation with oracle q0 weight is `+0.277/+0.035`. The A0 hard
+  negative slope on absolute energy is therefore removed with the 13D head,
+  not tuned.
+- A1 is a train-only endpoint-information probe, not a formal model. It will
+  preserve paired local evidence before symmetric set pooling: per-role causal
+  history residuals, q0-versus-history fitted endpoint contrast, visibility/
+  age/span, and unordered pair geometry. All event/role/pair encoders are
+  shared and have no role or physical-ID embedding; XY enters only through
+  O(2)-invariant norms/dot products, and expert velocities enter only through
+  their difference. Mapper/S/H/V14 experts remain frozen and truth omega stays
+  an explicitly diagnostic profiler input. A1 may use only the same two
+  session-disjoint train folds. Validation, test, free omega, future-position
+  and plots remain frozen.
 
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
