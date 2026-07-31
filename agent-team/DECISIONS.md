@@ -3013,3 +3013,50 @@
   `9d073f523bf0cef2ce56c3d4cedf4cde488f5491006911c861aedc4c87421f8f`.
   This corrected result, and not the archived eager-access artifact, is the
   sole authorization input for the fixed A1 endpoint-information probe.
+
+## 2026-07-31 decision 193: use maximal balanced exact hard maps without relaxing gates
+
+- The original A1 hard map discarded an entire exact stratum when its largest
+  session contained more than half the rows. In the fold-0 held-out rotation
+  population this discarded all 188 `(rotation, support=3)` rows and all 20
+  `(rotation, support=1)` rows, reducing family coverage to `72.34%` before
+  head training. Exhaustive session-fold analysis shows no partition can make
+  the old all-or-none definition satisfy both family gates.
+- For stratum size `n` with maximum session count `m`, the largest subset that
+  admits a cross-session bijection has size `n` when `m <= n/2`, otherwise
+  `2(n-m)`. A1 deterministically keeps every minority-session row and selects
+  `n-m` majority rows by a domain/stratum/sample-key SHA-256 order. The exact
+  motion/support stratum, cross-session constraint, recipient/donor set
+  equality, no fixed point and no relaxed matching remain unchanged.
+- Metadata feasibility is now checked before any V14 expert profiling or head
+  training, and the same sealed maps are reused by training. A failed domain is
+  persisted with its fold, fit/held-out identity, maps, full-family coverage
+  and unavoidable exclusions under `preflight_failed`. The hard artifact
+  validator binds this policy and all selected/excluded counts. The full
+  denominator and 80% family gates are deliberately not weakened.
+
+## 2026-07-31 decision 194: reject pooled endpoint A1 despite body improvement
+
+- A1-R2 completed train-only at
+  `D:\仿真\models\engines\stage3-training\20260731-v92-v15-a1-p0-endpoint-token-r2`
+  with `status=failed`, `validation_accessed=false`, `test_accessed=false` and
+  `future_modules_loaded=false`. Result SHA-256 is
+  `c60beb32377d9cf767207268851dae6a47579a5ec03fd4d308a240bd227670d5`;
+  run-state SHA-256 is
+  `6990f38a8457e22a2822af1863ccb538441e5fb6071230f9353f542d52f90c1f`.
+- The result improves the intact distribution body, not merely the tail:
+  fold-0 Mean/P50 changes from A0 `0.767/0.381` to `0.691/0.311`, and fold 1
+  from `0.950/0.682` to `0.870/0.601`. This recovers only `25.0%/34.1%` and
+  `16.8%/10.2%` of oracle Mean/P50 headroom; fold-1 combined recovers just
+  `8.9%/10.4%`. The result is useful evidence but cannot authorize a formal
+  model or validation access.
+- Synthetic corruption discrimination is adequate: global/hard AUC spans
+  approximately `0.75-0.90`, and fused corruption Mean/P50 remain well below
+  blind output. The missing mechanism is not coarse bad-input detection.
+  Removing the local endpoint tokens changes intact AUC by only `0.005-0.044`
+  and coefficient MAE by only `0.8%-2.3%`. Therefore the event/role/pair
+  mean/max boundary still erases most useful local temporal information.
+  Additional updates, width or threshold tuning are rejected. Any successor
+  must keep anonymous endpoint temporal evolution available at the final
+  reliability decision and must independently prove that this temporal path,
+  rather than a global/session shortcut, supplies the gain.

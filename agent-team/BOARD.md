@@ -125,6 +125,37 @@
   an explicitly diagnostic profiler input. A1 may use only the same two
   session-disjoint train folds. Validation, test, free omega, future-position
   and plots remain frozen.
+- The first A1 launch at
+  `D:\仿真\models\engines\stage3-training\20260731-v91-v15-a1-p0-endpoint-token-r1`
+  failed closed before head training because the exact hard-map builder treated
+  each imbalanced `(motion, q0-support-count)` stratum as all-or-none. Fold-0
+  held-out rotation coverage was only `544/752=72.34%`. This is a map
+  construction defect, not a model metric; the incomplete artifact remains
+  archived with validation/test/future unopened.
+- A1 now constructs the deterministic maximal balanced subset inside every
+  exact stratum, preserving cross-session bijection, no fixed point, no donor
+  reuse and no relaxed matching. Full-family denominators and the 80% gates are
+  unchanged. Real preflight hard coverage is `98.25%/95.25%` overall,
+  `98.33%/93.09%` rotation and `98.13%/99.07%` combined across the two
+  complementary fold populations. Commit `0110740` has 686 passing Stage-3
+  tests and both consumer-boundary gates pass.
+- A1-R2 completed at
+  `D:\仿真\models\engines\stage3-training\20260731-v92-v15-a1-p0-endpoint-token-r2`
+  with status `failed`; validation/test/future remained unopened and no fold
+  checkpoint was authorized. `screen_result.json` SHA-256 is
+  `c60beb32377d9cf767207268851dae6a47579a5ec03fd4d308a240bd227670d5`.
+  Intact fused Mean/P50 improved over A0 from `0.767/0.381` to
+  `0.691/0.311` in fold 0 and from `0.950/0.682` to `0.870/0.601` in fold 1,
+  but oracle-gap recovery is only `25.0%/34.1%` and `16.8%/10.2%`.
+  Fold-1 combined is weakest at `8.9%/10.4%` recovery.
+- The decisive A1 rejection is local-information insufficiency after pooling.
+  Intact local-token versus local-ablated AUC gain is only `0.005-0.044`, and
+  coefficient-MAE improvement is only `0.8%-2.3%`, far below the declared
+  `0.03` and `10%` gates. Global/hard corruption AUC is nevertheless
+  `0.75-0.90`, and corruption Mean/P50 are materially better than blind
+  selection. Do not add epochs: the next structural probe must preserve
+  anonymous per-endpoint temporal evolution until the final decision instead
+  of collapsing it through unordered mean/max summaries.
 
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
