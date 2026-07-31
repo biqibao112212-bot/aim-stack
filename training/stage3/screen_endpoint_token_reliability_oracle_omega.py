@@ -9,6 +9,7 @@ only the endpoint-token reliability head is optimized.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -67,6 +68,7 @@ from .train_pnp_window_mapper_distillation import (
 RUN_SCHEMA = "stage3-endpoint-token-reliability-oracle-omega-v15-a1-p0"
 FIXED_UPDATES = 200
 FIXED_WIDTH = 32
+HARD_MAP_POLICY = "maximal-balanced-exact-motion-support-cross-session-v1"
 FEATURE_NAMES = (
     "event_feature", "event_mask", "role_feature", "role_mask",
     "pair_feature", "pair_mask", "global_feature",
@@ -118,6 +120,21 @@ def _validate_corruption_manifest(
         if valid_count != sample_count or float(manifest["coverage"]) != 1.0:
             raise RuntimeError("A1 global corruption coverage is incomplete")
     elif kind == "hard":
+        exclusion_groups = manifest.get("unavoidable_exclusion_groups")
+        if (
+            manifest.get("balancing_policy") != HARD_MAP_POLICY
+            or int(manifest.get("maximal_exact_selected_count", -1))
+            != valid_count
+            or int(manifest.get("unavoidable_exclusion_count", -1))
+            != sample_count - valid_count
+            or not isinstance(exclusion_groups, list)
+            or any(not isinstance(group, dict) for group in exclusion_groups)
+            or sum(
+                int(group.get("excluded_count", -1))
+                for group in exclusion_groups
+            ) != sample_count - valid_count
+        ):
+            raise RuntimeError("A1 hard balancing policy differs")
         if exact_count < math.ceil(0.80 * sample_count):
             raise RuntimeError("A1 exact hard corruption coverage is insufficient")
         motion_coverage = manifest.get("motion_exact_coverage")
@@ -129,6 +146,177 @@ def _validate_corruption_manifest(
             raise RuntimeError("A1 hard motion-family coverage is insufficient")
     else:
         raise ValueError(f"unknown A1 corruption kind: {kind}")
+
+
+def _build_maximal_balanced_exact_map(
+    indices: np.ndarray,
+    keys: Sequence[str],
+    sessions: Sequence[str],
+    strata: Sequence[object],
+    *,
+    domain: str,
+) -> tuple[np.ndarray, np.ndarray, dict[str, Any]]:
+    """Build the largest exact cross-session bijection in every stratum."""
+    if indices.ndim != 1 or len(set(map(int, indices))) != int(indices.size):
+        raise ValueError("A1 hard-map population indices differ")
+    if len(keys) != len(sessions) or len(keys) != len(strata):
+        raise ValueError("A1 hard-map metadata lengths differ")
+    groups: dict[object, list[int]] = {}
+    for raw_index in indices:
+        index = int(raw_index)
+        groups.setdefault(strata[index], []).append(index)
+    selected: set[int] = set()
+    exclusion_groups: list[dict[str, Any]] = []
+    for value, group in sorted(groups.items(), key=lambda item: repr(item[0])):
+        by_session: dict[str, list[int]] = {}
+        for index in group:
+            by_session.setdefault(sessions[index], []).append(index)
+        majority_session, majority = max(
+            by_session.items(), key=lambda item: (len(item[1]), item[0]),
+        )
+        other_count = len(group) - len(majority)
+        if len(majority) <= other_count:
+            keep = set(group)
+        else:
+            ranked_majority = sorted(
+                majority,
+                key=lambda index: (
+                    hashlib.sha256(
+                        f"{domain}\0{value!r}\0{keys[index]}".encode("utf-8")
+                    ).digest(),
+                    keys[index],
+                ),
+            )
+            keep = {
+                index for index in group if sessions[index] != majority_session
+            }
+            keep.update(ranked_majority[:other_count])
+        selected.update(keep)
+        excluded_count = len(group) - len(keep)
+        if excluded_count:
+            exclusion_groups.append({
+                "stratum": repr(value),
+                "sample_count": len(group),
+                "selected_count": len(keep),
+                "excluded_count": excluded_count,
+                "session_count": len(by_session),
+                "max_session_count": len(majority),
+                "other_session_count": other_count,
+            })
+    selected_indices = np.asarray(
+        [int(index) for index in indices if int(index) in selected],
+        dtype=np.int64,
+    )
+    if selected_indices.size < 2:
+        raise RuntimeError("A1 hard map has no exact cross-session subset")
+    recipients, donors, manifest = _build_map(
+        selected_indices, keys, sessions, domain=domain, strata=strata,
+        require_cross_session=True,
+    )
+    if (
+        int(manifest["valid_count"]) != int(selected_indices.size)
+        or manifest["exact_invalid_groups"]
+        or int(manifest["relaxed_valid_count"]) != 0
+    ):
+        raise RuntimeError("A1 balanced exact hard map is not fully bijective")
+    manifest.update({
+        "sample_count": int(indices.size),
+        "valid_count": int(recipients.size),
+        "coverage": float(recipients.size / indices.size),
+        "exact_valid_count": int(recipients.size),
+        "balancing_policy": HARD_MAP_POLICY,
+        "maximal_exact_selected_count": int(selected_indices.size),
+        "unavoidable_exclusion_count": int(indices.size - selected_indices.size),
+        "unavoidable_exclusion_groups": exclusion_groups,
+        "population_index_sha256": hashlib.sha256(
+            indices.astype("<i8", copy=False).tobytes()
+        ).hexdigest(),
+        "selected_index_sha256": hashlib.sha256(
+            selected_indices.astype("<i8", copy=False).tobytes()
+        ).hexdigest(),
+    })
+    return recipients, donors, manifest
+
+
+def _attach_motion_exact_coverage(
+    manifest: dict[str, Any],
+    recipients: np.ndarray,
+    indices: np.ndarray,
+    motion: np.ndarray,
+) -> None:
+    manifest["motion_exact_coverage"] = {}
+    for group, value in (("overall", None), ("rotation", 2), ("combined", 3)):
+        population = indices if value is None else indices[motion[indices] == value]
+        selected = (
+            recipients if value is None
+            else recipients[motion[recipients] == value]
+        )
+        if population.size == 0:
+            raise RuntimeError(f"A1 empty {group} corruption population")
+        manifest["motion_exact_coverage"][group] = {
+            "sample_count": int(population.size),
+            "valid_count": int(selected.size),
+            "coverage": float(selected.size / population.size),
+        }
+
+
+def _build_corruption_maps(
+    indices: np.ndarray,
+    keys: Sequence[str],
+    sessions: Sequence[str],
+    hard_strata: Sequence[object],
+    motion: np.ndarray,
+    *,
+    domain: str,
+    validate: bool = True,
+) -> tuple[
+    dict[str, tuple[np.ndarray, np.ndarray]], dict[str, dict[str, Any]],
+]:
+    global_recipient, global_donor, global_manifest = _build_map(
+        indices, keys, sessions, domain=f"{domain}/global", strata=None,
+        require_cross_session=True,
+    )
+    hard_recipient, hard_donor, hard_manifest = _build_maximal_balanced_exact_map(
+        indices, keys, sessions, hard_strata,
+        domain=f"{domain}/matched-hard",
+    )
+    for manifest, recipients in (
+        (global_manifest, global_recipient), (hard_manifest, hard_recipient),
+    ):
+        _attach_motion_exact_coverage(manifest, recipients, indices, motion)
+    if validate:
+        _validate_corruption_manifest(global_manifest, kind="global")
+        _validate_corruption_manifest(hard_manifest, kind="hard")
+    return {
+        "global": (global_recipient, global_donor),
+        "hard": (hard_recipient, hard_donor),
+    }, {"global": global_manifest, "hard": hard_manifest}
+
+
+def _finalize_preflight_failure(
+    output: Path,
+    *,
+    contract_sha: str,
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    result = {
+        **details,
+        "status": "preflight_failed",
+        "validation_accessed": False,
+        "test_accessed": False,
+        "future_modules_loaded": False,
+        "authorized_a1_counterfactual_probe": False,
+        "authorized_formal_two_stage": False,
+    }
+    _atomic_json(output / "screen_result.json", result)
+    _atomic_json(output / "run_state.json", {
+        "schema_version": RUN_SCHEMA, "status": "preflight_failed",
+        "validation_accessed": False, "test_accessed": False,
+        "future_modules_loaded": False,
+        "experiment_contract_sha256": contract_sha,
+        "screen_result_sha256": sha256_file(output / "screen_result.json"),
+    })
+    return result
 
 
 def validate_a0_rejection(path: str | Path) -> dict[str, Any]:
@@ -235,6 +423,7 @@ def validate_a1_p0_artifacts(
         or contract.get("role_embedding") is not False
         or contract.get("symmetric_set_pooling") is not True
         or contract.get("absolute_energy_monotonicity") is not False
+        or contract.get("hard_map_policy") != HARD_MAP_POLICY
     ):
         raise ValueError("A1-P0 fixed experiment contract differs")
     contract_sha = _json_sha256(contract)
@@ -467,39 +656,16 @@ def _make_arms(
     prepared: dict[str, torch.Tensor],
     intact_full: dict[str, torch.Tensor],
     indices: np.ndarray,
-    keys: Sequence[str],
-    sessions: Sequence[str],
-    hard_strata: Sequence[object],
     device: torch.device,
     *,
-    domain: str,
     batch_size: int,
+    map_indices: dict[str, tuple[np.ndarray, np.ndarray]],
+    map_manifests: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, torch.Tensor]], dict[str, Any]]:
-    global_recipient, global_donor, global_manifest = _build_map(
-        indices, keys, sessions, domain=f"{domain}/global", strata=None,
-        require_cross_session=True,
-    )
-    hard_recipient, hard_donor, hard_manifest = _build_map(
-        indices, keys, sessions, domain=f"{domain}/matched-hard",
-        strata=hard_strata, require_cross_session=True,
-    )
-    motion = prepared["motion_class"].numpy().astype(np.int64, copy=False)
-    for manifest, recipients in (
-        (global_manifest, global_recipient), (hard_manifest, hard_recipient),
-    ):
-        manifest["motion_exact_coverage"] = {}
-        for group, value in (("overall", None), ("rotation", 2), ("combined", 3)):
-            population = indices if value is None else indices[motion[indices] == value]
-            selected = (
-                recipients if value is None else recipients[motion[recipients] == value]
-            )
-            if population.size == 0:
-                raise RuntimeError(f"A1 empty {group} corruption population")
-            manifest["motion_exact_coverage"][group] = {
-                "sample_count": int(population.size),
-                "valid_count": int(selected.size),
-                "coverage": float(selected.size / population.size),
-            }
+    global_recipient, global_donor = map_indices["global"]
+    hard_recipient, hard_donor = map_indices["hard"]
+    global_manifest = map_manifests["global"]
+    hard_manifest = map_manifests["hard"]
     _validate_corruption_manifest(global_manifest, kind="global")
     _validate_corruption_manifest(hard_manifest, kind="hard")
     arms = {
@@ -1035,10 +1201,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "role_embedding": False,
         "symmetric_set_pooling": True,
         "absolute_energy_monotonicity": False,
+        "hard_map_policy": HARD_MAP_POLICY,
     }
     contract_sha = _json_sha256(experiment_contract)
     _atomic_json(output / "run_state.json", {
-        "schema_version": RUN_SCHEMA, "status": "train_cv",
+        "schema_version": RUN_SCHEMA, "status": "metadata_preflight",
         "validation_accessed": False, "test_accessed": False,
         "future_modules_loaded": False,
         "experiment_contract_sha256": contract_sha,
@@ -1049,10 +1216,6 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         batch_size=args.expert_batch_size,
     )
     all_indices = np.arange(len(train_dataset), dtype=np.int64)
-    intact_full = _endpoint_expert_arm(
-        base, prepared, all_indices, all_indices, device,
-        batch_size=args.expert_batch_size,
-    )
     support_count = prepared["q0_supported"].sum(dim=-1).numpy().astype(np.int64)
     motion_class = prepared["motion_class"].numpy().astype(np.int64)
     hard_strata = [
@@ -1060,28 +1223,119 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         for index in range(len(train_dataset))
     ]
     fold_sessions = _fold_assignments(sessions, folds=FIXED_FOLDS)
+    fold_plan: list[dict[str, Any]] = []
+    metadata_preflight: list[dict[str, Any]] = []
+    try:
+        for fold, heldout_sessions in enumerate(fold_sessions):
+            heldout = np.asarray([
+                index for index, session in enumerate(sessions)
+                if session in heldout_sessions
+            ], dtype=np.int64)
+            training = np.asarray([
+                index for index, session in enumerate(sessions)
+                if session not in heldout_sessions
+            ], dtype=np.int64)
+            if set(sessions[int(index)] for index in training) & heldout_sessions:
+                raise RuntimeError("A1 train/heldout sessions overlap")
+            audit: dict[str, Any] = {
+                "fold": fold,
+                "status": "running",
+                "train_count": int(training.size),
+                "heldout_count": int(heldout.size),
+            }
+            metadata_preflight.append(audit)
+            train_map_indices, train_maps = _build_corruption_maps(
+                training, keys, sessions, hard_strata, motion_class,
+                domain=f"train/a1/cv{fold}/fit",
+                validate=False,
+            )
+            audit["train_maps"] = train_maps
+            try:
+                _validate_corruption_manifest(train_maps["global"], kind="global")
+                _validate_corruption_manifest(train_maps["hard"], kind="hard")
+            except RuntimeError:
+                audit["status"] = "failed"
+                audit["failed_domain"] = "fit"
+                raise
+            heldout_map_indices, heldout_maps = _build_corruption_maps(
+                heldout, keys, sessions, hard_strata, motion_class,
+                domain=f"train/a1/cv{fold}/heldout",
+                validate=False,
+            )
+            audit["heldout_maps"] = heldout_maps
+            try:
+                _validate_corruption_manifest(
+                    heldout_maps["global"], kind="global",
+                )
+                _validate_corruption_manifest(heldout_maps["hard"], kind="hard")
+            except RuntimeError:
+                audit["status"] = "failed"
+                audit["failed_domain"] = "heldout"
+                raise
+            audit["status"] = "passed"
+            fold_plan.append({
+                "fold": fold,
+                "heldout_sessions": heldout_sessions,
+                "training": training,
+                "heldout": heldout,
+                "train_map_indices": train_map_indices,
+                "heldout_map_indices": heldout_map_indices,
+                "train_maps": train_maps,
+                "heldout_maps": heldout_maps,
+            })
+    except RuntimeError as error:
+        return _finalize_preflight_failure(output, contract_sha=contract_sha, details={
+            "schema_version": RUN_SCHEMA,
+            "diagnostic_only": True,
+            "truth_omega_feature_construction": True,
+            "formal_v15": False,
+            "train_only": True,
+            "git": git_start,
+            "experiment_contract": experiment_contract,
+            "experiment_contract_sha256": contract_sha,
+            "a0": {
+                "result": str(
+                    a0_result_path / "screen_result.json"
+                    if a0_result_path.is_dir() else a0_result_path
+                ),
+                "sha256": a0_result_sha,
+            },
+            "parent": {"checkpoint": str(parent_checkpoint), "sha256": parent_sha},
+            "dataset_manifest_sha256": experiment_contract[
+                "dataset_manifest_sha256"
+            ],
+            "truth_manifest_sha256": truth_sha,
+            "metadata_preflight": metadata_preflight,
+            "preflight_error": str(error),
+        })
+    _atomic_json(output / "run_state.json", {
+        "schema_version": RUN_SCHEMA, "status": "train_cv",
+        "validation_accessed": False, "test_accessed": False,
+        "future_modules_loaded": False,
+        "experiment_contract_sha256": contract_sha,
+    })
+    intact_full = _endpoint_expert_arm(
+        base, prepared, all_indices, all_indices, device,
+        batch_size=args.expert_batch_size,
+    )
     cv: list[dict[str, Any]] = []
     fold_models: list[dict[str, torch.Tensor]] = []
-    for fold, heldout_sessions in enumerate(fold_sessions):
-        heldout = np.asarray([
-            index for index, session in enumerate(sessions)
-            if session in heldout_sessions
-        ], dtype=np.int64)
-        training = np.asarray([
-            index for index, session in enumerate(sessions)
-            if session not in heldout_sessions
-        ], dtype=np.int64)
-        if set(sessions[int(index)] for index in training) & heldout_sessions:
-            raise RuntimeError("A1 train/heldout sessions overlap")
+    for plan in fold_plan:
+        fold = int(plan["fold"])
+        heldout_sessions = plan["heldout_sessions"]
+        training = plan["training"]
+        heldout = plan["heldout"]
         train_arms, train_maps = _make_arms(
-            base, prepared, intact_full, training, keys, sessions, hard_strata,
-            device, domain=f"train/a1/cv{fold}/fit",
+            base, prepared, intact_full, training, device,
             batch_size=args.expert_batch_size,
+            map_indices=plan["train_map_indices"],
+            map_manifests=plan["train_maps"],
         )
         heldout_arms, heldout_maps = _make_arms(
-            base, prepared, intact_full, heldout, keys, sessions, hard_strata,
-            device, domain=f"train/a1/cv{fold}/heldout",
+            base, prepared, intact_full, heldout, device,
             batch_size=args.expert_batch_size,
+            map_indices=plan["heldout_map_indices"],
+            map_manifests=plan["heldout_maps"],
         )
         head, logs = _train_head(
             train_arms, device=device, seed=args.seed + 100 + fold,
@@ -1168,6 +1422,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "dataset_manifest_sha256"
         ],
         "truth_manifest_sha256": truth_sha,
+        "metadata_preflight": metadata_preflight,
         "cv": cv,
         "cross_fold_gates": cross_fold_gates,
     }

@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import torch
 
@@ -17,12 +18,17 @@ from training.stage3.observable_future_pnp_ab import (
 from training.stage3.screen_endpoint_token_reliability_oracle_omega import (
     A0_RUN_SCHEMA,
     FIXED_FOLDS,
+    HARD_MAP_POLICY,
     RUN_SCHEMA,
     _a1_source_paths,
     _all_boolean_gates_pass,
+    _attach_motion_exact_coverage,
+    _build_corruption_maps,
+    _build_maximal_balanced_exact_map,
     _cross_fold_gates,
     _cv_authorized,
     _fold_gates,
+    _finalize_preflight_failure,
     _load_train_dataset,
     _pair_common_mask,
     _validate_corruption_manifest,
@@ -162,6 +168,7 @@ def test_train_dataset_boundary_constructs_only_train_split(tmp_path: Path) -> N
 
 
 def _map_manifest(*, sample: int, valid: int) -> dict[str, Any]:
+    excluded = sample - valid
     return {
         "sample_count": sample,
         "valid_count": valid,
@@ -171,6 +178,12 @@ def _map_manifest(*, sample: int, valid: int) -> dict[str, Any]:
         "fixed_point_count": 0,
         "cross_session_count": valid,
         "relaxed_valid_count": 0,
+        "balancing_policy": HARD_MAP_POLICY,
+        "maximal_exact_selected_count": valid,
+        "unavoidable_exclusion_count": excluded,
+        "unavoidable_exclusion_groups": (
+            [] if excluded == 0 else [{"excluded_count": excluded}]
+        ),
         "motion_exact_coverage": {
             "overall": {"sample_count": sample, "valid_count": valid},
             "rotation": {"sample_count": 5, "valid_count": min(valid, 4)},
@@ -197,6 +210,141 @@ def test_corruption_manifest_requires_exact_cross_session_maps() -> None:
     biased["motion_exact_coverage"]["rotation"]["valid_count"] = 3
     with pytest.raises(RuntimeError):
         _validate_corruption_manifest(biased, kind="hard")
+    for field, value in (
+        ("balancing_policy", "relaxed"),
+        ("maximal_exact_selected_count", 7),
+        ("unavoidable_exclusion_count", 1),
+        ("unavoidable_exclusion_groups", [{"excluded_count": 1}]),
+    ):
+        tampered = _map_manifest(sample=10, valid=8)
+        tampered[field] = value
+        with pytest.raises(RuntimeError, match="balancing policy"):
+            _validate_corruption_manifest(tampered, kind="hard")
+
+
+def test_hard_map_uses_deterministic_maximal_balanced_exact_subset() -> None:
+    indices = np.arange(4, dtype=np.int64)
+    keys = [f"sample-{index}" for index in indices]
+    sessions = ["a", "a", "a", "b"]
+    strata = [(2, 4)] * 4
+    first = _build_maximal_balanced_exact_map(
+        indices, keys, sessions, strata, domain="test/maximal",
+    )
+    second = _build_maximal_balanced_exact_map(
+        indices, keys, sessions, strata, domain="test/maximal",
+    )
+    recipients, donors, manifest = first
+    assert recipients.size == donors.size == 2
+    assert sorted(recipients.tolist()) == sorted(donors.tolist())
+    assert all(
+        sessions[int(recipient)] != sessions[int(donor)]
+        for recipient, donor in zip(recipients, donors, strict=True)
+    )
+    assert not bool(np.any(recipients == donors))
+    assert manifest["balancing_policy"] == HARD_MAP_POLICY
+    assert manifest["unavoidable_exclusion_count"] == 2
+    assert manifest["relaxed_valid_count"] == 0
+    assert manifest["recipient_index_sha256"] == second[2][
+        "recipient_index_sha256"
+    ]
+    assert manifest["donor_index_sha256"] == second[2]["donor_index_sha256"]
+
+
+def test_real_balanced_map_keeps_full_motion_family_denominator() -> None:
+    indices = np.arange(20, dtype=np.int64)
+    keys = [f"sample-{index}" for index in indices]
+    motion = np.asarray([2] * 10 + [3] * 10, dtype=np.int64)
+    strata = (
+        [(2, 4)] * 8 + [(2, 3)] * 2
+        + [(3, 4)] * 8 + [(3, 3)] * 2
+    )
+    sessions = (
+        ["ra"] * 4 + ["rb"] * 4 + ["rx"] * 2
+        + ["ca"] * 4 + ["cb"] * 4 + ["cx"] * 2
+    )
+    recipients, _, manifest = _build_maximal_balanced_exact_map(
+        indices, keys, sessions, strata, domain="test/family/pass",
+    )
+    _attach_motion_exact_coverage(manifest, recipients, indices, motion)
+    assert manifest["motion_exact_coverage"]["rotation"] == {
+        "sample_count": 10, "valid_count": 8, "coverage": 0.8,
+    }
+    assert manifest["motion_exact_coverage"]["combined"] == {
+        "sample_count": 10, "valid_count": 8, "coverage": 0.8,
+    }
+    _validate_corruption_manifest(manifest, kind="hard")
+    map_indices, map_manifests = _build_corruption_maps(
+        indices, keys, sessions, strata, motion, domain="test/fold/integration",
+    )
+    assert map_manifests["hard"]["motion_exact_coverage"]["rotation"][
+        "valid_count"
+    ] == 8
+    population = set(indices.tolist())
+    for recipients, donors in map_indices.values():
+        assert set(recipients.tolist()) <= population
+        assert set(donors.tolist()) <= population
+
+    failing_sessions = (
+        ["ra"] * 5 + ["rb"] * 3 + ["rx"] * 2
+        + ["ca"] * 5 + ["cb"] * 5
+    )
+    failing_strata = [(2, 4)] * 8 + [(2, 3)] * 2 + [(3, 4)] * 10
+    recipients, _, manifest = _build_maximal_balanced_exact_map(
+        indices, keys, failing_sessions, failing_strata,
+        domain="test/family/fail",
+    )
+    _attach_motion_exact_coverage(manifest, recipients, indices, motion)
+    assert manifest["motion_exact_coverage"]["overall"]["valid_count"] == 16
+    assert manifest["motion_exact_coverage"]["rotation"]["valid_count"] == 6
+    with pytest.raises(RuntimeError, match="motion-family"):
+        _validate_corruption_manifest(manifest, kind="hard")
+
+
+def test_preflight_failure_is_sealed_and_preserves_failed_domain(
+    tmp_path: Path,
+) -> None:
+    hard = _map_manifest(sample=10, valid=7)
+    hard["motion_exact_coverage"]["rotation"] = {
+        "sample_count": 10, "valid_count": 7, "coverage": 0.7,
+    }
+    details = {
+        "schema_version": RUN_SCHEMA,
+        "diagnostic_only": True,
+        "truth_omega_feature_construction": True,
+        "formal_v15": False,
+        "train_only": True,
+        "experiment_contract": {},
+        "experiment_contract_sha256": "a" * 64,
+        "metadata_preflight": [{
+            "fold": 0,
+            "status": "failed",
+            "failed_domain": "heldout",
+            "heldout_maps": {"hard": hard},
+        }],
+        "preflight_error": "coverage",
+    }
+    result = _finalize_preflight_failure(
+        tmp_path, contract_sha="a" * 64, details=details,
+    )
+    state = json.loads((tmp_path / "run_state.json").read_text(encoding="utf-8"))
+    stored = json.loads(
+        (tmp_path / "screen_result.json").read_text(encoding="utf-8")
+    )
+    assert result == stored
+    assert state["status"] == result["status"] == "preflight_failed"
+    assert result["authorized_a1_counterfactual_probe"] is False
+    assert result["authorized_formal_two_stage"] is False
+    assert result["validation_accessed"] is False
+    assert result["test_accessed"] is False
+    assert result["future_modules_loaded"] is False
+    failed = result["metadata_preflight"][0]
+    assert failed["failed_domain"] == "heldout"
+    assert failed["heldout_maps"]["hard"]["motion_exact_coverage"][
+        "rotation"
+    ]["valid_count"] == 7
+    assert failed["heldout_maps"]["hard"][
+        "unavoidable_exclusion_groups"
+    ]
 
 
 def test_pair_loss_mask_requires_both_arms_common_endpoint_domain() -> None:
@@ -373,6 +521,7 @@ def _write_a1_fixture(
         "seed": 20260730, "batch_size": 192, "expert_batch_size": 96,
         "role_embedding": False, "symmetric_set_pooling": True,
         "absolute_energy_monotonicity": False,
+        "hard_map_policy": HARD_MAP_POLICY,
     }
     contract_sha = _json_sha256(contract)
     torch.manual_seed(41)
