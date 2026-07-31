@@ -3117,3 +3117,51 @@
   validation, formal V15, free-omega training, test, plots or future-position
   tuning. A failure rejects the temporal-reliability mechanism at this
   definition and cannot be repaired by extra epochs.
+
+## 2026-07-31 decision 196: reject global expert selection and learn local precision
+
+- V15-A2 completed normally from clean commit `78b7f1f` and is a valid
+  train-only rejection. Its result/run-state SHA-256 values are respectively
+  `8f34bf7121827c5e744b617c3c9648a578599cdf4c7329e635d2db0ac0d57561`
+  and `4dfc4903340f68b48e8413fd5f66bcf63a672b0dc06b3fd28d1af88399581cbb`.
+  The fold checkpoint SHA-256 is
+  `744aad5732f66fc8f6829be2afc63ab372e722655b2cb3a9318f2ab950a824f1`.
+  Artifact reconstruction, all fold/cross-fold gates, normalizer states and
+  frozen dependencies revalidate; validation, test and future were not read.
+- A2 improves A1's distribution body only marginally. Overall Mean/P50 is
+  `0.686/0.297` and `0.855/0.593` m/s across the two heldout session folds,
+  but Mean oracle recovery is only `23.6%/19.9%`. Combined P50 recovery falls
+  to `18.5%/5.7%`. Intact AUC changes `0.790 -> 0.686` across folds, while the
+  q0-better fraction changes about `52% -> 67%`; the conditional reliability
+  relationship is not session invariant.
+- Gross reliability remains identifiable: global/hard corruption AUC spans
+  `0.747-0.891`, paired intact-minus-corrupt q0-weight separation spans
+  `0.152-0.184`, and fused corrupted Mean is about one third below blind.
+  Conversely local/temporal/pair gains vanish or reverse on fold-1 rotation,
+  continuity damage can improve fold 1, and dose direction reverses between
+  folds. Therefore the missing capability is not generic bad-input detection;
+  it is stable assignment of fine local evidence when both full-window experts
+  are physically plausible.
+- The A2 representation has a semantic mismatch. Every two-event block refits
+  different center/velocity nuisance states, but a GRU treats their raw scalar
+  residual sequences as one persistent latent trajectory. Its supervision is
+  the oracle coefficient between different, full-history experts. Additional
+  width, updates, normalizer tuning or more scalar pooling cannot align those
+  objects and is prohibited.
+- The successor changes F's output space. A shared anonymous network emits
+  positive precisions for individual observed event-role factors and q0 anchor
+  factors. Two shared-parameter IRLS iterations insert those weights into the
+  same profiled rigid-twist normal equations and directly return velocity.
+  Inputs are cross-fit information-normalized predictive risk, Schur leverage,
+  support and block-to-full refit drift. Session, class, physical ID, fixed
+  role embeddings, absolute pose/range, truth velocity and future remain
+  forbidden in forward. S4 anonymity, planar O(2)/reflection and common-ramp
+  equivariance remain exact requirements.
+- Training cannot start until three structure checks pass on train folds:
+  zero anchor precision exactly reproduces history-only, fixed original anchor
+  precision exactly reproduces q0-informed, and a loss-only bounded local-
+  precision oracle recovers at least 40% of both Mean and P50 headroom. If the
+  oracle fails, local weighting is not an adequate state space. If the oracle
+  passes but the learned model fails two session folds or local/time/assignment
+  counterfactuals, the available observations do not identify the weights and
+  the next move is a different state parameterization, not more optimization.

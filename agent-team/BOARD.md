@@ -189,6 +189,41 @@
   A one-update forward/backward is finite and the complete counterfactual
   evaluation peaks at 143.0 MiB allocated CUDA memory. Commit cleanly, then
   start exactly one fixed A2 screen.
+- A2 completed normally at
+  `D:\仿真\models\engines\stage3-training\20260731-v93-v15-a2-p0-prequential-temporal-r1`
+  from clean commit `78b7f1f`. The artifact is a valid train-only structural
+  rejection: result SHA-256 is
+  `8f34bf7121827c5e744b617c3c9648a578599cdf4c7329e635d2db0ac0d57561`,
+  run-state SHA-256 is
+  `4dfc4903340f68b48e8413fd5f66bcf63a672b0dc06b3fd28d1af88399581cbb`,
+  both fold states are checkpointed, and validation/test/future stayed
+  unopened. No A2 follow-on or extra updates are authorized.
+- A2 makes a real but small body improvement over A1: overall Mean/P50 changes
+  `0.691/0.311 -> 0.686/0.297` in fold 0 and
+  `0.870/0.601 -> 0.855/0.593` in fold 1. It nevertheless recovers only
+  `23.6%/41.3%` and `19.9%/12.8%` of the overall Mean/P50 oracle headroom;
+  fold-1 combined recovery is only `14.5%/5.7%`. Corrupted global/hard inputs
+  remain identifiable (AUC `0.747-0.891`, weight separation `0.152-0.184`),
+  so the failure is specifically fine intact reliability, not total absence of
+  observable information.
+- The temporal mechanism is not cross-session stable. Fold-0 local/temporal/
+  pair AUC gains are about `0.03-0.04`; fold-1 rotation gains become negative.
+  Fold-1 continuity breaking slightly improves AUC, and fold-0 dose 1/2/4
+  coefficient MAE decreases `0.323/0.320/0.297` as more roles are damaged.
+  The GRU is consuming tokens produced by different leave-block-out refits as
+  if they were one persistent hidden state, while its target belongs to the
+  full-history experts. This semantic mismatch, not update count or capacity,
+  is rejected.
+- Active structural replacement: stop selecting between two complete-window
+  velocities. Predict one precision for each observed event-role factor and
+  one precision for each anonymous q0 anchor, then solve the same physical
+  twist equations with those learned local weights in two shared IRLS steps.
+  Precision inputs use information-normalized cross-fit predictive risk,
+  leverage and refit drift; raw block energy and a global-only output shortcut
+  are forbidden. Before training, bounded local-precision oracles and exact
+  history-only/q0-informed solver limits must prove that this output space can
+  improve the body. The next runner remains train-only and session-disjoint;
+  validation/test/free-omega/future stay frozen.
 
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
