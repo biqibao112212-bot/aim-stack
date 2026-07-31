@@ -90,6 +90,14 @@
   records were never joined or used, but `validation_accessed=false` was too
   strong. A split-scoped truth index now opens only one declared split; A0 must
   be rerun from clean corrected source before A1 can execute.
+- Corrected V15-A0 reran from clean commit `2f68c23` at
+  `D:\仿真\models\engines\stage3-training\20260731-v90-v15-a0-split-scoped-reliability-r1`.
+  It reproduced both held-out-fold intact metric groups exactly and ended
+  `cv_failed`, while `validation_accessed=false`,
+  `validation_claimed=false`, no ledger file, and future/test remained
+  unopened. The corrected `screen_result.json` SHA-256 is
+  `9c86a10041a66baf93588b1e0cb32ce9c99dd36ad0008bc2d6d5a7b7602d7853`;
+  only this corrected result may authorize A1.
 - The failure affects the distribution body in both held-out session folds.
   Intact overall fused/parent/oracle Mean/P50 is
   `0.767/0.381`, `0.749/0.373`, `0.518/0.192` m/s in fold 0 and

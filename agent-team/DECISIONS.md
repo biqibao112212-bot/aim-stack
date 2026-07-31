@@ -2995,3 +2995,21 @@
   no validation opportunity. A reproduced rejection authorizes A1 only through
   the new result hash; an unexpected pass follows the existing one-shot ledger
   path and blocks A1 until A0 is resolved.
+
+## 2026-07-31 decision 192: corrected A0 reproduces rejection and authorizes A1
+
+- Corrected V15-A0 ran from clean commit `2f68c23` at
+  `D:\仿真\models\engines\stage3-training\20260731-v90-v15-a0-split-scoped-reliability-r1`.
+  Both held-out-fold intact metric groups are exactly equal to the archived
+  run: fold 0 fused Mean/P50/AUC is `0.767297/0.381225/0.739313`, and fold 1
+  is `0.949819/0.682133/0.551743`. The screen therefore again ends
+  `cv_failed` and preserves the structural conclusion rather than attributing
+  it to truth-index behavior.
+- The corrected run reports `validation_accessed=false` and its run state
+  reports `validation_claimed=false`; no ledger exists, future modules were
+  not loaded and test remained unopened. `screen_result.json` SHA-256 is
+  `9c86a10041a66baf93588b1e0cb32ce9c99dd36ad0008bc2d6d5a7b7602d7853`
+  and `run_state.json` SHA-256 is
+  `9d073f523bf0cef2ce56c3d4cedf4cde488f5491006911c861aedc4c87421f8f`.
+  This corrected result, and not the archived eager-access artifact, is the
+  sole authorization input for the fixed A1 endpoint-information probe.
