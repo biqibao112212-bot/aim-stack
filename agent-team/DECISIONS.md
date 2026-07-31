@@ -2822,8 +2822,9 @@
   sample deletion.
 - The next state definition learns a distribution for the current-primary to
   chassis-center offset from causal anonymous relative geometry. Center truth
-  is a loss-only label derived from `anchor_center_position_m` and the current
-  primary truth position; it is forbidden from forward, export and inference.
+  is a loss-only label derived from `anchor_center_position_m` and the frozen H
+  current-primary estimate in the same forward pass; it is forbidden from
+  forward, export and inference.
   The offset is a per-window vector, not a physical armor identity. For fixed
   omega, a profiled solver jointly eliminates center and per-tracklet geometry
   while estimating unregularized common velocity. Learned precision/bias is
@@ -2840,3 +2841,51 @@
   center prior and the correctly framed truth-center oracle. Confidence, sigma,
   age and support-class stay outside the first learned center-prior input so an
   uncalibrated S/H metadata fingerprint cannot replace relative geometry.
+
+## 2026-07-31 decision 188: use a Schur-profiled two-component center mechanism
+
+- The initial V14 implementation exposed a structural numerical bug before any
+  formal training. A direct 12x12 normal solve treated any invertible short arc
+  as valid; spans from 1e-4 to 1e-6 seconds produced velocity norms from 2.6 to
+  194 m/s with near-zero residual energy. V14 therefore profiles center and
+  tracklet nuisance variables through a velocity Schur complement and gates the
+  minimum eigenvalue, condition and time span. Velocity remains completely
+  unregularized. Failed profile and failed translation fallback are separate,
+  observable states and may not be silently scored as a q0 profile. The
+  fallback additionally requires at least 1 ms between its earliest and latest
+  visible event, even when many handles make its scalar information appear
+  numerically large.
+- The anonymous center carrier is the mean of all four finite H hypotheses, not
+  a supported-only mean. On 750 validation rows, all-four center Mean/P50/P95 is
+  0.134/0.104/0.311 m relative to the exact frozen-H current origin. Independent
+  diagnostics found supported-only averaging sacrifices the body median to
+  improve part of P95, especially at support two and three. Support is retained
+  as reliability metadata; it no longer deletes a finite inferred role.
+- For supplied truth omega as a mechanism bound, the Schur implementation gives
+  q0 soft-center velocity Mean/P50/P95 0.894/0.338/3.561 m/s, history-wide
+  1.498/0.299/6.499 and truth-center oracle 0.707/0.123/3.232. Q0 and oracle
+  profiles cover 100% of validation; history-wide profiles 98.53% and explicitly
+  falls back on 1.47%, with final state support 100%. The validation-only audit
+  `20260731-v87-v14-profiled-center-zero-update-r4.json` has SHA-256
+  `3aadb3ddf624b4ee57fb7d127a10a19ecdcfecb08b64aca02fbfb59ce974b6db`;
+  test and future modules were not accessed.
+- A center prior alone cannot detect a cross-sample but geometrically plausible
+  H center because the short history can trade center error against velocity.
+  The informed component therefore also uses q0 as a weak current-endpoint
+  prior. Because MAP energies under a strong informed prior and a nearly free
+  history prior are not comparable evidence, they do not directly set the
+  mixture weight. A learned invariant gate instead consumes support, predicted
+  center uncertainty, separate XY/Z profile energies and Schur information.
+  It is supervised by a loss-only soft responsibility derived from which
+  component is closer to truth velocity, on intact and corrupted train batches.
+  This is not a physical-ID lookup: all endpoint parameters are anonymous and
+  permutation shared, and truth is never a gate input. Formal
+  B0 validation must report intact, blind and shuffled-H body distributions;
+  shuffled H may not exceed blind Mean/P50 by more than 2%.
+- The B0 runner is fixed to 100 updates, checkpoints every 25 updates, supports
+  exact latest-checkpoint resume, binds dataset/truth/source/frozen checkpoint
+  and state hashes, and refuses dirty or unknown git. It learns the center
+  mean/variance and invariant component gate from center loss, truth-omega
+  profiled velocity loss and gate responsibility loss. Truth
+  yaw is explicitly declared as a diagnostic forward input; truth velocity and
+  center remain loss-only. No future module is loaded.

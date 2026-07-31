@@ -2,6 +2,51 @@
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
+## 2026-07-31 profiled anonymous center/twist V14 (active)
+
+- V14 replaces residual/alternating state heads with a constrained current-state
+  estimator. For supplied omega it profiles the anonymous chassis center and
+  four window-local tracklet endpoints from
+  `p=(I-R)c+t*v+R*q`, while the common velocity has no ridge or clamp. Center
+  truth is joined independently and exists only as
+  `anchor_center_position_m - frozen_H_current_position_m` in the loss.
+- The state boundary is the original six causal history fields plus only
+  `q0_relation_m` and `q0_supported`. It has no physical ID, confidence,
+  session, motion class, absolute range, truth or future field. The center
+  carrier uses all four finite anonymous H hypotheses because validation shows
+  inferred unsupported roles improve Mean/P50; support calibrates uncertainty
+  and gates the all-unsupported case instead of deleting geometry.
+- The velocity solve now uses a Schur complement and explicitly reports minimum
+  velocity information, condition, time span, profile support, fallback support
+  and final state support. A short-arc counterexample that previously returned
+  2.6 to 194 m/s while claiming success is now rejected. Fallback is a
+  translation-only fixed-effect regression, requires at least 1 ms of visible
+  time support, and is only claimed equivariant on its supported rows.
+- H-informed profiling weakly anchors the four current endpoints to q0 as well
+  as anchoring the center. This gives shuffled/corrupted H an observable closure
+  diagnostics. A learned invariant component gate reads support, center
+  uncertainty, XY/Z profile energies and Schur information, while retaining an
+  always-available history-only branch. Its loss-only responsibility target asks
+  which component is closer to truth velocity for intact and corrupted train
+  batches; truth is never a gate input. Both component velocities and the gate
+  features remain exact under a common ramp.
+- The complete 750-window validation-only zero-update audit keeps test and all
+  future modules unopened. The all-four center error is
+  0.134/0.104/0.311 m Mean/P50/P95. With truth omega, q0 soft-center velocity is
+  0.894/0.338/3.561 m/s versus history-wide
+  1.498/0.299/6.499 and truth-center oracle 0.707/0.123/3.232. Q0 profile and
+  final-state coverage are both 100%; history-only uses explicit fallback on
+  1.47% of rows. Audit SHA-256 is
+  `3aadb3ddf624b4ee57fb7d127a10a19ecdcfecb08b64aca02fbfb59ce974b6db`.
+- Three independent read-only reviews are READY, 25 focused and 621 complete
+  Stage3 tests pass, and test remains unopened. Current step: commit the reviewed
+  implementation, prove an interrupted 25-to-100 update run is exactly
+  reproducible against an uninterrupted same-seed control, then run exactly two
+  local RTX 4060 100-update center-prior/gate screens. Each screen must report
+  intact, history-blind and cross-sample shuffled-H distributions and solver
+  coverage. Free-omega training, the learned future and user-facing scatter
+  plots remain frozen until both center screens pass.
+
 ## 2026-07-31 equivariant alternating twist V13 (rejected; next structure active)
 
 - V12 is complete and validly rejected, not an unfinished run. Its two fixed
@@ -87,11 +132,7 @@
   velocity to overall/rotation/combined Mean/P50
   0.902/0.332, 1.082/0.484 and 0.633/0.239 m/s, recovering most of the oracle
   center-prior body improvement without physical IDs, truth or future input.
-- Current step: implement a supervised anonymous center-offset distribution and
-  a profiled joint center/velocity/yaw solver. Pair canonicalization has one
-  owner; velocity is never regularized; future-position modules and scatter
-  plots remain frozen until the new state mechanism passes its zero-update and
-  double-seed gates.
+- Superseded by the active V14 profiled center/twist section above.
 
 ## 2026-07-23 cyclic-track clean physical experts (historical; superseded)
 
