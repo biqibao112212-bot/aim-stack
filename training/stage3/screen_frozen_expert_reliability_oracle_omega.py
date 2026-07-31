@@ -21,7 +21,6 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .center_offset_supervision import CenterTruthIndex
 from .cyclic_future_foundation import load_frozen_v19
 from .evaluate_profiled_center_twist_mechanism import (
     _validate_checkpoint_manifest_identity,
@@ -32,7 +31,7 @@ from .frozen_expert_reliability_fusion import (
     oracle_projection_coefficient,
     vector_huber_loss,
 )
-from .motion_truth_supervision import MOTION_TARGET_FIELD, MotionTruthIndex
+from .motion_truth_supervision import MOTION_TARGET_FIELD
 from .observable_future_pnp_ab import sha256_file, state_dict_sha256
 from .pnp_q0_hypothesis_adapter import (
     load_frozen_hypothesis_adapter,
@@ -42,12 +41,13 @@ from .profiled_center_twist_future import (
     CENTER_TWIST_FORWARD_FIELDS,
     CenterPriorProfiledTwistScreen,
 )
+from .split_scoped_truth_supervision import (
+    SplitScopedTruthIndex,
+    assert_manifest_split_shards_unchanged,
+)
 from .train_anonymous_vehicle_motion import _dataset, _json_sha256
 from .train_causal_physical_ab import _git_state, _seed, _to_device
-from .train_profiled_center_prior_screen import (
-    _assert_manifest_shards_unchanged,
-    _prepare,
-)
+from .train_profiled_center_prior_screen import _prepare
 from .train_pnp_window_mapper_distillation import _atomic_checkpoint, _atomic_json
 
 
@@ -877,14 +877,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     truth_sha = manifest["truth_history_manifest_sha256"]
     if truth_sha != parent_contract["truth_manifest_sha256"]:
         raise RuntimeError("V15-A0 truth manifest differs from parent")
-    motion_truth = MotionTruthIndex(
-        truth_path, expected_manifest_sha256=truth_sha,
+    train_truth = SplitScopedTruthIndex(
+        truth_path, split="train", expected_manifest_sha256=truth_sha,
     )
-    center_truth = CenterTruthIndex(
-        truth_path, expected_manifest_sha256=truth_sha,
-    )
-    motion_truth.attach(train_dataset, "train")
-    center_truth.attach(train_dataset, "train")
+    train_truth.attach(train_dataset)
+    validation_truth: SplitScopedTruthIndex | None = None
     mapper, _ = load_frozen_pnp_mapper(mapper_path)
     s_model, _ = load_frozen_v19(s_path)
     h_model, _ = load_frozen_hypothesis_adapter(h_path, allow_diagnostic=True)
@@ -915,6 +912,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "runner": Path(__file__).resolve(),
         "fusion": Path(__file__).with_name(
             "frozen_expert_reliability_fusion.py"
+        ).resolve(),
+        "split_truth": Path(__file__).with_name(
+            "split_scoped_truth_supervision.py"
         ).resolve(),
     }
     source_sha = {name: sha256_file(path) for name, path in source_paths.items()}
@@ -1079,8 +1079,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "reliability_state_dict_sha256": final_head_sha_before_validation,
         })
         validation_dataset = _dataset(dataset_path, "validation", sample_limit=0)
-        motion_truth.attach(validation_dataset, "validation")
-        center_truth.attach(validation_dataset, "validation")
+        validation_truth = SplitScopedTruthIndex(
+            truth_path, split="validation", expected_manifest_sha256=truth_sha,
+        )
+        validation_truth.attach(validation_dataset)
         validation_keys, validation_sessions = _combined_metadata(validation_dataset)
         validation_prepared = _cache_prepared_state(
             validation_dataset, mapper, s_model, h_model, device,
@@ -1156,12 +1158,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("V15-A0 dataset manifest changed")
     if sha256_file(truth_path / "dataset_manifest.json") != truth_sha:
         raise RuntimeError("V15-A0 truth manifest changed")
-    _assert_manifest_shards_unchanged(
-        dataset_path, manifest, label="paired dataset",
+    assert_manifest_split_shards_unchanged(
+        dataset_path, manifest, split="train", label="paired dataset",
     )
-    _assert_manifest_shards_unchanged(
-        truth_path, motion_truth.manifest, label="truth",
-    )
+    train_truth.assert_unchanged()
+    if cv_passed:
+        if validation_truth is None:
+            raise RuntimeError("V15-A0 validation truth was not scoped after claim")
+        assert_manifest_split_shards_unchanged(
+            dataset_path, manifest, split="validation", label="paired dataset",
+        )
+        validation_truth.assert_unchanged()
     if {name: sha256_file(path) for name, path in source_paths.items()} != source_sha:
         raise RuntimeError("V15-A0 implementation source changed")
     if {

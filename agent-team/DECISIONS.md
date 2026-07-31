@@ -2971,3 +2971,27 @@
   changes the result while synchronous S4/C4 relabeling does not. Any failure
   keeps formal two-seed training, validation, free omega and future position
   unauthorized.
+
+## 2026-07-31 decision 191: invalidate eager truth access and enforce split-scoped joins
+
+- Review found that the legacy motion and center truth indexes iterate every
+  manifest shard and load both train and validation truth into memory. A0
+  attached and trained only on split-keyed train records, never constructed
+  the paired validation dataset, never selected a checkpoint from validation
+  and never claimed its ledger. Its negative train-CV metrics are therefore
+  not numerically contaminated, but the declared `validation_accessed=false`
+  boundary is procedurally false. The original A0 artifact with SHA-256
+  `0e161fee2fde0b4a4c4368f13871a46b120484336935ab6e4777b8ad68968e5c`
+  is archived negative evidence only and cannot authorize A1.
+- New screens use `SplitScopedTruthIndex(root, split=...)`. Reading the shared
+  manifest is allowed, but only shards for the declared split are hashed or
+  opened. A regression fixture proves train construction succeeds while the
+  declared validation shard is deliberately absent. End-of-run integrity
+  checks likewise rehash only the split actually authorized. In A0, a
+  validation-scoped truth index can be constructed only after both train folds
+  pass and the global validation ledger has been atomically claimed.
+- The fixed A0 train-CV must be rerun from corrected clean source before A1.
+  The original validation scope remains unclaimed, so the correction consumes
+  no validation opportunity. A reproduced rejection authorizes A1 only through
+  the new result hash; an unexpected pass follows the existing one-shot ledger
+  path and blocks A1 until A0 is resolved.

@@ -82,6 +82,14 @@
   `cv_failed`; `validation_accessed=false`, no validation ledger was created,
   and test/future stayed unopened. `screen_result.json` SHA-256 is
   `0e161fee2fde0b4a4c4368f13871a46b120484336935ab6e4777b8ad68968e5c`.
+- Integrity correction: this artifact is archived evidence, not an
+  authorization source. Its paired validation dataset was never constructed
+  and no ledger was claimed, but the legacy truth-index constructors eagerly
+  hashed and loaded both train and validation truth shards before attaching
+  only train records. The train-CV numbers remain useful because validation
+  records were never joined or used, but `validation_accessed=false` was too
+  strong. A split-scoped truth index now opens only one declared split; A0 must
+  be rerun from clean corrected source before A1 can execute.
 - The failure affects the distribution body in both held-out session folds.
   Intact overall fused/parent/oracle Mean/P50 is
   `0.767/0.381`, `0.749/0.373`, `0.518/0.192` m/s in fold 0 and
