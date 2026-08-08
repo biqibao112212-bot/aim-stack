@@ -50,6 +50,10 @@ int main(int argc, char** argv) {
 
   aim_sim_bridge::AimBridgeConfig config;
   config.armor_detector_config = engine;
+  // A no-target result has no valid aim point.  Leaving the simulator gimbal
+  // untouched prevents the bridge from overriding shooting-range truth-gimbal
+  // alignment while the detector is acquiring its first valid target.
+  config.publish_no_target = false;
   config.pre_tracker_observation_sink = aim_sim_bridge::createStage3ObservationSinkFromEnv();
   auto pipeline = aim_sim_bridge::createAimPipeline(config);
   TcpImageClient images;
