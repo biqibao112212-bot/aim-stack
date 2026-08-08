@@ -1912,3 +1912,20 @@
   v77 source commit `39a2328`, and finalization compares exact sampler strategy
   and support. After the new clean commit, rerun the same fixed gate only at a
   new protected r2 root; do not promote or overwrite r1.
+
+## 2026-08-08 Windows native Autoaim B chain
+
+- [x] Native Windows Release bridge, TensorRT engine loading, TCP image input,
+  PnP/fire-control and UDP output compile and run at consumer commit
+  `fac6244`. The reusable command is
+  `scripts/bench-windows-autoaim-e2e.ps1`.
+- [x] Controlled 30-second Windows Release measurements are retained under
+  `D:\仿真\runtime\windows-autoaim-e2e-comparison-20260808`. Runtime-only
+  processing measured 139.20 FPS; enabling Stage3 measured 135.03 FPS
+  (-2.99%), with Stage3 write failures zero. This validates throughput, not
+  target tracking.
+- [ ] Effective armor observations are zero in the default scene. SDK scene
+  control accepts `create_session`, but `set_scene(shooting_range)` terminates
+  the pinned simulator Release. The simulator is read-only; require an
+  approved simulator-side investigation/release before claiming target-track
+  or trajectory-acquisition acceptance.
