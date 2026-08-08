@@ -9,9 +9,9 @@
 
 - 模拟器所有者：私有仓库 `biqibao112212-bot/daedalus-simulator`；
 - 本机只读源码位置：`D:\仿真\repos\daedalus-simulator`；
-- 当前正式 Release：`D:\仿真\releases\daedalus-simulator\1.0.1`；
+- 当前正式 Release：`D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64`；
 - 消费者版本锁：`simulator.lock.json`；
-- SDK 安装目录：`D:\仿真\releases\daedalus-simulator\1.0.1\sdk`；
+- SDK 安装目录：`D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64\sdk`；
 - 正式契约：Release 根目录 `release.json` 与 `docs/sdk-contract.json`；
 - SDK 用法：Release 内 `docs/README.md`；
 - 接口语义：Release 内 `docs/SIMULATOR_INTERFACE.md`；
@@ -24,14 +24,14 @@
 
 | 项目 | 固定值 |
 | --- | --- |
-| 模拟器 / SDK | Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0 |
-| IPC | SHM v7，ABI revision 1，元数据 76992 字节 |
-| 图像 | RGB24，1440×1080 |
+| 模拟器 / SDK | Daedalus Simulator 1.2.0 / DaedalusSimSdk 1.2.0 |
+| IPC | SHM v7，ABI revision 2，元数据 76992 字节 |
+| 图像 | TCP 默认 RGBA32，1440×1080；SHM 兼容 RGB24 |
 | 物理 | 250 Hz，单 substep |
 | 高性能采集上限 | 200 Hz；这是配置上限，不是承诺帧率 |
 | 图像数据面 | TCP 5602，latest-only |
 | 云台/发射命令 | UDP 5601 |
-| 场景控制 | `daedalus.scene-control/1`，UDP 5603 |
+| 场景控制 | `daedalus.scene-control/2`，UDP 5603 |
 | 运行时 IPC 根 | `D:\仿真\runtime` 下的任务专用目录 |
 
 跨 Windows/WSL 的 1440×1080 图像必须使用 TCP。文件三缓冲图像只用于同系统兼容调试，不能作为自瞄默认配置或性能结论。
@@ -51,7 +51,7 @@
 ### 默认高性能模式
 
 ```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.0.1
+Set-Location D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1
 ```
 
@@ -60,7 +60,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1
 ### 正常可视渲染/验收模式
 
 ```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.0.1
+Set-Location D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1 -Visible
 ```
 
@@ -82,7 +82,7 @@ target_link_libraries(my_consumer PRIVATE DaedalusSimSdk::DaedalusSimSdk)
 ```bash
 cmake -S <consumer> -B <build> \
   -DCMAKE_BUILD_TYPE=Release \
-  -DDaedalusSimSdk_DIR=/mnt/d/仿真/releases/daedalus-simulator/1.0.1/sdk/lib/cmake/DaedalusSimSdk
+  -DDaedalusSimSdk_DIR=/mnt/d/仿真/releases/daedalus-simulator/1.2.0/windows-x86_64/sdk/lib/cmake/DaedalusSimSdk
 ```
 
 可用头文件：
