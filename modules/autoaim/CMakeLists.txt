@@ -208,6 +208,14 @@ if(WIN32)
     aim_sim_auto_aim_armor_core
     DaedalusSimSdk::DaedalusSimSdk
   )
+  if(AIM_SIM_BUILD_SCENE_CONTROL_CLI)
+    add_executable(aim_sim_scene_control_cli
+      src/sim_adapter/scene_control_cli.cpp
+    )
+    target_link_libraries(aim_sim_scene_control_cli PRIVATE
+      DaedalusSimSdk::DaedalusSimSdk
+    )
+  endif()
 endif()
 
 if(UNIX)
