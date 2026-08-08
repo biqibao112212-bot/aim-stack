@@ -93,8 +93,10 @@ try {
   $arguments = @('--ipc-dir', $ipc, '--armor-engine', $engine, '--param-yaml', $params,
                  '--duration-seconds', ($WarmupSeconds + $DurationSeconds),
                  '--frame-log', (Join-Path $EvidenceRoot 'frame_events.jsonl'))
-  & $bridge @arguments *>&1 | Tee-Object -FilePath (Join-Path $EvidenceRoot 'bridge.stdout.log')
-  if ($LASTEXITCODE -ne 0) { throw "Native Windows bridge failed with exit code $LASTEXITCODE." }
+  $bridgeProcess = Start-Process -FilePath $bridge -WorkingDirectory $repo -ArgumentList $arguments -PassThru -Wait -NoNewWindow `
+    -RedirectStandardOutput (Join-Path $EvidenceRoot 'bridge.stdout.log') `
+    -RedirectStandardError (Join-Path $EvidenceRoot 'bridge.stderr.log')
+  if ($bridgeProcess.ExitCode -ne 0) { throw "Native Windows bridge failed with exit code $($bridgeProcess.ExitCode)." }
 } finally {
   if ($null -ne $simulator) { Stop-ProcessTree $simulator.Id }
 }
@@ -129,7 +131,7 @@ summary = {
   'source_sequence_gaps': seq_gaps, 'process_ms': dist([r['process_ms'] for r in records]),
   'bridge_completion_interval_ms': dist(receive_ms), 'source_capture_interval_ms': dist(capture_ms),
   'stage3_enabled': args.stage3, 'stage3_observation_lines': len(stage3_path.read_text(encoding='utf-8').splitlines()) if stage3_path.exists() else 0,
-  'raw_logs': ['frame_events.jsonl','bridge.stdout.log','simulator.stdout.log','simulator.stderr.log'],
+  'raw_logs': ['frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','simulator.stdout.log','simulator.stderr.log'],
   'scope': 'Windows Release simulator -> localhost TCP RGBA32 -> TensorRT vision/PnP/fire-control -> UDP command; Stage3 is enabled only when stated.'
 }
 try:
@@ -170,7 +172,7 @@ $index = [ordered]@{
   engine_sha256 = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash
   mode = if ($EnableStage3) { 'stage3_capture' } else { 'runtime_only' }
   reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' })
-  raw_logs = @('frame_events.jsonl','bridge.stdout.log','simulator.stdout.log','simulator.stderr.log','analyzer.stdout.log')
+  raw_logs = @('frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','simulator.stdout.log','simulator.stderr.log','analyzer.stdout.log')
   summaries = @('summary.json','PERFORMANCE_REPORT.md')
 } | ConvertTo-Json -Depth 3
 Set-Content -LiteralPath (Join-Path $EvidenceRoot 'run_index.json') -Value $index -Encoding UTF8
