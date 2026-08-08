@@ -3,6 +3,7 @@ param(
   [int]$WarmupSeconds = 5,
   [int]$DurationSeconds = 30,
   [switch]$EnableStage3,
+  [switch]$SkipSceneControl,
   [string]$EvidenceRoot
 )
 
@@ -96,11 +97,13 @@ try {
   # Metadata is published before Bevy completes scene construction.  The scene
   # service correctly rejects a set_scene while that construction is pending.
   Start-Sleep -Seconds 6
-  $sceneProcess = Start-Process -FilePath $sceneControl -WorkingDirectory $repo -ArgumentList @('--session', "windows-e2e-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))") -PassThru -Wait -NoNewWindow `
-    -RedirectStandardOutput (Join-Path $EvidenceRoot 'scene_control.stdout.log') `
-    -RedirectStandardError (Join-Path $EvidenceRoot 'scene_control.stderr.log')
-  if ($sceneProcess.ExitCode -ne 0) { throw "Scene control failed with exit code $($sceneProcess.ExitCode)." }
-  Start-Sleep -Seconds 1
+  if (-not $SkipSceneControl) {
+    $sceneProcess = Start-Process -FilePath $sceneControl -WorkingDirectory $repo -ArgumentList @('--session', "windows-e2e-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))") -PassThru -Wait -NoNewWindow `
+      -RedirectStandardOutput (Join-Path $EvidenceRoot 'scene_control.stdout.log') `
+      -RedirectStandardError (Join-Path $EvidenceRoot 'scene_control.stderr.log')
+    if ($sceneProcess.ExitCode -ne 0) { throw "Scene control failed with exit code $($sceneProcess.ExitCode)." }
+    Start-Sleep -Seconds 1
+  }
   $arguments = @('--ipc-dir', $ipc, '--armor-engine', $engine, '--param-yaml', $params,
                  '--duration-seconds', ($WarmupSeconds + $DurationSeconds),
                  '--frame-log', (Join-Path $EvidenceRoot 'frame_events.jsonl'))
@@ -121,6 +124,7 @@ p.add_argument('--root', required=True)
 p.add_argument('--warmup', type=float, required=True)
 p.add_argument('--duration', type=float, required=True)
 p.add_argument('--stage3', action='store_true')
+p.add_argument('--scene-configured', action='store_true')
 args = p.parse_args()
 root = Path(args.root)
 records = [json.loads(line) for line in (root / 'frame_events.jsonl').read_text(encoding='utf-8').splitlines() if line]
@@ -142,6 +146,7 @@ summary = {
   'source_sequence_gaps': seq_gaps, 'process_ms': dist([r['process_ms'] for r in records]),
   'bridge_completion_interval_ms': dist(receive_ms), 'source_capture_interval_ms': dist(capture_ms),
   'stage3_enabled': args.stage3, 'stage3_observation_lines': len(stage3_path.read_text(encoding='utf-8').splitlines()) if stage3_path.exists() else 0,
+  'scene_control_configured': args.scene_configured,
   'raw_logs': ['frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','scene_control.stdout.log','scene_control.stderr.log','simulator.stdout.log','simulator.stderr.log'],
   'scope': 'Windows Release simulator -> localhost TCP RGBA32 -> TensorRT vision/PnP/fire-control -> UDP command; Stage3 is enabled only when stated.'
 }
@@ -160,6 +165,7 @@ d = summary
 - Measurement: {d['measurement_seconds']} s after {d['warmup_seconds']} s warmup
 - Processed: {d['frames_processed']} frames, {d['processed_fps']:.3f} FPS
 - Stage3 enabled: {d['stage3_enabled']}; observations: {d['stage3_observation_lines']}
+- Shooting-range scene control applied: {d['scene_control_configured']}
 - Source-sequence gaps while consumer was active: {d['source_sequence_gaps']}
 - Per-frame visual pipeline ms — median {d['process_ms']['median']}, p95 {d['process_ms']['p95']}, p99 {d['process_ms']['p99']}, max {d['process_ms']['max']}
 - Completion interval ms — median {d['bridge_completion_interval_ms']['median']}, p95 {d['bridge_completion_interval_ms']['p95']}, p99 {d['bridge_completion_interval_ms']['p99']}, max {d['bridge_completion_interval_ms']['max']}
@@ -173,6 +179,7 @@ print(json.dumps(summary, indent=2))
 '@
 $args = @('--root', $EvidenceRoot, '--warmup', $WarmupSeconds, '--duration', $DurationSeconds)
 if ($EnableStage3) { $args += '--stage3' }
+if (-not $SkipSceneControl) { $args += '--scene-configured' }
 $analyzer | & $python - @args | Tee-Object -FilePath (Join-Path $EvidenceRoot 'analyzer.stdout.log')
 if ($LASTEXITCODE -ne 0) { throw "Analyzer failed with exit code $LASTEXITCODE." }
 Copy-Item -LiteralPath (Join-Path $workspace 'models\engines\windows\armor-0708-trt861-win-rtx4060-fp16.engine.benchmark.json') -Destination (Join-Path $EvidenceRoot 'engine_benchmark_reference.json')
@@ -182,7 +189,7 @@ $index = [ordered]@{
   consumer_commit = (git -C $repo rev-parse HEAD).Trim()
   engine_sha256 = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash
   mode = if ($EnableStage3) { 'stage3_capture' } else { 'runtime_only' }
-  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' })
+  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' }) + $(if ($SkipSceneControl) { ' -SkipSceneControl' } else { '' })
   raw_logs = @('frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','scene_control.stdout.log','scene_control.stderr.log','simulator.stdout.log','simulator.stderr.log','analyzer.stdout.log')
   summaries = @('summary.json','PERFORMANCE_REPORT.md')
 } | ConvertTo-Json -Depth 3
