@@ -1,25 +1,42 @@
 # aim_sim_bridge
 
-> 当前权威入口：本模块属于 `D:\仿真\repos\aim-stack` 的自瞄 B；模拟器只能来自 `D:\仿真\releases\daedalus-simulator\1.0.1`。下方保留的旧路径和旧集成说明仅用于迁移溯源，不得作为新任务入口。
+> 当前权威入口：本模块属于 `D:\仿真\repos\aim-stack` 的自瞄 B；模拟器只能来自 `D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64`，并以仓库根目录 `simulator.lock.json` 为准。下方 WSL、ROS2 和旧路径说明仅用于迁移溯源，不得作为新采集、性能测试或默认运行入口。
 
-## 当前构建与运行
+## 当前 Windows 原生模拟器链路（自瞄 B）
 
-推荐从消费者仓库根目录启动：
+自瞄 B 的正式采集已从 Windows+WSL 切换为完全 Windows：Release 模拟器、原生 `aim_sim_windows_auto_aim_bridge.exe`、localhost TCP RGBA32 1440×1080、Windows TensorRT engine 和 Stage3 JSONL 均在 Windows 进程中运行。不要通过 `wsl.exe`、`/mnt/d`、文件三缓冲或旧 `run_talos_bridge_wsl.sh` 开展新的靶场采集。
+
+目标始终在视野内的标准复现使用 Shooting Range、目标 3 与连续真值云台锁定；目标可自转：
 
 ```powershell
 Set-Location D:\仿真\repos\aim-stack
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-autoaim-e2e.ps1 `
+  -WarmupSeconds 5 -DurationSeconds 30 -EnableStage3 `
+  -InitialScene shooting_range -TruthGimbalTarget 3
+```
+
+Windows Release 1.2.1 的该条件端到端 Stage3 吞吐为 140.967 FPS；目标原始帧、逐帧 JSONL、分布图和结论边界在 `D:\仿真\runtime\SHOOTING_RANGE_TARGET_IN_VIEW_PERFORMANCE_1.2.1_20260808.md`。当前 engine 对该渲染目标仍可能报零接受检测，这不改变采集吞吐结论，也不得被表述为检测准确率验收。
+
+## 当前构建与运行
+
+推荐从消费者仓库根目录执行 Windows 原生采集：
+
+```powershell
+Set-Location D:\仿真\repos\aim-stack
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-autoaim-e2e.ps1 `
+  -WarmupSeconds 5 -DurationSeconds 30 -EnableStage3 `
+  -InitialScene shooting_range -TruthGimbalTarget 3
 ```
 
 启动器固定使用：
 
-- Release SDK：`D:\仿真\releases\daedalus-simulator\1.0.1\sdk`；
-- 模型：`D:\仿真\models\engines\armor.engine`；
-- 图像：`1440×1080 RGB24 / TCP 5602 / latest-only`；
+- Release SDK：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64\sdk`；
+- 模型：`D:\仿真\models\engines\windows\armor-0708-trt861-win-rtx4060-fp16.engine`；
+- 图像：`1440×1080 RGBA32 / localhost TCP 5602 / latest-only`；
 - 云台命令：`UDP 5601`，无需 F5 或按住空格授权；
-- 场景管理：`Scene Control v1 / UDP 5603`。
+- 场景管理：`daedalus.scene-control/2 / UDP 5603`。
 
-构建缓存不存在时，`run_talos_bridge_wsl.sh` 会按 Release SDK 和 TensorRT 配置重新生成；需要强制重配时加 `-RebuildBridge`。模型及训练资产不在 Git 中，由仓库根目录 `models/manifest.json` 校验并保护。
+Windows 原生桥的正式二进制和 engine 由上述端到端脚本校验；模型及训练资产不在 Git 中，由仓库根目录 `models/manifest.json` 校验并保护。`run_talos_bridge_wsl.sh` 只服务旧迁移路径，不能替代 Windows 原生采集。
 
 普通装甲板 PnP yaw 的阶段二（G2）修复、坐标语义、动态靶场证据和复现命令
 记录在 [docs/pnp_yaw_stage2.md](docs/pnp_yaw_stage2.md)。G2 已通过，但阶段三
@@ -151,7 +168,7 @@ The adapter subscribes to `/image_raw`, `/camera_info`, and `/tf`, and publishes
 
 ## Integrated Windows Rendering Mode
 
-For normal simulator use, prefer the integrated Talos path instead of the ROS2 node. It keeps Daedalus rendering on Windows and runs the TensorRT auto-aim bridge in WSL behind one launcher.
+This historical integrated mode is superseded for normal autoaim-B acquisition. New work must use the Windows-native command at the top of this README; this section documents the prior Windows-rendering + WSL-bridge arrangement only.
 
 Desktop shortcut:
 

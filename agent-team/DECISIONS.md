@@ -1,5 +1,12 @@
 # Aim Stack 关键决策
 
+## Windows 原生模拟器采集决策（2026-08-08）
+
+新的自瞄 B 采集和性能结论只能使用 `simulator.lock.json` 指向的 Windows Release、
+Windows 原生桥、localhost TCP RGBA32 1440×1080 与 Windows TensorRT 资产。WSL、
+`/mnt/d` 图像共享、文件三缓冲轮询和旧 WSL 启动器均为历史迁移路径，不得用于新数据
+采集。目标在视野内 Stage3 的当前参考为 140.967 FPS，复现命令由公共消费者指南规定。
+
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
 1. 模拟器与算法分为两个独立 Git 仓库；算法只能消费版本化 Release/SDK。

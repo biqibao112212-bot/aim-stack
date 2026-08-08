@@ -9,9 +9,9 @@
 
 - 模拟器所有者：私有仓库 `biqibao112212-bot/daedalus-simulator`；
 - 本机只读源码位置：`D:\仿真\repos\daedalus-simulator`；
-- 当前正式 Release：`D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64`；
+- 当前正式 Release：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64`；
 - 消费者版本锁：`simulator.lock.json`；
-- SDK 安装目录：`D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64\sdk`；
+- SDK 安装目录：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64\sdk`；
 - 正式契约：Release 根目录 `release.json` 与 `docs/sdk-contract.json`；
 - SDK 用法：Release 内 `docs/README.md`；
 - 接口语义：Release 内 `docs/SIMULATOR_INTERFACE.md`；
@@ -24,7 +24,7 @@
 
 | 项目 | 固定值 |
 | --- | --- |
-| 模拟器 / SDK | Daedalus Simulator 1.2.0 / DaedalusSimSdk 1.2.0 |
+| 模拟器 / SDK | Daedalus Simulator 1.2.1 / DaedalusSimSdk 1.2.0 |
 | IPC | SHM v7，ABI revision 2，元数据 76992 字节 |
 | 图像 | TCP 默认 RGBA32，1440×1080；SHM 兼容 RGB24 |
 | 物理 | 250 Hz，单 substep |
@@ -34,7 +34,7 @@
 | 场景控制 | `daedalus.scene-control/2`，UDP 5603 |
 | 运行时 IPC 根 | `D:\仿真\runtime` 下的任务专用目录 |
 
-跨 Windows/WSL 的 1440×1080 图像必须使用 TCP。文件三缓冲图像只用于同系统兼容调试，不能作为自瞄默认配置或性能结论。
+自瞄 B 的正式采集链路现在完全运行在 Windows：Windows Release 模拟器、Windows 原生 TensorRT 桥和 localhost TCP。禁止把 WSL、`/mnt/d` 路径、文件三缓冲图像或旧共享内存轮询作为新采集、性能结论或默认运行方式；它们只保留为历史迁移/兼容资料。
 
 ## 3. 三张原生地图与 SDK 场景名
 
@@ -51,7 +51,7 @@
 ### 默认高性能模式
 
 ```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64
+Set-Location D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1
 ```
 
@@ -60,7 +60,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1
 ### 正常可视渲染/验收模式
 
 ```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.2.0\windows-x86_64
+Set-Location D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64
 powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1 -Visible
 ```
 
@@ -79,10 +79,9 @@ target_link_libraries(my_consumer PRIVATE DaedalusSimSdk::DaedalusSimSdk)
 
 配置示例：
 
-```bash
-cmake -S <consumer> -B <build> \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DDaedalusSimSdk_DIR=/mnt/d/仿真/releases/daedalus-simulator/1.2.0/windows-x86_64/sdk/lib/cmake/DaedalusSimSdk
+```powershell
+cmake -S <consumer> -B <build> -DCMAKE_BUILD_TYPE=Release `
+  -DDaedalusSimSdk_DIR=D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64\sdk\lib\cmake\DaedalusSimSdk
 ```
 
 可用头文件：
@@ -106,12 +105,16 @@ cmake -S <consumer> -B <build> \
 7. 用 `SceneControlClient` 管理地图、靶车和能量机关状态；
 8. 模拟器真值只可用于标签和验收，严禁作为神经预测器输入。
 
-当前自瞄 B 一键入口：
+当前自瞄 B 的 Windows 原生采集/性能入口：
 
 ```powershell
 Set-Location D:\仿真\repos\aim-stack
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-autoaim-b.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-autoaim-e2e.ps1 `
+  -WarmupSeconds 5 -DurationSeconds 30 -EnableStage3 `
+  -InitialScene shooting_range -TruthGimbalTarget 3
 ```
+
+该命令使用正式 Release 1.2.1、Windows 原生 `aim_sim_windows_auto_aim_bridge.exe`、TCP RGBA32 1440×1080 和 Windows TensorRT engine；证据写入 `D:\仿真\runtime\windows-autoaim-e2e-*`。靶场采集应使用 `-InitialScene shooting_range -TruthGimbalTarget 3`，它会持续把云台光轴锁定到 3 号靶车，可允许靶车自转而不让其离开视野。当前已验证的目标在视野内 Stage3 端到端吞吐为 140.967 FPS；区间分布、原始帧和结论边界见 `D:\仿真\runtime\SHOOTING_RANGE_TARGET_IN_VIEW_PERFORMANCE_1.2.1_20260808.md`。
 
 ## 6. 模拟器修改审批门禁
 

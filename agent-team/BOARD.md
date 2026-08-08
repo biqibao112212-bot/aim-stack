@@ -1,5 +1,13 @@
 # Aim Stack 任务板
 
+## 当前公共模拟器指引
+
+- `SIMULATOR_CONSUMER_GUIDE.md` 和 `modules/autoaim/README.md` 已固定到
+  Daedalus Windows Release 1.2.1 / SDK 1.2.0，并将原生 Windows 桥 + TCP
+  RGBA32 采集链路设为自瞄 B 的唯一正式入口。WSL、`/mnt/d`、文件轮询和旧启动器
+  仅作迁移资料。目标在视野内的 Shooting Range Stage3 参考为 140.967 FPS；指南
+  已记录复现命令与证据路径。
+
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
 ## 2026-07-31 local-precision profiled F successor (oracle passed; project paused)
