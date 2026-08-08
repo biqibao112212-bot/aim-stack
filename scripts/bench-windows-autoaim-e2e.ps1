@@ -93,6 +93,9 @@ try {
     if ([DateTime]::UtcNow -gt $deadline) { throw 'Timed out waiting for Talos metadata mapping.' }
     Start-Sleep -Milliseconds 100
   }
+  # Metadata is published before Bevy completes scene construction.  The scene
+  # service correctly rejects a set_scene while that construction is pending.
+  Start-Sleep -Seconds 6
   $sceneProcess = Start-Process -FilePath $sceneControl -WorkingDirectory $repo -ArgumentList @('--session', "windows-e2e-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))") -PassThru -Wait -NoNewWindow `
     -RedirectStandardOutput (Join-Path $EvidenceRoot 'scene_control.stdout.log') `
     -RedirectStandardError (Join-Path $EvidenceRoot 'scene_control.stderr.log')
