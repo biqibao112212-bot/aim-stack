@@ -4,6 +4,10 @@ param(
   [int]$DurationSeconds = 30,
   [switch]$EnableStage3,
   [switch]$SkipSceneControl,
+  [ValidateSet('', 'armor', 'shooting_range', 'energy')]
+  [string]$InitialScene = '',
+  [ValidateRange(0, 3)]
+  [int]$TruthGimbalTarget = 0,
   [string]$EvidenceRoot
 )
 
@@ -71,6 +75,12 @@ $env:DAEDALUS_TALOS_RGB_ONLY = '1'
 $env:DAEDALUS_TALOS_CAPTURE_MAX_HZ = '200'
 $env:DAEDALUS_TALOS_IMAGE_TRANSPORT = 'tcp'
 $env:DAEDALUS_STATS_JSON = Join-Path $EvidenceRoot 'simulator.stats.json'
+$env:DAEDALUS_SCENE_MODE = $InitialScene
+if ($TruthGimbalTarget -gt 0) {
+  $env:DAEDALUS_RANGE_TRUTH_GIMBAL_TARGET_NUMBER = "$TruthGimbalTarget"
+} else {
+  Remove-Item Env:DAEDALUS_RANGE_TRUTH_GIMBAL_TARGET_NUMBER -ErrorAction SilentlyContinue
+}
 $env:AIM_SIM_RANGE_TARGET_NUMBER = '3'
 $env:AIM_SIM_RANGE_SPIN_DEG_S = '114.59156'
 $env:PATH = "$trt;$cudnn;$cuda;$opencv;$(Join-Path $release 'bin');$env:PATH"
@@ -125,6 +135,7 @@ p.add_argument('--warmup', type=float, required=True)
 p.add_argument('--duration', type=float, required=True)
 p.add_argument('--stage3', action='store_true')
 p.add_argument('--scene-configured', action='store_true')
+p.add_argument('--initial-scene', default='default')
 args = p.parse_args()
 root = Path(args.root)
 records = [json.loads(line) for line in (root / 'frame_events.jsonl').read_text(encoding='utf-8').splitlines() if line]
@@ -147,6 +158,7 @@ summary = {
   'bridge_completion_interval_ms': dist(receive_ms), 'source_capture_interval_ms': dist(capture_ms),
   'stage3_enabled': args.stage3, 'stage3_observation_lines': len(stage3_path.read_text(encoding='utf-8').splitlines()) if stage3_path.exists() else 0,
   'scene_control_configured': args.scene_configured,
+  'initial_scene': args.initial_scene,
   'raw_logs': ['frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','scene_control.stdout.log','scene_control.stderr.log','simulator.stdout.log','simulator.stderr.log'],
   'scope': 'Windows Release simulator -> localhost TCP RGBA32 -> TensorRT vision/PnP/fire-control -> UDP command; Stage3 is enabled only when stated.'
 }
@@ -166,6 +178,7 @@ d = summary
 - Processed: {d['frames_processed']} frames, {d['processed_fps']:.3f} FPS
 - Stage3 enabled: {d['stage3_enabled']}; observations: {d['stage3_observation_lines']}
 - Shooting-range scene control applied: {d['scene_control_configured']}
+- Initial simulator scene: {d['initial_scene']}
 - Source-sequence gaps while consumer was active: {d['source_sequence_gaps']}
 - Per-frame visual pipeline ms — median {d['process_ms']['median']}, p95 {d['process_ms']['p95']}, p99 {d['process_ms']['p99']}, max {d['process_ms']['max']}
 - Completion interval ms — median {d['bridge_completion_interval_ms']['median']}, p95 {d['bridge_completion_interval_ms']['p95']}, p99 {d['bridge_completion_interval_ms']['p99']}, max {d['bridge_completion_interval_ms']['max']}
@@ -177,7 +190,7 @@ Raw per-frame evidence: `frame_events.jsonl`; launch/bridge logs are indexed by 
 ''', encoding='utf-8')
 print(json.dumps(summary, indent=2))
 '@
-$args = @('--root', $EvidenceRoot, '--warmup', $WarmupSeconds, '--duration', $DurationSeconds)
+$args = @('--root', $EvidenceRoot, '--warmup', $WarmupSeconds, '--duration', $DurationSeconds, '--initial-scene', $(if ($InitialScene) { $InitialScene } else { 'default' }))
 if ($EnableStage3) { $args += '--stage3' }
 if (-not $SkipSceneControl) { $args += '--scene-configured' }
 $analyzer | & $python - @args | Tee-Object -FilePath (Join-Path $EvidenceRoot 'analyzer.stdout.log')
@@ -189,7 +202,7 @@ $index = [ordered]@{
   consumer_commit = (git -C $repo rev-parse HEAD).Trim()
   engine_sha256 = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash
   mode = if ($EnableStage3) { 'stage3_capture' } else { 'runtime_only' }
-  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' }) + $(if ($SkipSceneControl) { ' -SkipSceneControl' } else { '' })
+  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' }) + $(if ($SkipSceneControl) { ' -SkipSceneControl' } else { '' }) + $(if ($InitialScene) { " -InitialScene $InitialScene" } else { '' }) + $(if ($TruthGimbalTarget -gt 0) { " -TruthGimbalTarget $TruthGimbalTarget" } else { '' })
   raw_logs = @('frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','scene_control.stdout.log','scene_control.stderr.log','simulator.stdout.log','simulator.stderr.log','analyzer.stdout.log')
   summaries = @('summary.json','PERFORMANCE_REPORT.md')
 } | ConvertTo-Json -Depth 3
