@@ -575,7 +575,7 @@ std::string velocityHistoryJson(
         if (std::isfinite(sample.frame_yaw) && std::isfinite(current_frame_yaw) &&
             std::isfinite(sample.center_x) && std::isfinite(sample.center_y)) {
             const double relative_yaw = std::remainder(
-                sample.frame_yaw - current_frame_yaw, 2.0 * M_PI);
+                sample.frame_yaw - current_frame_yaw, 2.0 * CV_PI);
             const double c = std::cos(relative_yaw);
             const double s = std::sin(relative_yaw);
             reexpressed_x = c * sample.center_x - s * sample.center_y;
@@ -635,13 +635,13 @@ std::string cvMatJson(const cv::Mat& mat)
 std::string movementName(rm::MOVEMENT movement)
 {
     switch (movement) {
-    case rm::STATIC:
+    case rm::movement_static:
         return "static";
-    case rm::TRANSLATION:
+    case rm::movement_linear:
         return "translation";
-    case rm::SPINNING:
+    case rm::movement_spinning:
         return "spinning";
-    case rm::TRANSPIN:
+    case rm::movement_transpin:
         return "translation+spin";
     default:
         return "unknown";
@@ -1307,7 +1307,7 @@ rm::Frame makeVivsionnFrame(const SimFrame& input)
     frame.fb.gimbal_yaw = frame.poseEuler.yaw;
     frame.fb.gimbal_pitch = frame.poseEuler.pitch;
     frame.fb.yaw_speed = static_cast<float>(input.gimbal_yaw_speed_deg_s);
-    frame.fb.__reserved[0] = 1;
+    frame.fb.feedback_reserved[0] = 1;
     frame.fb.set_task_mode_telemetry(frame.fb.task_mode, frame.fb.task_mode);
     return frame;
 }

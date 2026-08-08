@@ -226,7 +226,7 @@ public:
     double v_t = 0;
     double v_r = 0;
     double v_xy = 0;
-    MOVEMENT movement = STATIC;
+    MOVEMENT movement = movement_static;
     Eigen::Vector3d _last_velocity;
     Eigen::Vector3d target_ac;
     Point2f robot_center_top_on_image;

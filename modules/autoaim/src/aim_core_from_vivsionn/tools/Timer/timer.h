@@ -1,7 +1,8 @@
-#ifndef TIMER_H
-#define TIMER_H
+#ifndef AIM_SIM_VIVSIONN_TIMER_H
+#define AIM_SIM_VIVSIONN_TIMER_H
 
 #include <time.h>
+#include <chrono>
 #include <iostream>
 #include <opencv2/opencv.hpp>
 
@@ -10,7 +11,7 @@ namespace rm
 
 using namespace std;
 using namespace std::chrono;
-using tp = std::chrono::_V2::system_clock::time_point;
+using tp = std::chrono::high_resolution_clock::time_point;
 
 class Timer
 {
@@ -56,4 +57,4 @@ public:
 
 }
 
-#endif // TIMER_H
+#endif // AIM_SIM_VIVSIONN_TIMER_H

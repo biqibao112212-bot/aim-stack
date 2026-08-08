@@ -12,9 +12,20 @@
 #include <cstdint>
 #include <limits>
 
-#define OUTPOST_ROTATE_D 553.0
+#ifdef STATIC
+#undef STATIC
+#endif
+#ifdef TRANSLATION
+#undef TRANSLATION
+#endif
+#ifdef SPINNING
+#undef SPINNING
+#endif
+#ifdef TRANSPIN
+#undef TRANSPIN
+#endif
 
-#undef EOF // 这里的EOF会与其他的EOF冲突
+#define OUTPOST_ROTATE_D 553.0
 
 using namespace std;
 
@@ -23,10 +34,10 @@ namespace rm
 
 enum MOVEMENT// 目标运动模式，用于辅助响应
 {
-    STATIC,     ///< 静止状态
-    TRANSLATION, ///< 横移
-    SPINNING,   ///< 旋转
-    TRANSPIN    ///< 平移+旋转
+    movement_static,      ///< 静止状态
+    movement_linear,      ///< 横移
+    movement_spinning,    ///< 旋转
+    movement_transpin     ///< 平移+旋转
 };
 
 enum ArmorColor
@@ -404,7 +415,7 @@ struct ControlData
     uint8_t  shot_mode = DO_NOTHING;  
     uint8_t  shot_buff_mode = SHOT_BUFF_OFF;    
     uint8_t  aiming_state = AIMMING_NO_TARGET;  
-    uint8_t  EOF = end_of_frame;
+    uint8_t  end_marker = end_of_frame;
 
     enum AIMING_STATE
     {
@@ -446,33 +457,33 @@ struct FeedBackData
     float    gimbal_yaw;    
     float    gimbal_pitch;  
     float    yaw_speed;     
-    uint8_t __reserved[3] = {0,};  // [0]: MCU fire permit flag from feedback tail.
-    uint8_t  EOF = end_of_frame;
+    uint8_t feedback_reserved[3] = {0,};  // [0]: MCU fire permit flag from feedback tail.
+    uint8_t  end_marker = end_of_frame;
 
     bool mcu_fire_permit() const
     {
-        return __reserved[0] != 0;
+        return feedback_reserved[0] != 0;
     }
 
     uint8_t raw_task_mode() const
     {
-        return __reserved[1];
+        return feedback_reserved[1];
     }
 
     uint8_t head_raw_task_mode() const
     {
-        return __reserved[1];
+        return feedback_reserved[1];
     }
 
     uint8_t head_mapped_task_mode() const
     {
-        return __reserved[2];
+        return feedback_reserved[2];
     }
 
     void set_task_mode_telemetry(uint8_t raw_task_mode, uint8_t mapped_task_mode)
     {
-        __reserved[1] = raw_task_mode;
-        __reserved[2] = mapped_task_mode;
+        feedback_reserved[1] = raw_task_mode;
+        feedback_reserved[2] = mapped_task_mode;
     }
 
     enum TASK_MODE

@@ -3,12 +3,20 @@
 # 查找 Eigen3 (必须)
 find_package(Eigen3 REQUIRED)
 
-add_library(tinympcstatic STATIC
+set(TINYMPC_SOURCES
     admm.cpp
     tiny_api.cpp
-    codegen.cpp
     rho_benchmark.cpp
 )
+
+# The code generator uses POSIX directory APIs and is not part of the
+# runtime auto-aim/MPC path.  Keep it in Unix builds, while allowing the
+# Windows runtime library to build without a compatibility shim.
+if(UNIX)
+    list(APPEND TINYMPC_SOURCES codegen.cpp)
+endif()
+
+add_library(tinympcstatic STATIC ${TINYMPC_SOURCES})
 
 set_property(TARGET tinympcstatic PROPERTY POSITION_INDEPENDENT_CODE ON)
 

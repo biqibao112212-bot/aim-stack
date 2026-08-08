@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(auto_aim_armor_bridge LANGUAGES CXX)
 
+if(MSVC)
+  # The imported auto-aim sources are UTF-8 and contain comments adjacent to
+  # declarations.  MSVC otherwise decodes them with the active ANSI code page.
+  add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/utf-8>)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -47,6 +53,10 @@ add_library(aim_sim_auto_aim_armor_core STATIC
   src/sim_adapter/sim_command.cpp
 )
 
+if(MSVC)
+  target_compile_definitions(aim_sim_auto_aim_armor_core PRIVATE _USE_MATH_DEFINES)
+endif()
+
 if(AIM_SIM_WITH_VIVSIONN_TRT)
   if(NOT CMAKE_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES 72 86 89 CACHE STRING
@@ -56,6 +66,9 @@ if(AIM_SIM_WITH_VIVSIONN_TRT)
   find_package(CUDAToolkit REQUIRED)
   find_package(yaml-cpp REQUIRED)
 
+  find_path(YAML_CPP_INCLUDE_DIR yaml-cpp/yaml.h REQUIRED)
+  find_library(YAML_CPP_LIBRARY NAMES yaml-cpp REQUIRED)
+  find_path(TENSORRT_INCLUDE_DIR NvInfer.h REQUIRED)
   find_library(TENSORRT_NVINFER nvinfer REQUIRED)
   find_library(TENSORRT_NVINFER_PLUGIN nvinfer_plugin REQUIRED)
 
@@ -79,7 +92,7 @@ if(AIM_SIM_WITH_VIVSIONN_TRT)
   )
   target_compile_definitions(aim_sim_auto_aim_armor_core PUBLIC AIM_SIM_WITH_VIVSIONN_TRT=1 AIM_SIM_FEATURE_ARMOR=1 AIM_SIM_FEATURE_BUFF=0)
   target_link_libraries(aim_sim_auto_aim_armor_core PUBLIC
-    yaml-cpp
+    ${YAML_CPP_LIBRARY}
     CUDA::cudart
     CUDA::nppc
     CUDA::nppig
@@ -95,6 +108,8 @@ endif()
 
 target_include_directories(aim_sim_auto_aim_armor_core PUBLIC
   ${AIM_SIM_PUBLIC_INCLUDE_DIR}
+  $<$<BOOL:${AIM_SIM_WITH_VIVSIONN_TRT}>:${YAML_CPP_INCLUDE_DIR}>
+  $<$<BOOL:${AIM_SIM_WITH_VIVSIONN_TRT}>:${TENSORRT_INCLUDE_DIR}>
   ${CMAKE_CURRENT_SOURCE_DIR}/src/aim_core_bridge/stubs
   ${AIM_SIM_VIVSIONN_DIR}
   ${AIM_SIM_VIVSIONN_DIR}/AngleSolver
@@ -185,6 +200,14 @@ if(UNIX)
     endif()
     add_test(NAME aim_tcp_image_receiver_test COMMAND aim_tcp_image_receiver_test)
   endif()
+endif()
+
+if(WIN32)
+  add_executable(aim_sim_windows_auto_aim_bridge src/sim_adapter/windows_talos_bridge_node.cpp)
+  target_link_libraries(aim_sim_windows_auto_aim_bridge PRIVATE
+    aim_sim_auto_aim_armor_core
+    DaedalusSimSdk::DaedalusSimSdk
+  )
 endif()
 
 if(UNIX)

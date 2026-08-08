@@ -1333,8 +1333,8 @@ void Estimator::aimTranposeTarget()
     static int trans_count = 0;
     if (v_xy >= 0.2) trans_count++;
     else trans_count = 0;
-    if (trans_count >= 5) movement = TRANSLATION;
-    else movement = STATIC;
+    if (trans_count >= 5) movement = movement_linear;
+    else movement = movement_static;
     
     double dis = _trackedArmor->armorPosition.norm();
     double predict_time_delta = dis / _bulletSpeed + _params->HORIZONTAL_DELAY_TIME + latency / 1000.0;
@@ -1362,7 +1362,7 @@ void Estimator::aimRotatingTarget(AIM_MODE aim_mode)
     double vx = _targetStateMat(EKF_CENTER_V_X);
     double vy = _targetStateMat(EKF_CENTER_V_Y);
     double linear_speed = std::hypot(vx, vy);
-    movement = linear_speed > 0.2 ? TRANSPIN : SPINNING;
+    movement = linear_speed > 0.2 ? movement_transpin : movement_spinning;
 
     double delay_time =
         _params->SPIN_DELAY_TIME_SWITCH ? _params->SPIN_DELAY_TIME_s : _params->HORIZONTAL_DELAY_TIME;

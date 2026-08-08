@@ -195,7 +195,7 @@ const char* aim_command_ctrl_mode_name(int mode)
 
 bool static_target_bypasses_second_order_mpc(const Params& params, MOVEMENT movement)
 {
-    return params.AIM_COMMAND_CTRL_MODE == 2 && movement == STATIC;
+    return params.AIM_COMMAND_CTRL_MODE == 2 && movement == movement_static;
 }
 
 std::filesystem::path resolve_firecontrol_debug_log_path()

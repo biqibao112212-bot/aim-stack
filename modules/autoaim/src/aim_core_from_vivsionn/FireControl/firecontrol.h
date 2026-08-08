@@ -49,7 +49,7 @@ struct FireControlTargetSnapshot
     Eigen::VectorXd target_state_mat = Eigen::VectorXd::Zero(9);
     int tracked_armors_num = 4;
     bool target_jumped = false;
-    MOVEMENT movement = STATIC;
+    MOVEMENT movement = movement_static;
     double state_age_s = 0.0;
     bool mcu_fire_permit = false;
     bool motion_uniform = false;
