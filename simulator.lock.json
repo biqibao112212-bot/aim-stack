@@ -1,9 +1,9 @@
 {
   "simulator": {
     "repository_relative_to_workspace": "repos/daedalus-simulator",
-    "release_relative_to_workspace": "releases/daedalus-simulator/1.2.0/windows-x86_64",
-    "version": "1.2.0",
-    "source_commit": "1f43b697705903173ced51f7da5de06f8fde0f1d",
+    "release_relative_to_workspace": "releases/daedalus-simulator/1.2.1/windows-x86_64",
+    "version": "1.2.1",
+    "source_commit": "822a386789290f2d55891ccb5f452bfe581cd4c4",
     "sdk_version": "1.2.0",
     "shm_version": 7,
     "sdk_abi_revision": 2,
