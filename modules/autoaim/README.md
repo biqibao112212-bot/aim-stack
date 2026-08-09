@@ -38,9 +38,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-auto
 
 Windows 原生桥的正式二进制和 engine 由上述端到端脚本校验；模型及训练资产不在 Git 中，由仓库根目录 `models/manifest.json` 校验并保护。`run_talos_bridge_wsl.sh` 只服务旧迁移路径，不能替代 Windows 原生采集。
 
-普通装甲板 PnP yaw 的阶段二（G2）修复、坐标语义、动态靶场证据和复现命令
-记录在 [docs/pnp_yaw_stage2.md](docs/pnp_yaw_stage2.md)。G2 已通过，但阶段三
-采集与训练仍需单独讨论和授权。
+普通装甲板 PnP yaw 的历史阶段二（G2）修复、坐标语义和动态靶场证据记录在
+[docs/pnp_yaw_stage2.md](docs/pnp_yaw_stage2.md)。当前从四角点开始的逐阶段数据处理、
+证据边界和待补缺口统一记录在
+[docs/trajectory_evidence_chain.md](docs/trajectory_evidence_chain.md)；预测器研究当前暂停。
 
 ## 当前联合性能基线
 
