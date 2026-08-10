@@ -2,7 +2,7 @@
   "schema_version": "autoaim-rmvision-ekf11-ablation-registry-v1",
   "updated_at": "2026-08-10",
   "scope": "offline oracle-identity comparison of prior camera-frame CV, world-frame CV, and a transparent rm_vision-style 11-state EKF expansion",
-  "research_state": "experiment complete; production predictor remains paused",
+  "research_state": "complete and frozen for the current data, oracle-identity, and fixed-horizon contract; production predictor remains paused",
   "authority": {
     "path": "D:\\仿真\\runtime\\rmvision-ekf11-ablation-v1-full",
     "manifest_sha256": "f79a85ce99dc67b1b927a8041bea75cbadc34f718fe579a400f9d3767712e116",
@@ -35,6 +35,18 @@
     "truth_slot_identity": "offline oracle",
     "exact_truth_arms": "explicit historical-input interventions",
     "lost_reset_gap_s": 0.12
+  },
+  "horizon_contract": {
+    "semantics": "fixed evaluation offsets from each observation anchor",
+    "horizons_s": [0.0, 0.05, 0.1, 0.2],
+    "tested_configured_distances_m": [2.2, 4.2, 6.0],
+    "distance_used_to_compute_horizon": false,
+    "projectile_speed_input": false,
+    "ballistic_solver_used": false,
+    "impact_time_evaluated": false,
+    "future_time": "anchor_time + fixed_horizon",
+    "required_future_contract": "observation time + pipeline latency + control latency + projectile time of flight",
+    "boundary": "distance and horizon are independent experiment variables; results are not distance/muzzle-speed hit-time claims"
   },
   "metric_contract": {
     "primary": "sqrt(camera_error_x^2 + camera_error_y^2), excluding camera depth z",
@@ -100,6 +112,23 @@
     "11-state factorization improves exact-input combined motion relative to world-CV but remains above 55 mm at every tested horizon",
     "combined motion needs a dedicated factorized, IMM, coordinated-turn, or multi-hypothesis model after observation and identity prerequisites"
   ],
+  "closure": {
+    "repeat_same_discussion": false,
+    "source_of_truth": [
+      "modules/autoaim/docs/corner_pnp_state_estimation_research_narrative.md",
+      "modules/autoaim/docs/ekf11_cv_ablation.md",
+      "modules/autoaim/docs/hit_oriented_ablation_registry.json",
+      "modules/autoaim/docs/ekf11_cv_ablation_registry.json",
+      "D:\\仿真\\runtime\\rmvision-ekf11-ablation-v1-full\\manifest.json"
+    ],
+    "reopen_only_if": [
+      "corner or PnP observation distribution changes",
+      "non-oracle identity or visibility/reacquisition contract changes",
+      "muzzle speed, system latency, ballistic model, and dynamic impact-time contract are defined",
+      "a new combined-motion model is introduced",
+      "high-rate or long-horizon coverage is materially expanded"
+    ]
+  },
   "retained_complete_distributions": [
     "prediction_samples.csv.gz",
     "prediction_metrics.csv",

@@ -312,3 +312,13 @@ representative_prediction_trajectories.csv
 ```text
 D:\仿真\runtime\rmvision-ekf11-ablation-v1-full
 ```
+
+## 10. 固定预测时域、距离与弹道时间的边界
+
+阶段 5/6 的 `50/100/200 ms` 都是从每个历史锚点开始的固定未来偏移，即 `future_time=anchor_time+horizon`。数据覆盖 `2.2/4.2/6.0 m`，每个距离都评测同一组时域；距离只参与分组统计，没有输入弹速，也没有计算 `distance/muzzle_speed`。因此现有结果能回答“给定固定未来时域，方法外推得怎样”，不能回答“在某一距离和弹速下，弹丸到达时能否命中”。
+
+当前 PnP 平移 camera-CV 的二维横向 P95 按距离为：2.2 m `13.8/18.7/28.8 mm`，4.2 m `18.2/29.8/45.5 mm`，6.0 m `35.9/40.1/48.3 mm`，说明距离放大仍存在；但不能把三种距离与三个预测时域一一对应。
+
+未来若进入真实火控，必须先冻结 `t_impact=t_observation+pipeline_latency+control_latency+projectile_time_of_flight` 合同。飞行时间第一近似才是距离除以弹速；含重力、阻力、姿态和移动目标时应由弹道器与预测器迭代。完成该合同前，本文的 55 mm 只保留为固定时域二维诊断线。
+
+至此，当前数据上的角点、PnP、固定时域 CV 和 11 维 EKF 研究证据完成并冻结。除非观测分布、身份/可见性合同、弹道/延迟合同、combined 模型或数据覆盖发生实质变化，否则不再重复讨论或重跑同一问题；项目事实源为本文、`ekf11_cv_ablation.md`、两个 registry 与 runtime manifest。

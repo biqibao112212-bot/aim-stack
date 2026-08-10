@@ -713,6 +713,14 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 
 307,152 条逐预测样本、77,518 条 measured-yaw join、完整分布和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\rmvision-ekf11-ablation-v1-full`，由 `ekf11_cv_ablation.md`、`ekf11_cv_ablation_registry.json` 和目录内 `manifest.json` 锁定。
 
+## 阶段 7：固定时域与 impact-time 边界，研究冻结
+
+此前全部 0/50/100/200 ms 结果采用 `future_time=anchor_time+fixed_horizon`。`2.2/4.2/6.0 m` 三种距离都使用相同预测时域；没有输入弹速，没有按距离选择 horizon，也没有运行弹道器。它们是固定时域方法对比，不是实际飞行时间命中实验。
+
+真实火控必须另行定义 `t_impact=t_observation+pipeline_latency+control_latency+projectile_time_of_flight`，并在考虑重力、阻力、姿态和移动目标后联合求解弹道与目标未来位置。在该合同建立前，不得把当前 50/100/200 ms 与某个距离一一对应，也不得把 55 mm 诊断结果称为实弹命中率。
+
+当前角点、PnP、固定时域 CV 和 11 维 EKF 研究在现有数据/identity/coverage 合同下完成并冻结。后续直接引用项目文档与 evidence registry，不再从聊天重新讨论；仅当 PnP 分布、身份/可见性、弹道/延迟合同、combined 模型或数据覆盖发生实质变化时重开。
+
 ## 下一步
 
 阶段 5 先等待用户验收。若明确继续，优先补真实板面坐标、弹道/系统延迟、非 oracle association 和高角速长时域覆盖；随后才选择 combined 的因子化/IMM/多假设模型。阶段 4 的 truth-stripped reference observer 和 A--F acceptance harness 仍未实现；在它通过前，不接入在线 `RobotEstimator`，不恢复生产预测器或 fire control。
