@@ -723,4 +723,29 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 
 ## 下一步
 
-阶段 5 先等待用户验收。若明确继续，优先补真实板面坐标、弹道/系统延迟、非 oracle association 和高角速长时域覆盖；随后才选择 combined 的因子化/IMM/多假设模型。阶段 4 的 truth-stripped reference observer 和 A--F acceptance harness 仍未实现；在它通过前，不接入在线 `RobotEstimator`，不恢复生产预测器或 fire control。
+用户随后明确要求继续研究 combined，已进入下述阶段 8。真实板面坐标、弹道/系统延迟、非 oracle association 和高角速长时域覆盖仍未补齐；阶段 4 的 truth-stripped reference observer 和 A--F acceptance harness 也仍未实现。在这些条件满足前，不接入在线 `RobotEstimator`，不恢复生产预测器或 fire control。
+
+## 阶段 8：组合运动的分段刚体因子化
+
+通用 11 维 EKF 失败后，组合运动没有继续沿“逐帧求中心再拆线速度/角速度”推进，而是直接拟合四板共享的物理轨迹：
+
+```text
+p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
+```
+
+`q_j` 保留四块板各自的半径和高度；固定 `omega` 时，整段历史只需稳健线性求解 `[c,v,C,S]`。该表达不要求每帧双板可见，单板通过时间弧更新共同相位和轨迹似然，中心保持为整窗隐变量。
+
+开发只使用 fixed-6mm generalization 的 4 个 train 和 1 个 validation combined session；封存的 `combined-04` test 未读取。5 条会话覆盖 `0.63--2.84 m/s`、`-13.80--+8.14 rad/s`、近中远距离和双向旋转。仿真平移在有限行程端点反向，因此全局轨迹是分段旋轮线，恒定段和跨反向点严格分开评分。
+
+关键证据为：
+
+1. 250 ms availability-matched 精确历史下，因子化模型在恒定段的 200 ms 3D P95 约 `0.01 mm`；同物理板 CV 的 cross-depth P95 为 `224.1/386.7/654.9 mm`。模型形式可以解释真值，CV 不可以。
+2. 当前 PnP、250 ms 历史下，oracle `omega` 刚体模型的 cross-depth P95 为 `126.4/141.1/189.8 mm`，优于单板 CV 的 `258.9/405.8/653.6 mm`，但仍未通过 55 mm。
+3. 延长到 400 ms 后，oracle `omega` 为 `96.2/99.4/121.7 mm`；P50 已为 `24.6/25.0/33.1 mm`，说明问题集中在条件相关长尾，不能只看中位数。
+4. 250 ms PnP 短窗的 `omega` 估计在远距离、`2.84 m/s`、`-1.11 rad/s` 会话只有 `58.4%` 方向正确率；低曲率短窗必须保留角速度多假设。
+5. 即使提供 truth slot、半径和瞬时板偏移，单板 center-first 的 cross-depth/depth P95 仍为 `188.7/568.9 mm`；相邻双板平均仍为 `154.1/468.8 mm`。逐帧中心恢复不应作为主更新路径。
+6. 未来跨过反向点时，精确输入下刚体模型的 cross-depth P95 为 `144.5/288.3/594.3 mm`，甚至差于 hold 的 `107.0/172.2/374.3 mm`。必须增加 endpoint/change-point 或 `{旧速度、hold、反向速度}` 多模式。
+
+下一版组合运动方法应是跨窗相位记忆 + `omega` 候选库 + 固定四板几何 + 平移反向模式，而不是再直接套一个单模态 EKF。PnP depth 和 cross-depth 还应使用不同噪声尺度，优先验证 LOS-aware 各向异性稳健拟合。
+
+完整叙事见 `combined_motion_factorization.md`。59,632 条逐预测、23,921 条中心恢复、5,118 条角速度估计、逐条件分层和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-factorization-v1-full`，由 `combined_motion_factorization_registry.json` 和目录内 `manifest.json` 锁定；manifest SHA-256 为 `385f33ece00dbfcc51e2b8d625a4c268f21c8bce52230034ae04b322d7753248`。
