@@ -1,0 +1,244 @@
+{
+  "schema_version": "autoaim-timeseries-evidence-registry-v1",
+  "updated_at": "2026-08-10",
+  "scope": "post-PnP exact-exposure joins, camera-ray u/v, event-time semantics, missingness, frame-local candidate-set changes, offline truth association, and deployable identity boundaries",
+  "research_state": "predictor and multi-hypothesis tracker work remain paused",
+  "online_observation_contract": {
+    "capture_boundary": "deep-copied complete solved-armors set after solveArmors and before trackerUpdate",
+    "observation_schema": "stage3-observation-v2",
+    "observation_key": [
+      "session_id",
+      "producer_epoch",
+      "frame_seq",
+      "timestamp_ns"
+    ],
+    "truth_schema": "stage3-truth-v1 in a separate append-only stream",
+    "truth_join": "offline exact four-field equality only; no nearest-frame or interpolation substitute",
+    "u_definition": "degrees(atan2(camera_tvec_m[0], camera_tvec_m[2]))",
+    "v_definition": "degrees(atan2(camera_tvec_m[1], camera_tvec_m[2]))",
+    "camera_axes": "OpenCV right, down, forward",
+    "valid_event": "an observation frame containing at least one finite valid camera_tvec_m",
+    "identity": "observation_index and detector attributes are frame-local; no raw field is a persistent physical armor identity"
+  },
+  "authorities": {
+    "accepted_120_run_complete_distribution": {
+      "path": "D:\\仿真\\runtime\\autoaim-b-timeseries-evidence-complete-20260810",
+      "retention_manifest_sha256": "e0b644fcc4b816f571c7e23304fb206336be32eeaabc661297c63e2a32be3815",
+      "export_script": "scripts/export-timeseries-evidence-distributions.py",
+      "export_script_sha256": "72187868ec9ad4162258037770c0d505e4832a9fc7c369efd73dbc575a539cdb",
+      "runs": 120,
+      "truth_frames": 189158,
+      "exact_truth_frames": 189041,
+      "observation_frames": 184879,
+      "full_key_join_frames": 184879,
+      "usable_exact_truth_join_frames": 184763,
+      "valid_events": 177483,
+      "detections": 250449,
+      "candidate_set_transitions": 184761,
+      "missing_streak_samples": 2974,
+      "empirical_distribution_rows": 554138
+    },
+    "historical_catalog": {
+      "path": "D:\\仿真\\runtime\\autoaim-b-timeseries-evidence-catalog-20260810",
+      "retention_manifest_sha256": "7542068c4981062418e8b9709e9799397abf59d2906ff50a625f1d2a76e9d93b",
+      "inventory_script": "scripts/inventory-timeseries-evidence.py",
+      "inventory_script_sha256": "2ebfa1cece5952ac3476f8a4dfd42caa5a3c1b3f8468a3b545d061cae2522196",
+      "selected_assets": 434,
+      "selected_files": 10453,
+      "selected_bytes": 29071372161,
+      "linked_existing_source_files": 192,
+      "linked_existing_source_bytes": 5130854778,
+      "path_references": 2839,
+      "missing_path_references": 17
+    },
+    "formal_360_event_dataset": {
+      "path": "D:\\仿真\\dataset\\autoaim-stage3-v1\\derived\\stage3-dataset-v3-20260721-r1",
+      "dataset_manifest_sha256": "8448ebe788b4a4bb5bd3803e4e64841bf39f3867f711d3198de31f1fb283ada0",
+      "qualification_report_sha256": "f839cb42f9e9abbe8f5682b015f1b984cdc418e80deba8205b715e3e46367f18",
+      "sessions": 360,
+      "samples": 185292,
+      "split_samples": {
+        "train": 111527,
+        "validation": 36297,
+        "test": 37468
+      },
+      "zero_sample_sessions": 6,
+      "test_status": "shards exist as protected assets; historical training/evaluation records state test_accessed=false"
+    },
+    "accepted_observation_analysis": {
+      "spin_retention_manifest_sha256": "70dcf15b9ed575778ed1709bda2e160cc5a1efce2a649a9b19512f42e13d262b",
+      "combined_retention_manifest_sha256": "13efbb6b183d769be30f381a76b98ce36124363ad23a972056080a1acd5b7438",
+      "observation_error_retention_manifest_sha256": "55e6e926c255d363715cddea8e21649312f22c85f33f91317de243d5885eb8fe"
+    },
+    "offline_processor_and_association": {
+      "cv_ridge_retention_manifest_sha256": "422d847db042aeea4d31a33d7ff369efb819aca3817099ec8272111d214f764d",
+      "processor_association_decision_retention_manifest_sha256": "1c20d4bdb11dcad46424e63ea9a9e48df3ab3c046e84ad21c1a35b0b2366ee8f"
+    }
+  },
+  "formal_360_distribution_navigation": {
+    "raw_observation_records": 1389655,
+    "raw_observation_bytes": 1621444269,
+    "exact_truth_records": 1393235,
+    "unavailable_truth_records": 1669,
+    "truth_bytes": 11269063685,
+    "zero_candidate_records": 429122,
+    "multiple_candidate_records": 393958,
+    "more_than_four_candidate_records": 38,
+    "invalid_armor_records": 0,
+    "tensorization_rejections": {
+      "insufficient_recent_valid_observations": 158932,
+      "missing_future_truth": 32808,
+      "ego_unstable_history": 20302,
+      "no_valid_observation_events": 14745,
+      "history_more_than_four_candidates": 8869,
+      "latest_valid_observation_too_old": 2344,
+      "anchor_more_than_four_candidates": 6
+    },
+    "point_level_authority": "the 360 raw observation/truth JSONL streams and per-session qualification entries indexed by the historical catalog"
+  },
+  "accepted_120_run_distribution_navigation": {
+    "key_integrity": {
+      "duplicate_truth_keys": 0,
+      "duplicate_observation_keys": 0,
+      "truth_frames_without_observation": {
+        "spin": 404,
+        "combined": 3875
+      },
+      "observation_frames_without_valid_candidate": {
+        "spin": 3782,
+        "combined": 3614
+      },
+      "zero_observation_runs": [
+        "combined:r1p00-d2p2-rep03",
+        "combined:r1p25-d3p5-rep04"
+      ]
+    },
+    "frame_contract_audit": {
+      "gimbal_pose_exposure_matched": 184763,
+      "gimbal_pose_exposure_mismatch": 116,
+      "tracker_world_transform_exposure_matched": 0,
+      "configured_camera_gimbal_extrinsic": 184879,
+      "position_contract": "calibrated-camera-gimbal-extrinsic-v1"
+    },
+    "candidate_count_frames": {
+      "spin": {
+        "0": 3782,
+        "1": 58166,
+        "2": 26901,
+        "3": 5094,
+        "4": 93
+      },
+      "combined": {
+        "0": 3614,
+        "1": 57592,
+        "2": 24072,
+        "3": 5187,
+        "4": 360,
+        "5": 18
+      }
+    },
+    "adjacent_frame_diagnostics": {
+      "spin": {
+        "transitions": 93976,
+        "valid_count_changed": 7311,
+        "detector_signature_changed": 15916,
+        "frame_seq_delta_greater_than_one": 16213
+      },
+      "combined": {
+        "transitions": 90785,
+        "valid_count_changed": 15258,
+        "detector_signature_changed": 28106,
+        "frame_seq_delta_greater_than_one": 16085
+      },
+      "interpretation": "these are set/cardinality and detector-signature transitions only; they do not define physical births, deaths or identity switches"
+    },
+    "valid_event_interval_ms": {
+      "spin": {
+        "p50": 7.9498,
+        "p95": 23.47511,
+        "p99": 32.752319,
+        "max": 592.187
+      },
+      "combined": {
+        "p50": 7.9347,
+        "p95": 24.048,
+        "p99": 33.13445,
+        "max": 339.4289
+      }
+    },
+    "valid_event_missing_streak_ms": {
+      "spin": {
+        "samples": 1112,
+        "p50": 16.0111,
+        "p95": 144.094815,
+        "p99": 275.184283,
+        "max": 557.9987
+      },
+      "combined": {
+        "samples": 1546,
+        "p50": 12.34335,
+        "p95": 79.7449,
+        "p99": 191.78077,
+        "max": 15021.2794
+      }
+    }
+  },
+  "event_contract_history": [
+    {
+      "id": "raw-stage3-recorder-v1-v2",
+      "status": "accepted as the raw evidence boundary",
+      "conclusion": "append-only pre-tracker unordered sets preserve zero-candidate and greater-than-four-candidate frames; queue or durable I/O failure fails the sink"
+    },
+    {
+      "id": "formal-360-collection-20260720",
+      "status": "accepted raw collection after invalid concurrent-run attempts were excluded",
+      "conclusion": "360 successful sessions are the formal broad motion/distance source; failed and invalid runtime directories remain historical evidence"
+    },
+    {
+      "id": "stage3-dataset-v2-fixed-5ms",
+      "status": "superseded and incompatible",
+      "manifest_sha256": "026cbab209884f51150f2650ab25765b095738df3196d4d398bdbc5e54e72a3c",
+      "conclusion": "index-derived 5 ms time is forbidden; v2 shards and checkpoints remain archival"
+    },
+    {
+      "id": "stage3-dataset-v3-real-event-time",
+      "status": "accepted event contract",
+      "conclusion": "latest at most 200 valid events are ordered by true timestamp and left padded; empty frames do not consume an event but their elapsed time remains in the next event timestamp"
+    },
+    {
+      "id": "stage3-dataset-v4-future-observation",
+      "status": "retained downstream A/B branch, not an active predictor task",
+      "manifest_sha256": "bbf1c18b3bfad8a184e9b2c03725e34320a56ac3dbb0077b9317b5783aab157e",
+      "conclusion": "missing exact future frames are masked, exact zero-candidate frames are visibility negatives, and greater-than-four-candidate frames are ambiguous; missing observations are never zero-valued labels"
+    },
+    {
+      "id": "accepted-120-run-uv-time-series",
+      "status": "accepted point-level evidence for current observation timing and availability",
+      "conclusion": "timestamps are irregular, source frame sequence frequently skips under latest-only delivery, candidate cardinality changes, and two combined runs contain no observation records"
+    }
+  ],
+  "identity_and_association_boundary": {
+    "offline_truth_assignment": "relative_slot is derived only after exact truth join for labeling/scoring; target_id is simulator-run-local",
+    "accepted_analysis_assignment": "one-to-one nearest image ray among positive-facing truth plates with an explicit angular gate; this is an oracle-labeling procedure",
+    "rejected_or_limited_assignments": [
+      "tracked_id, jump_flag, detector number and observation_index as physical identity",
+      "angular-only assignment without a facing constraint because opposite plates can share a camera ray",
+      "PnP-depth-only physical assignment because planar depth error can exceed slot separation",
+      "single hard cyclic identity as a safe deployment output"
+    ],
+    "observation_only_baseline_mean_accuracy": 0.5353335179682254,
+    "learned_pair_best_accuracy": 0.46184716180354846,
+    "nested_cyclic_accuracy": 0.683340524139913,
+    "nested_cyclic_end_to_end_p95_deg": 19.61568381960367,
+    "confidence_0p95_identity_accuracy": 0.6924243776211296,
+    "confidence_0p95_end_to_end_p95_deg": 10.288448983450698,
+    "current_decision": "cyclic topology is useful structure, but no single hard physical identity is accepted; the planned multi-hypothesis C4 tracker remains paused"
+  },
+  "known_gaps": {
+    "historical_missing_path_references": 17,
+    "authority": "D:\\仿真\\runtime\\autoaim-b-timeseries-evidence-catalog-20260810\\path_references.csv",
+    "notable_contract_gap": "tracker_world_transform_exposure_matched is false in every accepted 120-run observation record, so camera-frame u/v evidence cannot by itself certify an exposure-matched world transform",
+    "covariance_gap": "candidate or pose uncertainty is not calibrated and is not part of the causal event contract"
+  },
+  "retention_policy": "sample tables, exact empirical distributions, raw JSONL, shards, failed runs, invalid runs and superseded contracts are retained; summary percentiles are navigation only"
+}

@@ -1,12 +1,12 @@
 # 自瞄 B 轨迹研究证据链
 
-- 当前阶段：`2 / PnP 求解、坐标语义与整体观测轨迹`
-- 状态：`阶段 1 已验收；阶段 2 已完成证据盘点，等待阶段验收`
+- 当前阶段：`3 / PnP 后因果时间序列、缺失与身份边界`
+- 状态：`阶段 1、2 已完成；阶段 3 已完成证据盘点，等待阶段验收`
 - 日期：2026-08-10
 - 研究状态：预测器暂停；本文件只整理已有数据、处理过程、方案依据、负证据和优化边界，不授权新的预测器训练或在线接入。
 - 数据保留：原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`，均按受保护资产处理；Git 保存处理代码、字段契约、证据登记和哈希，不复制大体积数据。
 
-本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json` 和 `modules/autoaim/docs/pnp_evidence_registry.json`。
+本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json` 和 `modules/autoaim/docs/timeseries_evidence_registry.json`。
 
 ## 阶段 1：四角点观测到 PnP 输入
 
@@ -406,6 +406,226 @@ D:\仿真\runtime\autoaim-b-pnp-evidence-catalog-20260810
 | 120-run observation-error retention manifest | `55e6e926c255d363715cddea8e21649312f22c85f33f91317de243d5885eb8fe` |
 | PnP 历史目录 retention manifest | `56abca29bf3399aad3be31442bd9a261d60361b27c081290adf78c1837336742` |
 
+## 阶段 3：PnP 后因果时间序列、缺失与身份边界
+
+### 3.1 在线采集与离线 truth 连接
+
+当前在线数据和离线标签是两条不同的流：
+
+1. TCP 图像头提供 `producer_epoch`、`source_sequence/frame_seq` 和 `capture_timestamp_ns`。Windows bridge 以该 frame sequence 读取对应的云台状态和 ground-truth exposure snapshot。
+2. 图像经 detector、角点处理和 PnP 后，在 `solveArmors()` 之后、`trackerUpdate()` 之前把整帧 `solved_armors` 深拷贝给 Stage3 sink。这里没有 tracker 选择、持久 ID 或预测器输出。
+3. `stage3-observation-v2` 是追加写 JSONL；异步队列上限为 8,192 行。队列溢出或第一次持久 I/O 失败后 sink 失败关闭，不静默覆盖旧行。
+4. truth 另写 `stage3-truth-v1`。只有 ground truth 和 exposure state 的 frame sequence、timestamp 都与图像头相等时，`has_exact_exposure_truth=true`；否则仍保留同键不可用记录，而不是拿相邻 truth 代替。
+5. 离线只允许用 `session_id + producer_epoch + frame_seq + timestamp_ns` 四字段完全相等连接。禁止 nearest frame、插值、仅 timestamp、仅 frame sequence 或跨 producer epoch 连接。
+
+对应实现：
+
+- observation sink：`modules/autoaim/src/aim_core_bridge/stage3_capture.cpp`
+- 图像头、云台和 truth 读取：`modules/autoaim/src/sim_adapter/windows_talos_bridge_node.cpp`
+- 字段契约：`modules/autoaim/docs/stage3_data_contract.md`
+- 120-run 逐样本导出：`scripts/export-timeseries-evidence-distributions.py`
+
+正式 120-run 证据有 189,158 个 truth 记录，其中 189,041 个 `has_exact_exposure_truth=true`。184,879 个 observation 记录全部能找到相同四字段键，但只有 184,763 个同时具有可用 exact truth。历史 `analysis_summary.json` 中的 `exact_join_rows` 实际是四字段键相交数，不能自动解释成可用 exact-truth 数；本轮已把两者拆为 `full_key_join_frames` 和 `usable_exact_truth_join_frames`。
+
+两条流都没有重复键。原分析也记录 truth/observation 的 sequence 和 timestamp regression 均为 0。仍需保留的质量标志是：184,763 个 observation 标记 `gimbal_pose_exposure_matched=true`，116 个为 false；全部 184,879 行都使用配置内 camera-gimbal extrinsic 和 `calibrated-camera-gimbal-extrinsic-v1` position contract，但 `tracker_world_transform_exposure_matched` 全为 false。因此这批数据足以定义 camera-frame `u/v`，却不能单靠该字段证明 world-transform exposure match；tracker-frame位置合同的独立验证仍应引用阶段 2 的 coordinate provenance。
+
+### 3.2 `u/v` 的唯一含义
+
+轨迹处理中的 `u/v` 不是 detector center，也不是像素坐标：
+
+```text
+camera_tvec_m = [x_right, y_down, z_forward]
+u = atan2(x_right, z_forward)
+v = atan2(y_down, z_forward)
+```
+
+离线文件以 degree 保存，处理器内部可以使用 degree 或 radian，但必须显式标单位。由此得到的射线为 `[tan(u), tan(v), 1]` 归一化值；最终角误差是两条三维单位射线的夹角，不是简单把 `du/dv` 欧氏距离永远当球面角。
+
+`u/v` 选择 camera tvec 而不是 tracker position 有两个依据：
+
+1. 它直接来自当前 PnP 的 camera-frame 平移，不依赖尚未被该帧 audit flag 证明的 world transform。
+2. 它保留图像射线方向，使阶段 2 已观察到的“角度较准、深度长尾很大”可以被拆开处理；若直接压成 tracker 3D 欧氏误差会混淆角向和深度风险。
+
+完整 `u/v` 权威位于 `detection_uv_samples.csv`：250,449 条 raw candidate 均逐条保留 frame key、帧内 observation index、detector 字段、camera XYZ、u/v、yaw 和 reprojection 字段。本轮没有发现 invalid tvec，但这不允许未来 schema 删除 valid/null 检查。
+
+### 3.3 帧、有效事件和真实时间
+
+必须区分三个层级：
+
+| 层级 | 定义 | 是否进入 causal history |
+| --- | --- | --- |
+| truth exposure frame | bridge 收到并写出的图像曝光/truth 记录 | 不直接作为在线输入 |
+| observation frame | Stage3 sink 写出的一整帧 armors，可为空 | 空帧不形成有效事件 |
+| valid event | 至少一个 `valid=true` 且 finite `camera_tvec_m` 的 observation frame | 进入事件历史 |
+
+在 120-run 中：
+
+- truth frame：189,158；observation frame：184,879；valid event：177,483。
+- spin 有 404 个 truth 帧没有 observation 记录，另有 3,782 个 observation 空候选帧。
+- combined 有 3,875 个 truth 帧没有 observation 记录，另有 3,614 个 observation 空候选帧；其中两轮完全没有 observation，必须继续计入 availability 分母。
+- frame sequence 经 latest-only 图像链可以跳号。相邻 observation transition 中，spin/combined 分别有 16,213/16,085 次 `frame_seq_delta>1`；因此禁止按 frame index 假设固定采样周期。
+
+当前接受的 `stage3-dataset-v3` 事件合同为：
+
+- 最近最多 200 个 valid events，按真实 timestamp 排序并右对齐；左侧 padding 的 mask 为 false。
+- `event_time_s = observation_timestamp - anchor_timestamp`，不构造 5 ms 网格，不用 event index 推时间。
+- 空候选或 invalid frame 不占事件槽，但到下一有效事件的真实时间差仍保留，所以缺失不能被压缩掉。
+- 任一 contributing span 出现超过 4 candidates 时拒绝整段；实时门禁仍要求最近 0.2 s 至少 8 个有效事件、最新有效事件年龄不超过 50 ms。
+- train-only event dropout 是下游历史增强，不改变 raw evidence；违反实时门禁时必须回退该增强。
+
+旧 `stage3-dataset-v2` 的固定 5 ms 合同已被明确取代，不能把 v2 shard/checkpoint 伪装成 v3 兼容数据。v2 资产继续保留用于解释历史结果。
+
+### 3.4 360-session 正式数据对事件合同的证据
+
+2026-07-20 的正式数据包含 360 个成功的 30 s session，按 stationary/linear/spin/combined、距离、速度和方向分层。无效的并发 runner 尝试、首轮低吞吐 smoke 和其修复过程仍在 runtime 历史目录中，但不进入 360-record master manifest。
+
+360-session raw 流的完整规模为：
+
+- 1,389,655 条 observation records，1,621,444,269 bytes。
+- 1,393,235 条 exact truth records，另有 1,669 条 unavailable truth records；truth 共 11,269,063,685 bytes。
+- 429,122 个 zero-candidate records、393,958 个 multiple-candidate records、38 个 `>4` candidate records、0 个 invalid-armor records。
+- v3 最终产生 185,292 个 samples，按 session 独立分成 111,527 train、36,297 validation、37,468 test；360 个 session 中 6 个保持 zero-sample，1.67% 低于当时预注册的 10% 门槛。
+
+主要 tensorization exclusion 也完整保留：`insufficient_recent_valid_observations=158,932`、`missing_future_truth=32,808`、`ego_unstable_history=20,302`、`no_valid_observation_events=14,745`、`history_more_than_four_candidates=8,869`、`latest_valid_observation_too_old=2,344`、`anchor_more_than_four_candidates=6`。这些是窗口拒绝计数，不是可拿零填充的训练标签。
+
+权威不是上述总数，而是 360 个 raw JSONL、每 session qualification record、185,292 个 shard sample 和 manifest 哈希。`qualification_report.json` 保留每个 session 的记录数、空候选、候选数、exact truth、排除原因和 tau 误差。
+
+### 3.5 完整的时间间隔与缺失分布
+
+本轮新增无损导出：
+
+```text
+D:\仿真\runtime\autoaim-b-timeseries-evidence-complete-20260810
+```
+
+- `frame_availability_samples.csv`：189,158 个 truth-frame 基准行，逐行记录 observation 是否存在、candidate 数、valid-event 状态、时间间隔和曝光匹配标志。
+- `valid_event_interval_samples.csv`：177,483 个有效事件及其前序有效事件真实间隔。
+- `missing_streak_samples.csv`：2,974 个连续缺失段，分别标记 `observation_frame` 与 `valid_event` 两层、起止键、帧数、时长和右截断。
+- `empirical_distributions.csv`：554,138 个精确排序值，含 sample key、rank、CDF 和 survival；任何分位数只作导航。
+- `run_summary_samples.csv`：120 轮逐轮 availability，不删除两轮零观测失败。
+
+有效事件间隔的 P50/P95/P99/max 为：spin `7.95/23.48/32.75/592.19 ms`，combined `7.93/24.05/33.13/339.43 ms`。但间隔分位数不能替代缺失段：valid-event missing streak 的 P95/P99/max 为 spin `144.09/275.18/558.00 ms`，combined `79.74/191.78/15021.28 ms`；combined 最大值由零观测运行形成。
+
+这说明典型帧间隔接近 8 ms，与“会出现数百毫秒甚至整轮缺失”并不矛盾。只用平均 FPS 或 P50 interval 无法定义观测器的 timeout、reacquisition 和安全回退。
+
+### 3.6 相邻候选集合变化
+
+原始事实源是每帧完整候选集合，而不是“一个已经跟好的物理板”。120-run 中 observation frame 的 valid candidate 数完整频数为：
+
+| motion | 0 | 1 | 2 | 3 | 4 | 5 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| spin | 3,782 | 58,166 | 26,901 | 5,094 | 93 | 0 |
+| combined | 3,614 | 57,592 | 24,072 | 5,187 | 360 | 18 |
+
+combined 的 18 个五候选帧是 raw 证据；它们不能进入最大四候选的 v3 contributing span，但不能从历史目录删除。
+
+`candidate_set_transition_samples.csv` 保存 184,761 个相邻 observation transitions：
+
+- spin 93,976 次 transition 中，7,311 次 valid count 改变，15,916 次 detector number/color/type 多重集合签名改变。
+- combined 90,785 次中，15,258 次 valid count 改变，28,106 次 detector 签名改变。
+
+这些只能称为集合基数或 detector-signature 变化。`observation_index` 每帧从 0 重新分配，detector number 可能误分类，集合签名相同也不证明是同一物理板；因此本阶段没有从这些行伪造 birth/death 或 physical-ID switch。
+
+### 3.7 truth 物理槽位只用于离线标签和评分
+
+离线 truth 的 `relative_slot=0..3` 是 target-local 物理槽位。使用它之前必须：
+
+1. 四字段 exact join；
+2. 在本 run/frame 内选择目标 3 的完整四板目标；`target_id` 只在 simulator run 内有效；
+3. 将 truth 板中心转换到 exposure camera frame；
+4. 在 truth-only 标签侧执行一对一 assignment。
+
+历史 assignment 方案的边界为：
+
+- angular-only 最近射线曾用于早期复现，但对面板可能落在接近相同的 camera ray，不能作为安全物理身份。
+- PnP 3D 最近邻使用完整深度，但阶段 2 已证明平面深度误差可大于板间距，也不能天然保证身份。
+- 当前 120-run accepted analysis 使用“所有正 facing truth plates 中的最近 image ray + 0.75° gate + 一对一约束”，并保留 second-best margin。它是 oracle-labeling 方法，不是部署 associator。
+- 旧 angular-only 物理槽位和 observation-only polynomial 结果被修正版覆盖，但原输出继续保留。
+
+truth phase、relative slot、target pose、future truth 都禁止作为在线 observation processor 或 associator 输入。即使一个分析只在分组阶段用了 truth slot，其结果也只能称为 oracle-identity upper bound。
+
+### 3.8 observation-only 关联实验
+
+部署关联实验在 runtime 输入侧去掉 truth，再在整轮结束后用 truth 做评分：
+
+| 方案 | 结果 | 当前判定 |
+| --- | ---: | --- |
+| 简单 u/v CV hard tracks | mean mapping accuracy 0.535 | 基线，身份尾部不可接受 |
+| learned independent pair cost | best accuracy 0.462 | 拒绝；高 purity 主要来自丢检测 |
+| nested cyclic segment rule | accuracy 0.683，associated fraction 0.974 | 接受 cyclic topology 为结构证据，不接受 hard ID 部署 |
+| cyclic hard ID + CV/Ridge | identity-correct P95 0.287°，全链 P95 19.62° | 灾难性错身份尾部，拒绝部署 |
+| confidence >=0.95 | coverage 0.466，identity accuracy 0.692，全链 P95 10.29° | confidence threshold 不能修复 hard-ID tail |
+
+因此“PnP 后 u/v 可以做良好的局部时间处理”和“系统知道它是哪块物理板”是两个不同命题。离线 CV+Ridge 在身份正确时的 P95/P99 为 `0.310/0.717°`，但旧 hard association 的全链 P95 为 `14.50°`。多假设 C4 belief tracker 是历史上提出的下一结构，却已按用户要求暂停，本阶段不实现。
+
+### 3.9 v4 future-observation 与缺失标签负证据
+
+历史 `stage3-dataset-v4-observation` 增加 future observation position、per-slot mask、frame-availability 和 ambiguous mask。其缺失语义仍值得保留：
+
+- future timestamp 必须精确命中原始 observation；不允许 nearest/interpolation。
+- 缺失 exact future frame 时 observation loss 整体 mask。
+- exact frame 存在但 zero candidate 时，这是显式 visibility negative，不是位置 `[0,0,0]`。
+- `>4` candidate future frame 标记 ambiguous，不能强行配成四个 truth slots。
+
+v4/v5 的网络 learnability 争论属于下游预测器历史；本阶段只继承上述数据语义，不恢复训练，也不把某次 future-observation 网络结果当成当前观测器方案。
+
+### 3.10 历史文件目录和复现缺口
+
+文件级目录：
+
+```text
+D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
+```
+
+目录覆盖 434 个资产、10,453 个直接文件、29,071,372,161 bytes，并追踪 192 个当前存在的外部源文件、5,130,854,778 bytes。范围包括：
+
+- 360-session formal raw observation/truth 与 master evidence；
+- 被取代的 v2、接受的 v3 和 v4 observation datasets/shards；
+- 独立 observation-v3 采集；
+- 采集吞吐、temporal/future-query/trajectory 实验；
+- 120-run accepted/invalid raw roots、完整分布、离线 processor 和 association 尝试。
+
+仍有 17 个真实缺失引用：16 个历史 `training/stage3` 分析/构建/测试源和 1 个早期 screen-corner result。它们逐项记录在 `path_references.csv`；相应 manifest/output 仍可作为历史证据，但不得声称从当前 Git 完整重放。
+
+### 3.11 本阶段结论
+
+1. PnP 后在线事实源是无序、逐曝光、可为空且候选数可变的 frame-local 集合；不是四条已经有物理 ID 的等频轨迹。
+2. exact exposure 必须拆成“键相等”和“truth 可用”两层。本轮 184,879 个键连接中有 184,763 个可用 exact truth；相邻帧补齐仍被禁止。
+3. `u/v` 是 camera tvec 射线角，显式分离角向轨迹与深度长尾。detector center、tracker 位置和 image pixel 不能无说明混用为同一 `u/v`。
+4. 真实事件时间不均匀且 frame sequence 经常跳号；v3 的 timestamp/event-mask 合同正确取代固定 5 ms 网格。
+5. 空 observation、zero-candidate frame、invalid candidate、`>4` ambiguous frame、长缺失段和整轮零观测是不同 failure modes，必须分别保留和处理。
+6. 候选集合变化频繁，但 frame-local index/signature 不能定义物理 birth/death。truth slot assignment 只允许离线标签/评分。
+7. cyclic topology 提升 observation-only association，但单一 hard identity 仍产生十几度尾部；当前没有可部署身份方案，预测器和 belief tracker 继续暂停。
+
+### 3.12 依据现有证据保留的优化空间
+
+以下是证据指出的缺口，不是本轮开始实施的新方案：
+
+1. 观测器接口应原生接收真实 timestamp、可变集合和 validity/missing reason；禁止在输入边界先重采成固定帧率并丢弃 gap。
+2. timeout/reacquisition 不能只按平均 FPS 设定，应在逐 run、逐 motion 的完整 missing-streak 分布上验收，并显式覆盖整轮无观测。
+3. 若未来需要 tracker/world frame 精确审计，采集端应正确填充并验收 `tracker_world_transform_exposure_matched`；当前 120-run 该标志全 false，不能用 camera-frame证据冒充 world-transform 证据。
+4. `>4` candidates 不应静默裁成 4 个；可保留全集合并标 ambiguous，或在上游定义可解释 admission。当前 v3 的窗口拒绝是安全基线。
+5. 未来 identity 模块必须输出 permutation/phase 概率或 top-k，而不是单一未经校准的 ID；验收应包含 top-k coverage、NLL/Brier、reacquisition、拒绝覆盖率和全链尾部。
+6. candidate/pose covariance 仍未校准。观测器若使用自适应 R，应以角点模式、候选间距、几何条件、缺失和 empirical residual 校准，不能把 detector confidence 直接当位置概率。
+7. 16 个历史 time-series 生成源缺失。需要复做相应结论时，应按 manifest 输入/输出/hash contract 重写并做 parity，而不是猜测旧代码。
+
+### 3.13 本阶段主要哈希
+
+| 对象 | SHA-256 |
+| --- | --- |
+| `stage3_data_contract.md` | `ae06ac53054a1e101eed8952388af2ac84e020637474101163a31e913cf9ae05` |
+| `stage3_capture.cpp` | `0c4f8982792209b80f817ce9807e73df3fc319ae540b983f785207eced7fefec` |
+| `windows_talos_bridge_node.cpp` | `f45055d50832a725953d8d63945a6c7ffec79871d37bd07b87c7598dc9558cbc` |
+| `stage3-dataset-v2-20260720-r5/dataset_manifest.json` | `026cbab209884f51150f2650ab25765b095738df3196d4d398bdbc5e54e72a3c` |
+| `stage3-dataset-v3-20260721-r1/dataset_manifest.json` | `8448ebe788b4a4bb5bd3803e4e64841bf39f3867f711d3198de31f1fb283ada0` |
+| v3 `qualification_report.json` | `f839cb42f9e9abbe8f5682b015f1b984cdc418e80deba8205b715e3e46367f18` |
+| v4 observation `dataset_manifest.json` | `bbf1c18b3bfad8a184e9b2c03725e34320a56ac3dbb0077b9317b5783aab157e` |
+| 120-run 完整分布 `retention_manifest.json` | `e0b644fcc4b816f571c7e23304fb206336be32eeaabc661297c63e2a32be3815` |
+| time-series 历史目录 `retention_manifest.json` | `7542068c4981062418e8b9709e9799397abf59d2906ff50a625f1d2a76e9d93b` |
+| observation-error retention manifest | `55e6e926c255d363715cddea8e21649312f22c85f33f91317de243d5885eb8fe` |
+| CV+Ridge replay retention manifest | `422d847db042aeea4d31a33d7ff369efb819aca3817099ec8272111d214f764d` |
+| processor/association decision retention manifest | `1c20d4bdb11dcad46424e63ea9a9e48df3ab3c046e84ad21c1a35b0b2366ee8f` |
+
 ## 下一步
 
-阶段 2 先等待用户验收。验收后再进入阶段 3：只梳理 PnP 后观测如何形成因果时间序列，包括 exact-exposure join、`u/v` 定义、缺失/间断、相邻集合变化、离线物理槽位与部署关联边界；预测器继续保持暂停。
+阶段 3 先等待用户验收。验收后可进入阶段 4：只把前三阶段证据收敛成观测器输入、状态、不确定性、gating、timeout/reacquisition 和验收矩阵；不恢复轨迹预测器或多假设 tracker 实现。
