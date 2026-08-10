@@ -1,0 +1,221 @@
+{
+  "schema_version": "autoaim-pnp-evidence-registry-v1",
+  "updated_at": "2026-08-10",
+  "scope": "planar PnP candidates, yaw and translation semantics, camera-gimbal-tracker conversion, single-frame correction attempts, and full observed trajectory behavior",
+  "research_state": "predictor and multi-hypothesis tracker work remain paused",
+  "retention_policy": "accepted, rejected, superseded, invalid and failed experiments are retained; a summary or percentile never replaces point-level data and file hashes",
+  "current_production_contract": {
+    "translation_solver": "OpenCV solvePnPGeneric SOLVEPNP_IPPE over refined-or-fallback bl/tl/tr/br corners; candidates are sorted by reprojection RMS and candidate 0 is selected",
+    "translation_representation": "selected free_ippe_refined camera-frame tvec, converted from millimetres through the calibrated camera-to-gimbal-to-tracker SE(3) chain",
+    "yaw_solver": "ordinary-armor tracker/chassis yaw with fixed +15 degree tilt projected through the exposure-matched optical pose",
+    "serialized_stage3_fields": [
+      "position_m",
+      "camera_tvec_m",
+      "yaw_rad",
+      "yaw_absolute_rad",
+      "reprojection_rms_px",
+      "reprojection_max_px"
+    ],
+    "coordinate_contract": "modules/autoaim/src/aim_core_from_vivsionn/AngleSolver/COORDINATE_CONTRACT.md",
+    "coordinate_contract_sha256": "20524740ba659b5c755806be9f1033cce34156f1a04f022489616de0593eb841"
+  },
+  "authorities": {
+    "historical_file_catalog": {
+      "path": "D:\\仿真\\runtime\\autoaim-b-pnp-evidence-catalog-20260810",
+      "retention_manifest_sha256": "56abca29bf3399aad3be31442bd9a261d60361b27c081290adf78c1837336742",
+      "selected_top_level_assets": 421,
+      "selected_runtime_files": 11015,
+      "selected_runtime_bytes": 23124946682,
+      "linked_existing_source_files": 542,
+      "linked_existing_source_bytes": 3878007922,
+      "missing_path_references": 60,
+      "script": "scripts/inventory-pnp-evidence.py",
+      "script_sha256": "23b5e72444d05ea17360e91540f2a998fd15b1fea7e50862c82c6c389d59de17"
+    },
+    "paired_pnp_truth_distribution": {
+      "path": "D:\\仿真\\runtime\\stage3-pnp-trajectory-distribution-v1-full-r4",
+      "manifest_sha256": "7b7c1d3f83ac6435041bcc37de0aa847b5699c2a08f1f56f379f93f7d6f4759a",
+      "sessions": 56,
+      "paired_pnp_truth_rows": 180289,
+      "visible_truth_rows": 188797,
+      "selected_arm": "free_ippe_refined"
+    },
+    "observation_trajectory_stability": {
+      "path": "D:\\仿真\\runtime\\stage3-observation-trajectory-stability-v1-r1",
+      "manifest_sha256": "6b7c97ba5596f9c9ac5254485a0b54b943614620493cc906b74a5c0ac188b8b1",
+      "source_sessions": 56,
+      "spatial_session_pairs": 16,
+      "phase_curve_session_pairs": 8,
+      "pure_spin_interval_rows": 61629
+    },
+    "accepted_120_run_observation_matrix": {
+      "path": "D:\\仿真\\runtime\\autoaim-b-method-selection-accepted-radii-20260809T080000Z",
+      "runs": 120,
+      "usable_observation_histories": 118,
+      "spin_error_samples": 117558,
+      "combined_error_samples": 112240,
+      "observation_error_manifest_sha256": "55e6e926c255d363715cddea8e21649312f22c85f33f91317de243d5885eb8fe",
+      "method_evidence_manifest_sha256": "94a213cd5c0ea743fcbbf03ad043d0383623a36e5c0995ba8fabd4f7820c3b53"
+    }
+  },
+  "experiment_families": [
+    {
+      "id": "initial-yaw-and-tracker-field-audit-20260719",
+      "category": "historical field-semantics diagnostic",
+      "status": "superseded as a physical-identity analysis",
+      "finding": "tracked_id and jump_flag changed far faster than a physical quarter-turn and therefore could not be treated as ground-truth armor identity",
+      "evidence": "D:\\仿真\\runtime\\pnp-yaw-spin-analysis-20260719.json"
+    },
+    {
+      "id": "pnp-yaw-g2-coordinate-repair-20260719",
+      "category": "production yaw coordinate repair",
+      "status": "accepted and retained in production",
+      "finding": "the ordinary-armor +15 degree tilt belongs to tracker/chassis coordinates and must be projected through the exposure optical pose; synthetic recovery error was below 0.1 degree",
+      "document": "modules/autoaim/docs/pnp_yaw_stage2.md",
+      "document_sha256": "22141bbfaf4b086081ff851615f2217ff91f328618abae6c7b8b55d2298c5683",
+      "summary_path": "D:\\仿真\\runtime\\pnp-chassis-pose-summary-20260719.json",
+      "summary_sha256": "ee17c0bcb2e27e73fa3a801074f4e89076260454bc9896d01ca2900687f0184a"
+    },
+    {
+      "id": "joint-pnp-ab-20260719",
+      "category": "joint yaw and tvec diagnostic",
+      "status": "not adopted",
+      "finding": "joint refined only slightly reduced reprojection residual and did not consistently improve temporal increments; the raw-corner arm lowered residual further but worsened temporal tails",
+      "yaw_sensitivity_p50_deg_per_px_by_distance": {
+        "3m": 3.7345,
+        "5m": 5.3313,
+        "7m": 6.5846
+      },
+      "summary_path": "D:\\仿真\\runtime\\pnp-joint-ab-summary-20260719.json",
+      "summary_sha256": "395fbcc9d302a71624eefc91cc8282dd21ed4b5bba132207a47b846fce55b8ab"
+    },
+    {
+      "id": "pnp-history-state-and-pose-adapter-20260721-20260723",
+      "category": "downstream current-state reconstruction, not a PnP solver change",
+      "status": "held-out state A/B failed; later same-session capacity result remained diagnostic, and Module A was superseded by later clean-physics work",
+      "documents": [
+        "modules/autoaim/docs/stage3_pnp_state_ab.md",
+        "modules/autoaim/docs/stage3_pnp_pose_adapter.md"
+      ],
+      "boundary": "truth-derived labels were training/evaluation only; no future work is resumed by this registry"
+    },
+    {
+      "id": "real-pnp-frozen-f-and-adapter-chain-20260726-20260727",
+      "category": "downstream robustness experiments",
+      "status": "direct substitution and external correction were rejected; dual-domain F was retained as diagnostic only",
+      "findings": [
+        "direct real-PnP substitution raised conditional P95 from 5.63 to 1350.31 mm for translation, 25.40 to 368.06 mm for rotation, and 81.04 to 937.01 mm for combined motion",
+        "a true observation mapper reduced combined current P95 from 179.51 to 120.40 mm but frozen-chain conditional P95 remained 536.82 mm",
+        "the diagnostic PnP-domain F reached conditional P50/P95/P99 39.70/215.85/537.76 mm but retained oracle association and adaptive-validation limitations"
+      ]
+    },
+    {
+      "id": "pnp-coordinate-provenance-20260801",
+      "category": "camera-to-tracker contract audit",
+      "status": "accepted coordinate evidence",
+      "finding": "the exact position contract closes numerically; historical large raw-PnP percentiles are reproduced by omitting R_gimbal_pose_to_tracker from the truth label",
+      "rows": 15676,
+      "position_contract_residual_p50_m": 1.7654906792904042e-10,
+      "position_contract_residual_p99_m": 8.549290135299306e-8,
+      "summary_path": "D:\\仿真\\runtime\\stage3-pnp-coordinate-provenance-20260801\\summary.json",
+      "summary_sha256": "07f1e11e9ff2c416651d5d3ce886956ff62ad5e1da17805954fff4e7850b77fc"
+    },
+    {
+      "id": "pnp-measurement-manifold-feature-audit-20260801",
+      "category": "current-frame correction feature audit",
+      "status": "accepted as evidence against identity-plus-small-noise; no correction model selected",
+      "finding": "leave-one-session-out P50/P95/P99 improved from 304/1780/3069 mm for raw PnP to 146/517/943 mm with corners, both candidates and reprojection features, but tails remained too large and same-session splits were over-optimistic",
+      "path": "D:\\仿真\\runtime\\stage3-pnp-feature-audit-20260801-v2"
+    },
+    {
+      "id": "corner-to-pose-and-fixed-tilt-20260801-20260806",
+      "category": "pose sensitivity and constrained-solver alternatives",
+      "status": "mechanism evidence; no universal replacement selected",
+      "findings": [
+        "exact projected corners reproduce the target pose to numerical precision",
+        "actual raw/refined free-IPPE errors are heavy-tailed and controlled 1 px short-edge modes can create large depth errors",
+        "known-tilt raw improved 61.7 percent inside its workspace but refined improved only 47.0 percent, so benefits depend on error direction and geometry"
+      ]
+    },
+    {
+      "id": "single-frame-correction-observability-20260806",
+      "category": "constant, linear and quadratic correction probes",
+      "status": "not deployed",
+      "finding": "fixed bias and support-domain linear structure exist, but two-session conditional models failed session transfer and nonlinear models overfit",
+      "manifest_path": "D:\\仿真\\runtime\\stage3-pnp-correction-observability-independent-20260806-r1\\manifest.json",
+      "manifest_sha256": "e32b457b6a870c5e34ede6d677286ad718e0b753b4e467387f198c935d5a2fcb"
+    },
+    {
+      "id": "distance-yaw-geometry-grid-20260806",
+      "category": "controlled distance and view-yaw coverage",
+      "status": "accepted descriptive evidence; no correction selected",
+      "finding": "position tails grow with range, image-center residual grows with obliquity, and the relationship is not a simple monotonic yaw function; the 6.2 m, 75 degree condition also lost detection coverage",
+      "manifest_path": "D:\\仿真\\runtime\\stage3-pnp-correction-geometry-grid-v1-grid-summary-r3\\manifest.json",
+      "manifest_sha256": "07165f782d28d6b68dfb6f49390d5539f3e44bf0ddf7908ff22e494d733278b9"
+    },
+    {
+      "id": "selected-pnp-distortion-recoverability-20260806",
+      "category": "cross-session invertibility and collision audit",
+      "status": "bounded negative evidence",
+      "finding": "nearby selected-PnP XYZ values can map to materially separated truth positions; the strongest conditioned inverse used oracle phase/slot/rate and is not deployable",
+      "manifest_path": "D:\\仿真\\runtime\\stage3-pnp-distortion-recoverability-v1-r2\\manifest.json",
+      "manifest_sha256": "3288b30b2f87490ad01e764cded21f28b9a828f3d1dbbdc7d98f31b1b21bd3ef"
+    },
+    {
+      "id": "full-pnp-trajectory-distribution-and-stability-20260805-20260806",
+      "category": "overall observation trajectory",
+      "status": "accepted observation-process evidence",
+      "findings": [
+        "identity mapping over 180289 paired rows has overall RMSE/P95 0.3649/0.8306 m; cross-session affine improves to 0.2203/0.4222 m",
+        "oracle-conditioned mapping reaches 0.0199/0.0392 m but uses offline truth phase and is not deployable",
+        "constant true spin becomes a repeatable phase-nonuniform PnP apparent speed with phase max/min 1.61 to 2.45 and cross-session curve correlation 0.691 to 0.981"
+      ]
+    },
+    {
+      "id": "arc-and-candidate-diagnostics-20260809",
+      "category": "overall trajectory geometry and IPPE branch hypothesis",
+      "status": "branch-switch hypothesis rejected for both bounded captures",
+      "findings": [
+        "31 of 31 selected solver index 0 with zero switches at 2.2 m",
+        "767 of 767 selected solver index 0 with zero switches at 5 m",
+        "candidate separation was millimetres while selected-pose truth error was centimetres to metres; residual fault is corner/depth conditioning"
+      ],
+      "five_m_manifest_sha256": "33fda9a3cb46e6d5a22ac88a31cc3defa9bdf32fc3bda873bb019614afcf93b1"
+    },
+    {
+      "id": "accepted-120-run-observation-matrix-20260809",
+      "category": "full observed trajectory error structure",
+      "status": "accepted for observation behavior and offline method comparison; not deployment acceptance",
+      "findings": [
+        "spin angular P50/P95 is 0.0705/0.2047 degree but depth P50/P95 is 0.0974/0.8285 m",
+        "combined angular P50/P95 is 0.1544/0.3346 degree but depth P50/P95 is 0.1082/0.8630 m",
+        "lag-1 angular-error autocorrelation is 0.831 spin and 0.741 combined, with long missing streaks",
+        "repeatable observed open arcs do not imply geometrically correct physical arcs"
+      ]
+    },
+    {
+      "id": "cv-ridge-and-association-downstream-20260809",
+      "category": "downstream observation processing after PnP",
+      "status": "offline CV plus u/v Ridge accepted conditionally; predictor and tracker continuation paused",
+      "boundary": "this is not a PnP correction and does not repair physical identity; hard cyclic association produced catastrophic end-to-end tails"
+    }
+  ],
+  "superseded_or_rejected_interpretations": [
+    "tracked_id or jump_flag is physical armor identity",
+    "the old truth camera lateral sign is correct",
+    "a global fourth-order polynomial proves a U-shaped or flipped physical trajectory",
+    "old angular-only slot assignment establishes four physical plates",
+    "IPPE candidate index switching caused the observed arc flip",
+    "5 m empty Stage3 rows were primarily PnP rejection",
+    "directory radius labels prove that physical radius changed",
+    "lower reprojection error alone proves a better pose",
+    "selected PnP XYZ equals truth position plus small stationary Gaussian noise",
+    "single-frame nonlinear correction validated inside one session generalizes across sessions"
+  ],
+  "known_missing_references": {
+    "historical_analysis_sources_or_specs": 31,
+    "historical_runtime_or_intermediate_files": 29,
+    "total": 60,
+    "authority": "D:\\仿真\\runtime\\autoaim-b-pnp-evidence-catalog-20260810\\path_references.csv"
+  }
+}
