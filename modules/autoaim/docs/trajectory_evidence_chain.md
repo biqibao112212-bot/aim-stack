@@ -1,12 +1,12 @@
 # 自瞄 B 轨迹研究证据链
 
-- 当前阶段：`4 / 当前状态观测器规格与验收矩阵`
-- 状态：`阶段 1--3 已完成；阶段 4 已完成证据收敛，等待阶段验收`
+- 当前阶段：`5 / 命中相关误差传递与真值替换消融`
+- 状态：`阶段 1--4 已完成；阶段 5 已完成离线证据收敛，等待阶段验收`
 - 日期：2026-08-10
-- 研究状态：预测器暂停；本文件只整理已有数据、处理过程、方案依据、负证据和优化边界，不授权新的预测器训练或在线接入。
+- 研究状态：生产预测器暂停；阶段 5 只增加离线真值替换和 simple-CV 基线，不授权预测器训练、在线接入或火控放行。
 - 数据保留：原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`，均按受保护资产处理；Git 保存处理代码、字段契约、证据登记和哈希，不复制大体积数据。
 
-本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json`、`modules/autoaim/docs/timeseries_evidence_registry.json` 和 `modules/autoaim/docs/observer_acceptance_registry.json`。阶段 4 的完整设计合同见 `modules/autoaim/docs/observer_specification.md`。
+本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json`、`modules/autoaim/docs/timeseries_evidence_registry.json`、`modules/autoaim/docs/observer_acceptance_registry.json` 和 `modules/autoaim/docs/hit_oriented_ablation_registry.json`。阶段 4 的完整设计合同见 `modules/autoaim/docs/observer_specification.md`；阶段 1--5 的连续研究叙事、径向/横向口径和真值替换结论见 `modules/autoaim/docs/corner_pnp_state_estimation_research_narrative.md`。
 
 ## 阶段 1：四角点观测到 PnP 输入
 
@@ -688,6 +688,18 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 - 没有恢复 predictor 或 multi-hypothesis tracker。
 - 没有修改生产 `RobotEstimator`、模拟器、SDK、Release 或 fire control。
 
+## 阶段 5：命中相关误差传递与真值替换消融
+
+阶段 5 没有实现生产预测器，而是补齐此前缺失的因果归因：
+
+1. 用 exact projected corners 替换 actual corners，但保持 IPPE 和坐标链不变；exact PnP 的 3D P95 为 `0.009 mm`，证明当前 solver 在理想角点下可以闭合。
+2. 将 PnP 误差拆成 LOS radial、LOS transverse，以及投到真值深度平面的水平/垂直毫米偏移；在 77,518 条已配对、truth-visible 行上，四类运动的径向 P95 为 `0.81--1.01 m`，水平 P95 只有 `6.1--7.5 mm`。
+3. 固定观测时间、缺失、可见弧和 oracle slot，构造 `p_alpha=truth+alpha*(PnP-truth)`，完整扫描 0/10/25/50/75/100% 剩余 PnP 残差。
+4. 用 16 点、真实时间的 simple-CV 基线比较 stationary/translation/rotation/combined 在 0/50/100/200 ms 的当前状态和未来横向误差。
+5. translation 的当前 PnP P95 为 `11.9/15.4/25.2 mm`；rotation 为 `12.5/20.3/37.2 mm`；combined 为 `56.1/110.6/183.8 mm`。combined 在 100/200 ms 即使 exact PnP 仍失败，说明剩余限制属于运动模型/可见弧，而不能由角点优化单独解决。
+
+完整叙事、样本数、55 mm yaw gate、小装甲板宽高代理和边界见 `corner_pnp_state_estimation_research_narrative.md`；204,768 条逐预测样本、180,289 条 PnP 方向样本和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\autoaim-b-hit-oriented-ablation-20260810-r1`，由 `hit_oriented_ablation_registry.json` 和 retention manifest 锁定。
+
 ## 下一步
 
-阶段 4 先等待用户验收。若明确继续，阶段 5 只实现离线、truth-stripped reference observer 和 A--F deterministic acceptance harness，再在完整 120-run、formal 360 和所有缺失/失败样本上重放；仍不接入在线 `RobotEstimator`，不恢复预测器或 physical-identity tracker。
+阶段 5 先等待用户验收。若明确继续，优先补真实板面坐标、弹道/系统延迟、非 oracle association 和高角速长时域覆盖；随后才选择 combined 的因子化/IMM/多假设模型。阶段 4 的 truth-stripped reference observer 和 A--F acceptance harness 仍未实现；在它通过前，不接入在线 `RobotEstimator`，不恢复生产预测器或 fire control。
