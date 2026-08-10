@@ -294,3 +294,21 @@ representative_prediction_trajectories.csv
 ```
 
 `*_metrics.csv`、`summary.json` 和本文中的分位数仅用于导航，不替代逐样本分布。`retention_manifest.json` 对 29 个产物和两项源证据保存了大小与 SHA-256。
+
+## 9. 补充实验：11 维车辆中心 EKF 是否比 simple-CV 更好
+
+按用户要求，补做了 `rm_vision` 风格车辆中心 EKF 对照。上游实际是 9 维 EKF，另在 tracker 外保存 `another_r/dz`；本实验将二者透明折入，得到 `[xc,vxc,yc,vyc,zc,vzc,theta,omega,r_even,r_odd,dz_odd]` 11 维状态。没有使用仓库生产 tracker 的工程启发式，也没有把未来真值输入估计器。
+
+首先纠正旧指标口径：此前 translation `11.9/15.4/25.2 mm`、rotation `12.5/20.3/37.2 mm` 是 camera-CV 的单轴 truth-depth yaw-plane P95。用户指定的“深度以外 x/y 两分量合向量”分别为 translation `27.0/34.8/42.2 mm`、rotation `22.5/31.3/54.1 mm`。
+
+当前 PnP 位置+yaw 输入下，裸 11 维 EKF 明显失效：oracle 多板因果段的二维横向 P95 在 translation 为 `537.3/592.0/820.9 mm`，rotation 为 `4239.4/5505.9/7967.8 mm`，combined 为 `5025.6/2957.5/5872.9 mm`。输入消融表明当前 PnP 位置是中心/半径状态崩坏的首要瓶颈，yaw 误差和二者的非线性补偿仍不可忽略。
+
+真值历史输入下，world-CV 在 combined 为 `97.9/182.0/344.7 mm`，11 维 EKF 改善为 `88.6/133.9/215.1 mm`，说明平移中心+旋转几何分解有价值，但仍未进入二维 55 mm 诊断线。对纯 rotation，world-CV `7.9/9.8/13.9 mm` 反而优于 EKF `17.5/18.6/27.4 mm`；对 translation，world-CV 在本批理想匀速真值轨迹闭合，而 EKF 的上游 Q/R 与重置条件带来明显滞后。
+
+因此当前结论不是“换成 11 维 EKF”，而是：平移继续保留简单基线；旋转在受支持可见弧内以局部 CV 为下界；combined 需要专门的中心平移+周期相位/旋转因子化、IMM 或多假设模型，并且必须先解决 PnP depth/yaw 联合校准、物理身份和可见弧/reacquisition。
+
+完整算法条件、四组位置/yaw 真值消融、深度分量、样本数、全部图和 307,152 条逐预测分布见 `ekf11_cv_ablation.md` 与 `ekf11_cv_ablation_registry.json`。正式证据位于：
+
+```text
+D:\仿真\runtime\rmvision-ekf11-ablation-v1-full
+```

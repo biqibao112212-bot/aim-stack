@@ -1,0 +1,117 @@
+{
+  "schema_version": "autoaim-rmvision-ekf11-ablation-registry-v1",
+  "updated_at": "2026-08-10",
+  "scope": "offline oracle-identity comparison of prior camera-frame CV, world-frame CV, and a transparent rm_vision-style 11-state EKF expansion",
+  "research_state": "experiment complete; production predictor remains paused",
+  "authority": {
+    "path": "D:\\仿真\\runtime\\rmvision-ekf11-ablation-v1-full",
+    "manifest_sha256": "f79a85ce99dc67b1b927a8041bea75cbadc34f718fe579a400f9d3767712e116",
+    "script": "scripts/evaluate-rmvision-ekf11-ablation.py",
+    "script_sha256": "a39dc28169622315e72803b9add4f044f2b1dd1aaed3fbd262208c9784da5efb",
+    "sessions": 56,
+    "visible_observation_rows": 77518,
+    "prediction_rows": 307152,
+    "artifact_count_including_manifest": 26
+  },
+  "upstream_interpretation": {
+    "project": "rm_vision/rm_auto_aim",
+    "upstream_ekf_dimension": 9,
+    "external_geometry": ["another_r", "dz"],
+    "experiment_state_dimension": 11,
+    "experiment_state": [
+      "xc", "vxc", "yc", "vyc", "zc", "vzc", "theta", "omega",
+      "r_even", "r_odd", "dz_odd"
+    ],
+    "boundary": "transparent experimental fold-in of upstream external geometry; not a claim that upstream source itself is an 11-state EKF",
+    "references": [
+      "https://gitlab.com/rm_vision/rm_auto_aim/-/raw/main/armor_tracker/src/tracker_node.cpp",
+      "https://gitlab.com/rm_vision/rm_auto_aim/-/raw/main/armor_tracker/include/armor_tracker/tracker.hpp",
+      "https://gitlab.com/rm_vision/rm_auto_aim/-/raw/main/armor_tracker/src/tracker.cpp"
+    ]
+  },
+  "causality": {
+    "future_truth_estimator_input": false,
+    "future_truth_use": "interpolation and post-prediction scoring only",
+    "truth_slot_identity": "offline oracle",
+    "exact_truth_arms": "explicit historical-input interventions",
+    "lost_reset_gap_s": 0.12
+  },
+  "metric_contract": {
+    "primary": "sqrt(camera_error_x^2 + camera_error_y^2), excluding camera depth z",
+    "retained_components": [
+      "signed_camera_x", "signed_camera_y", "signed_camera_z",
+      "camera_lateral_xy_norm", "absolute_depth", "3d_position",
+      "truth_depth_yaw_plane", "truth_depth_pitch_plane", "ray_angle"
+    ],
+    "diagnostic_line_m": 0.055,
+    "boundary": "2D norm diagnostic, stricter than the prior one-axis yaw gate; not hit probability"
+  },
+  "prior_metric_correction": {
+    "translation_11_9_15_4_25_2_mm": "camera-CV one-axis truth-depth yaw-plane P95",
+    "rotation_12_5_20_3_37_2_mm": "camera-CV one-axis truth-depth yaw-plane P95",
+    "translation_camera_lateral_xy_p95_mm": [27.0, 34.8, 42.2],
+    "rotation_camera_lateral_xy_p95_mm": [22.5, 31.3, 54.1]
+  },
+  "current_pnp_lateral_xy_p95_mm": {
+    "camera_cv": {
+      "translation": [27.0, 34.8, 42.2],
+      "rotation": [22.5, 31.3, 54.1],
+      "combined": [51.7, 105.9, 108.8]
+    },
+    "world_cv": {
+      "translation": [26.6, 36.2, 52.3],
+      "rotation": [22.5, 31.3, 54.1],
+      "combined": [96.1, 180.8, 368.1]
+    },
+    "ekf11_oracle_multislot": {
+      "translation": [537.3, 592.0, 820.9],
+      "rotation": [4239.4, 5505.9, 7967.8],
+      "combined": [5025.6, 2957.5, 5872.9]
+    }
+  },
+  "exact_historical_input_lateral_xy_p95_mm": {
+    "world_cv": {
+      "translation": [0.0, 0.0, 0.0],
+      "rotation": [7.9, 9.8, 13.9],
+      "combined": [97.9, 182.0, 344.7]
+    },
+    "ekf11_oracle_multislot": {
+      "translation": [133.2, 178.4, 273.9],
+      "rotation": [17.5, 18.6, 27.4],
+      "combined": [88.6, 133.9, 215.1]
+    }
+  },
+  "coverage_50_100_200ms": {
+    "stationary": [1780, 1747, 1745],
+    "translation": [1646, 1540, 1358],
+    "rotation": [841, 520, 283],
+    "combined": [203, 34, 13]
+  },
+  "validation": {
+    "measured_yaw_join_rate": 1.0,
+    "worst_session_coordinate_reconstruction_p95_m": 0.000001646,
+    "method_anchor_counts_equal_within_reported_arms": true,
+    "complete_point_level_distribution_retained": true
+  },
+  "decision": [
+    "do not deploy the uncalibrated bare 11-state EKF on current PnP position/yaw",
+    "translation remains adequately served by simple baselines in this oracle-identity cohort",
+    "local rotation is better served by 16-point CV than this EKF, with long-horizon coverage caveats",
+    "11-state factorization improves exact-input combined motion relative to world-CV but remains above 55 mm at every tested horizon",
+    "combined motion needs a dedicated factorized, IMM, coordinated-turn, or multi-hypothesis model after observation and identity prerequisites"
+  ],
+  "retained_complete_distributions": [
+    "prediction_samples.csv.gz",
+    "prediction_metrics.csv",
+    "lateral_xy_histogram_distribution.csv",
+    "joined_visible_observations.csv.gz",
+    "representative_prediction_trajectories.csv.gz"
+  ],
+  "retained_figures_each_png_svg_pdf": [
+    "p95_lateral_xy_current_pose",
+    "p95_lateral_xy_exact_pose",
+    "ecdf_lateral_xy_current_pose_100ms",
+    "ekf11_input_ablation_100ms",
+    "trajectory_prediction_truth_current_pose_100ms"
+  ]
+}

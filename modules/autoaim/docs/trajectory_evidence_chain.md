@@ -700,6 +700,19 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 
 完整叙事、样本数、55 mm yaw gate、小装甲板宽高代理和边界见 `corner_pnp_state_estimation_research_narrative.md`；204,768 条逐预测样本、180,289 条 PnP 方向样本和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\autoaim-b-hit-oriented-ablation-20260810-r1`，由 `hit_oriented_ablation_registry.json` 和 retention manifest 锁定。
 
+## 阶段 6：camera-CV、world-CV 与 11 维车辆中心 EKF
+
+阶段 6 仍是离线 oracle-identity 对照，不恢复生产预测器：
+
+1. 严格区分旧 camera-frame simple-CV 与 world-frame CV。前者包含移动云台坐标补偿，用于复现历史结果；后者与车辆中心 EKF 在同一目标世界坐标系比较。
+2. 将 `rm_vision` 的 9 维 EKF 与其外置 `another_r/dz` 透明展开为 11 维状态，沿用公开 Q/R/观测方程，不使用当前生产 tracker 的 NIS/几何恢复等工程启发式。
+3. 同时消融当前/真值历史位置与当前/真值历史 yaw；未来真值只在预测后评分。
+4. 更正旧数字含义：translation `11.9/15.4/25.2 mm`、rotation `12.5/20.3/37.2 mm` 是单轴 yaw-plane miss；用户要求的 camera x/y 合向量分别为 `27.0/34.8/42.2 mm` 与 `22.5/31.3/54.1 mm`。
+5. 当前 PnP 输入下裸 11 维 EKF 为米级失败，禁止部署。真值历史下它只对 combined 相对 world-CV 改善：`97.9/182.0/344.7 -> 88.6/133.9/215.1 mm`，仍未通过二维 55 mm 诊断线。
+6. 结论支持按运动模式分治：平移保留简单基线；受支持弧内旋转以局部 CV 为更强下界；combined 后续使用专门因子化/IMM/多假设模型，而不是通用裸 EKF。
+
+307,152 条逐预测样本、77,518 条 measured-yaw join、完整分布和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\rmvision-ekf11-ablation-v1-full`，由 `ekf11_cv_ablation.md`、`ekf11_cv_ablation_registry.json` 和目录内 `manifest.json` 锁定。
+
 ## 下一步
 
 阶段 5 先等待用户验收。若明确继续，优先补真实板面坐标、弹道/系统延迟、非 oracle association 和高角速长时域覆盖；随后才选择 combined 的因子化/IMM/多假设模型。阶段 4 的 truth-stripped reference observer 和 A--F acceptance harness 仍未实现；在它通过前，不接入在线 `RobotEstimator`，不恢复生产预测器或 fire control。
