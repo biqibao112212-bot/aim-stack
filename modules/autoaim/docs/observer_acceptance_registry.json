@@ -1,0 +1,302 @@
+{
+  "schema_version": "autoaim-observer-acceptance-registry-v1",
+  "updated_at": "2026-08-10",
+  "stage": 4,
+  "status": "design_and_acceptance_contract_only_not_implemented_not_deployed",
+  "scope": "evidence-supported anonymous camera-ray current-state observer",
+  "paused_work": [
+    "trajectory_predictor_training_or_integration",
+    "multi_hypothesis_c4_identity_tracker",
+    "fire_control_integration",
+    "production_robot_estimator_replacement"
+  ],
+  "accepted_observer_boundary": {
+    "input": "complete unordered post-PnP candidate set per exposure with true timestamps and explicit missingness",
+    "continuous_state": [
+      "u_deg",
+      "v_deg",
+      "du_dt_deg_s_when_qualified",
+      "dv_dt_deg_s_when_qualified"
+    ],
+    "coordinate_frame": "camera_frame_only_until_an_exposure_matched_world_transform_is_independently_accepted",
+    "identity": "ephemeral anonymous handles only; physical identity unresolved",
+    "history": "at most 200 valid events ordered by true timestamp; empty frames do not consume an event but preserve elapsed gaps",
+    "forbidden_runtime_inputs": [
+      "truth_target_id",
+      "truth_relative_slot",
+      "truth_phase_center_or_velocity",
+      "future_truth",
+      "future_observation",
+      "simulator_motion_command",
+      "offline_assignment_result"
+    ]
+  },
+  "evidence_counts": {
+    "accepted_120_run": {
+      "runs": 120,
+      "truth_frames": 189158,
+      "observation_frames": 184879,
+      "full_key_join_frames": 184879,
+      "usable_exact_truth_join_frames": 184763,
+      "valid_events": 177483,
+      "detections": 250449,
+      "candidate_set_transitions": 184761,
+      "missing_streaks": 2974,
+      "empirical_distribution_rows": 554138,
+      "zero_observation_runs": 2,
+      "combined_five_candidate_frames": 18
+    },
+    "formal_360": {
+      "sessions": 360,
+      "raw_observation_records": 1389655,
+      "zero_candidate_records": 429122,
+      "multiple_candidate_records": 393958,
+      "more_than_four_candidate_records": 38,
+      "v3_samples": 185292,
+      "zero_sample_sessions": 6
+    }
+  },
+  "qualification_policy": {
+    "minimum_valid_events": 8,
+    "recent_window_s": 0.2,
+    "freshness_timeout_s": 0.05,
+    "source": "accepted Stage3 v3 causal qualification contract",
+    "interpretation": "initial observer qualification boundary, not a calibrated fire-control threshold",
+    "stale_behavior": "revoke qualified output immediately; retain last value for telemetry only",
+    "reacquisition": "create new ephemeral handles and require the full 8-events-in-0.2-second gate again",
+    "coast_beyond_freshness": "not accepted",
+    "frame_count_timeout": "forbidden because latest-only delivery and irregular timestamps make frame counts nonportable"
+  },
+  "state_machine": [
+    {
+      "state": "NO_DATA",
+      "meaning": "no valid candidate has been observed",
+      "qualified_dynamic_output": false
+    },
+    {
+      "state": "ACQUIRING",
+      "meaning": "valid events exist but the temporal qualification gate is not met",
+      "qualified_dynamic_output": false
+    },
+    {
+      "state": "OBSERVED_ANONYMOUS",
+      "meaning": "stream, candidate, time, local-continuity and applicability gates pass",
+      "qualified_dynamic_output": true,
+      "physical_identity_resolved": false
+    },
+    {
+      "state": "AMBIGUOUS_SET",
+      "meaning": "greater-than-four candidates, close assignments, crossing or unresolved set change",
+      "qualified_dynamic_output": false,
+      "preserve_complete_candidate_set": true
+    },
+    {
+      "state": "STALE",
+      "meaning": "latest valid event age exceeds 50 ms",
+      "qualified_dynamic_output": false
+    },
+    {
+      "state": "REACQUIRING",
+      "meaning": "a new event follows stale, ambiguity or reset; old ephemeral identity is not reused",
+      "qualified_dynamic_output": false
+    },
+    {
+      "state": "INVALID_STREAM",
+      "meaning": "schema, epoch, key, timestamp or sink failure",
+      "qualified_dynamic_output": false,
+      "clear_state": true
+    }
+  ],
+  "gate_order": [
+    "G0_stream_and_schema",
+    "G1_complete_candidate_set_and_candidate_validity",
+    "G2_true_time_freshness_and_history",
+    "G3_anonymous_observation_domain_continuity",
+    "G4_method_applicability_and_uncertainty",
+    "G5_downstream_eligibility"
+  ],
+  "uncertainty_contract": {
+    "components": [
+      "angular_empirical",
+      "depth_empirical",
+      "freshness",
+      "availability",
+      "set_ambiguity",
+      "association",
+      "transform",
+      "model_applicability"
+    ],
+    "angular_and_depth_must_remain_separate": true,
+    "current_covariance_status": "uncalibrated",
+    "covariance_valid_default": false,
+    "calibration_levels": [
+      0.5,
+      0.8,
+      0.9,
+      0.95,
+      0.99
+    ],
+    "acceptance_rule": "the one-sided confidence lower bound for safety-interval empirical coverage must reach nominal coverage in the declared applicability conditions",
+    "required_strata": [
+      "motion",
+      "distance",
+      "radius",
+      "facing",
+      "candidate_count",
+      "gap_band",
+      "corner_and_pnp_quality"
+    ],
+    "detector_confidence_is_probability": false,
+    "current_nis_is_calibrated_probability": false
+  },
+  "current_production_baseline_audit": {
+    "state_dimension": 11,
+    "state_semantics": "vehicle center and velocity, center height and vertical velocity, yaw and yaw rate, primary radius, delta radius and height delta",
+    "tracker_states": [
+      "LOST",
+      "DETECTING",
+      "TRACKING",
+      "TEMP_LOST"
+    ],
+    "tracking_threshold_frames": 2,
+    "lost_threshold_frames": 50,
+    "invalid_or_large_dt_replacement_s": 0.006,
+    "large_dt_boundary_s": 0.1,
+    "max_match_distance_m": 0.2,
+    "max_match_yaw_diff_rad": 0.8,
+    "observation_jump_m": 0.15,
+    "nis_reference_threshold": 0.711,
+    "assessment": "retained production baseline with useful diagnostics, but frame-count timeouts, hard identity, heuristic Q/R and covariance are not accepted by the current full-distribution evidence"
+  },
+  "historical_method_evidence": {
+    "spin_observation_angular_error_deg": {
+      "p50": 0.0705,
+      "p95": 0.2047
+    },
+    "combined_observation_angular_error_deg": {
+      "p50": 0.1544,
+      "p95": 0.3346
+    },
+    "spin_absolute_depth_error_m": {
+      "p50": 0.0974,
+      "p95": 0.8285
+    },
+    "combined_absolute_depth_error_m": {
+      "p50": 0.1082,
+      "p95": 0.863
+    },
+    "lag1_angular_error_autocorrelation_median": {
+      "spin": 0.831,
+      "combined": 0.741
+    },
+    "oracle_identity_cv_ridge_hold_replay_deg": {
+      "p95": 0.3098376070954058,
+      "p99": 0.7172645139680385,
+      "claim": "offline future-horizon processing upper bound only; not a current-state or deployment gate"
+    },
+    "observation_only_association": {
+      "simple_hard_mapping_accuracy_mean": 0.5353335179682254,
+      "learned_pair_best_accuracy": 0.46184716180354846,
+      "nested_cyclic_accuracy": 0.683340524139913,
+      "nested_cyclic_end_to_end_p95_deg": 19.61568381960367,
+      "confidence_0p95_identity_accuracy": 0.6924243776211296,
+      "confidence_0p95_chain_p95_deg": 10.288448983450698,
+      "decision": "no hard physical identity is accepted"
+    },
+    "cyclic_parameter_stability": {
+      "continuity_gate_selected_deg": 2.0,
+      "selected_reacquisition_timeouts_s": [
+        0.25,
+        2.0,
+        0.5,
+        2.0,
+        2.0
+      ],
+      "decision": "topology is evidence; neither value is a deployment constant"
+    }
+  },
+  "acceptance_matrix": {
+    "data_and_causality": [
+      "A01_exact_key_only",
+      "A02_duplicate_regression_epoch_fail_closed",
+      "A03_truth_stripping_invariance",
+      "A04_future_perturbation_invariance",
+      "A05_true_irregular_time",
+      "A06_empty_frame_semantics"
+    ],
+    "set_and_identity": [
+      "B01_candidate_permutation_equivariance",
+      "B02_frame_local_index_invariance",
+      "B03_zero_candidate_is_not_zero_position",
+      "B04_more_than_four_is_ambiguous_not_truncated",
+      "B05_physical_identity_remains_unresolved",
+      "B06_close_assignment_reject_or_preserve_set"
+    ],
+    "timeout_and_reacquisition": [
+      "C01_50ms_freshness_revocation",
+      "C02_all_2974_missing_streaks_replayed",
+      "C03_two_zero_observation_runs_never_qualify",
+      "C04_long_gaps_never_reuse_ephemeral_identity",
+      "C05_reacquisition_requires_8_events_in_0p2s",
+      "C06_epoch_reset_clears_history"
+    ],
+    "accuracy_and_distribution": [
+      "D01_hash_bound_raw_reference",
+      "D02_conditionwise_paired_noninferiority_threshold_to_be_preregistered_before_implementation",
+      "D03_full_tail_worst_run_worst_slot_and_per_sample_distribution",
+      "D04_angular_depth_separation",
+      "D05_oracle_identity_marked_upper_bound"
+    ],
+    "uncertainty": [
+      "E01_nominal_coverage_lower_bound",
+      "E02_conditionwise_coverage",
+      "E03_uncertainty_monotonicity",
+      "E04_covariance_invalid_until_calibrated",
+      "E05_detector_and_nis_require_calibration"
+    ],
+    "robustness_latency_and_regression": [
+      "F01_finite_and_psd",
+      "F02_deterministic_replay",
+      "F03_native_latency_full_distribution",
+      "F04_failure_injection_fail_closed",
+      "F05_protected_asset_retention",
+      "F06_simulator_boundary"
+    ]
+  },
+  "explicit_nonclaims": [
+    "deployable_physical_armor_identity",
+    "vehicle_center_or_radius_observability",
+    "calibrated_pose_or_state_covariance",
+    "exposure_matched_world_frame_history",
+    "online_or_native_runtime_latency",
+    "trajectory_prediction",
+    "fire_control_safety_or_readiness"
+  ],
+  "open_parameters_requiring_preregistration": [
+    "anonymous_continuity_gate",
+    "any_coast_duration_beyond_50ms",
+    "condition_binning_and_empirical_interval_width",
+    "quality_feature_to_uncertainty_mapping",
+    "world_transform_exposure_contract",
+    "native_latency_budget",
+    "conditionwise_current_state_noninferiority_tolerance"
+  ],
+  "authorities": {
+    "corner_registry_sha256": "5bd0418b7865fb3b2667ba2e2981abbed10e7d7a39fecdbebe04773cf794e5b6",
+    "pnp_registry_sha256": "ca45be3c755f16bf7585ec666f487c73931feeab3edfb74bf4504a9f8f59a468",
+    "timeseries_registry_sha256": "837cd589cb4b2ea18d842371dfe4d2475b4ab2ce22122ce5e885a5c764a44358",
+    "method_selection_retention_manifest_sha256": "94a213cd5c0ea743fcbbf03ad043d0383623a36e5c0995ba8fabd4f7820c3b53",
+    "processor_association_retention_manifest_sha256": "1c20d4bdb11dcad46424e63ea9a9e48df3ab3c046e84ad21c1a35b0b2366ee8f",
+    "observation_error_retention_manifest_sha256": "55e6e926c255d363715cddea8e21649312f22c85f33f91317de243d5885eb8fe",
+    "complete_timeseries_retention_manifest_sha256": "e0b644fcc4b816f571c7e23304fb206336be32eeaabc661297c63e2a32be3815",
+    "timeseries_catalog_retention_manifest_sha256": "7542068c4981062418e8b9709e9799397abf59d2906ff50a625f1d2a76e9d93b"
+  },
+  "production_baseline_source_hashes": {
+    "robotestimator_h": "3e3f83afe5b4e0aeb5a59b3d79d949dbe06257ed056eb624d1e2b1486fa2c5d8",
+    "robotestimator_cpp": "f1f5b3f4cb0078cbc4ca48754a7a64d543c92c8396eb69120598c5b9405a65d6",
+    "ypd_angle_tracker_h": "1786b2b44f879cd22fc4f17b132e8ffd7f75597d8f2ecf4e9c010812465a0a0d",
+    "ypd_angle_tracker_cpp": "c99d71919ec02ca8fc22f2293f412b31d7b378ad30351c5f2e4dc6020da72ad1",
+    "param_yaml": "6b1fe8df1dfd495ce3eb3e901fa6bb1d40dfe407e27ad36e12044eeeea858890"
+  },
+  "next_stage_if_explicitly_approved": "offline truth-stripped reference observer plus deterministic A-F acceptance harness; no online integration, predictor or physical-identity tracker"
+}

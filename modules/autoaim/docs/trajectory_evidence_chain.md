@@ -1,12 +1,12 @@
 # 自瞄 B 轨迹研究证据链
 
-- 当前阶段：`3 / PnP 后因果时间序列、缺失与身份边界`
-- 状态：`阶段 1、2 已完成；阶段 3 已完成证据盘点，等待阶段验收`
+- 当前阶段：`4 / 当前状态观测器规格与验收矩阵`
+- 状态：`阶段 1--3 已完成；阶段 4 已完成证据收敛，等待阶段验收`
 - 日期：2026-08-10
 - 研究状态：预测器暂停；本文件只整理已有数据、处理过程、方案依据、负证据和优化边界，不授权新的预测器训练或在线接入。
 - 数据保留：原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`，均按受保护资产处理；Git 保存处理代码、字段契约、证据登记和哈希，不复制大体积数据。
 
-本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json` 和 `modules/autoaim/docs/timeseries_evidence_registry.json`。
+本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json`、`modules/autoaim/docs/timeseries_evidence_registry.json` 和 `modules/autoaim/docs/observer_acceptance_registry.json`。阶段 4 的完整设计合同见 `modules/autoaim/docs/observer_specification.md`。
 
 ## 阶段 1：四角点观测到 PnP 输入
 
@@ -626,6 +626,68 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 | CV+Ridge replay retention manifest | `422d847db042aeea4d31a33d7ff369efb819aca3817099ec8272111d214f764d` |
 | processor/association decision retention manifest | `1c20d4bdb11dcad46424e63ea9a9e48df3ab3c046e84ad21c1a35b0b2366ee8f` |
 
+## 阶段 4：当前状态观测器规格与验收矩阵
+
+### 4.1 证据允许的观测器边界
+
+前三阶段只支持先做“相机射线域、匿名、因果、显式缺失”的当前状态观测器：
+
+- 输入是每个曝光时刻的完整无序 PnP candidate set 和真实 timestamp。
+- 连续状态先限制为 `[u,v,du/dt,dv/dt]`；depth、PnP yaw 和 quality 旁路保留。
+- handle 只在短时连续段内匿名有效，不是物理 `relative_slot`。
+- 输出显式分开 angular、depth、freshness、availability、set ambiguity、association、transform 和 applicability uncertainty。
+- physical identity、world state、future prediction 和 fire-control eligibility 在本阶段固定为 false/unresolved。
+
+完整字段和禁用字段见 `observer_specification.md`。这不是对当前 11 维 `YpdAngleTracker` 的直接修改。
+
+### 4.2 当前 tracker 为什么不能直接称为证据接受的观测器
+
+当前实现保留 11 维车辆中心/速度/yaw/半径状态、NIS/物理 gate、几何恢复和 covariance telemetry，具有生产基线价值；但它还存在与现有证据不一致的合同：
+
+- `dt>100 ms` 会被替换成 `6 ms`，真实长 gap 被隐藏。
+- tracking/lost 按帧计数，当前 `LOST_THRESHOLD=50` 无法跨不稳定 latest-only 帧率解释为固定时间。
+- primary observation 和 slot selection 依赖 hard identity，而 observation-only association 尚未验收。
+- Q/R、0.711 NIS reference 和 covariance 没有在 retained repeat-held 完整分布上做 coverage calibration。
+- 米制 match/jump gate 会受到阶段 2 已证 depth long tail 影响。
+
+所以本阶段把它登记为“保留的实现基线”，没有删除，也没有把现有 telemetry 升格为校准概率。
+
+### 4.3 初版状态机和 timeout
+
+规格状态为 `NO_DATA -> ACQUIRING -> OBSERVED_ANONYMOUS`，并显式包含 `AMBIGUOUS_SET`、`STALE`、`REACQUIRING` 和 `INVALID_STREAM`。
+
+- 继承 Stage3 v3：最近 `0.2 s` 至少 8 个 valid events，latest age 不超过 `50 ms`。
+- `50 ms` 是初版观测资格边界，不是已经证明的火控阈值。
+- age 超过 50 ms 立即撤销 qualified output；旧值只保留 telemetry。
+- stale 后的新事件建立新 ephemeral handle，并从头满足 8 events/0.2 s，禁止硬接旧 physical ID。
+- `>4` candidate、close assignment/crossing、epoch change、timestamp regression 和 sink failure 分别进入 ambiguity 或 fail-closed。
+- 历史 cyclic selection 的 continuity gate 一致选到 2 deg，但 timeout 在 0.25--2 s 之间变化；这只支持 cyclic topology，不支持拿任一 timeout 部署。
+
+### 4.4 不确定性结论
+
+当前不能宣称 calibrated covariance。初版必须先输出可审计分量；只有在独立 held-run 上对 50/80/90/95/99% 区间逐 motion、distance、radius、facing、candidate count、gap 和 quality 验证 coverage 后，才允许 `covariance_valid=true`。安全区间的一侧 coverage 置信下界必须达到 nominal level，否则扩大区间或声明不适用。
+
+### 4.5 验收覆盖
+
+`observer_specification.md` 和 `observer_acceptance_registry.json` 定义 A--F 六组门禁：
+
+1. exact-key、truth stripping、future perturbation 和 irregular-time causality；
+2. candidate permutation、zero candidate、`>4` ambiguity 和 hard-identity guard；
+3. 50 ms freshness、全部 2,974 个 missing streak、两轮零 observation 和重新获取；
+4. condition-wise paired current-state non-inferiority、angular/depth 分离、full tail/worst-run/worst-slot；
+5. nominal/condition-wise uncertainty coverage 和 covariance fail-closed；
+6. deterministic replay、native latency完整分布、failure injection、资产保留和 simulator boundary。
+
+性能 tolerance 和 native latency budget 仍需在阶段 5 实现前预注册。历史 oracle-identity CV+Ridge 的 `0.310/0.717 deg` P95/P99 只作离线 future-horizon 参考，不能直接当当前观测器上线门槛。
+
+### 4.6 本阶段非声明
+
+- 没有实现新观测器。
+- 没有接受 physical armor ID、车辆中心/半径状态或 world-frame history。
+- 没有接受 detector confidence、PnP residual、NIS 或现有 covariance 为概率。
+- 没有恢复 predictor 或 multi-hypothesis tracker。
+- 没有修改生产 `RobotEstimator`、模拟器、SDK、Release 或 fire control。
+
 ## 下一步
 
-阶段 3 先等待用户验收。验收后可进入阶段 4：只把前三阶段证据收敛成观测器输入、状态、不确定性、gating、timeout/reacquisition 和验收矩阵；不恢复轨迹预测器或多假设 tracker 实现。
+阶段 4 先等待用户验收。若明确继续，阶段 5 只实现离线、truth-stripped reference observer 和 A--F deterministic acceptance harness，再在完整 120-run、formal 360 和所有缺失/失败样本上重放；仍不接入在线 `RobotEstimator`，不恢复预测器或 physical-identity tracker。
