@@ -1,0 +1,137 @@
+{
+  "schema_version": "autoaim-combined-motion-final-registry-v1",
+  "updated_at": "2026-08-11",
+  "research_state": "completed offline research; one-time sealed test executed; production integration remains gated",
+  "frozen_candidate_git_commit": "743aa800cf09ed6c11e053c362cea1e64eeb0c3e",
+  "selection_contract": {
+    "path": "modules/autoaim/docs/combined_motion_final_selection_contract.json",
+    "sha256": "f32591131d0aae6dacddb0e54a8072b865d94de127912c55d65814da042bbbdf"
+  },
+  "development_evidence": [
+    {
+      "purpose": "LOS residual weight and Huber sweep",
+      "path": "D:\\仿真\\runtime\\combined-motion-los-fit-dev-v1",
+      "manifest_sha256": "9b33a5c0a9aabba748df5b9c71b1cf3f49bf3913c28dfb0e71628455591d7e5f",
+      "prediction_rows": 116520
+    },
+    {
+      "purpose": "causal omega-memory sweep",
+      "path": "D:\\仿真\\runtime\\combined-motion-omega-memory-dev-v1",
+      "manifest_sha256": "28f32571aefdbc72fb1955bb38de91ee095ef4b3e21bb88b4472d888ed3315a9",
+      "prediction_rows": 18504
+    },
+    {
+      "purpose": "center-first reversal attempt retaining invalid perpendicular velocity",
+      "path": "D:\\仿真\\runtime\\combined-motion-reversal-dev-v1",
+      "manifest_sha256": "264f80fa28f805256df2ff630545a3ef4ca884add3e0a3d795606b27a8b2b8ea",
+      "prediction_rows": 81888,
+      "status": "failed implementation retained as negative evidence"
+    },
+    {
+      "purpose": "corrected one-axis center-first reversal attempt",
+      "path": "D:\\仿真\\runtime\\combined-motion-reversal-dev-v2",
+      "manifest_sha256": "cc27ee3d2dbbfceaf4f0a6ae33dc7d0a6a3cf2f7e7c2bd9a288e521d99675e4c",
+      "prediction_rows": 81888,
+      "status": "center-first latent state rejected"
+    },
+    {
+      "purpose": "direct configured reflection phase sweep",
+      "path": "D:\\仿真\\runtime\\combined-motion-direct-reflection-dev-v1",
+      "manifest_sha256": "1d47919c0b24841d0c54c15f74c3ea068b8363f12df57e360d435a4d229bf688",
+      "prediction_rows": 20730
+    },
+    {
+      "purpose": "direct long-window joint omega and reflection-phase model",
+      "path": "D:\\仿真\\runtime\\combined-motion-direct-joint-dev-v1",
+      "manifest_sha256": "a5c9c4899640d2ae8968b6e285369be51050cea1e59f08fcce009319f6a59579",
+      "prediction_rows": 2492
+    }
+  ],
+  "sealed_test": {
+    "session": "stage3-generalization-fixed6mm-20260729-v1-combined-04",
+    "access_count": 1,
+    "post_test_tuning": false,
+    "condition": {
+      "distance_m": 4.556034028471346,
+      "linear_speed_mps": 1.8646800911196522,
+      "linear_span_m": 3.452265004822845,
+      "spin_rad_s": 11.86777108153752,
+      "direction_deg": -23.184813846060592,
+      "duration_s": 20.0
+    },
+    "evidence_path": "D:\\仿真\\runtime\\combined-motion-final-acceptance-test-04-v1",
+    "manifest_sha256": "f8e49d4da56e8ea8a711b46510834b0cec9c70c0ed75889de61e3bef544099a1",
+    "postprocess_manifest_sha256": "7459126535a72bc7d666a3b3b083f12d1d2855f7dbccc686488d840f06390a32",
+    "common_anchors": 58,
+    "prediction_rows": 1720,
+    "fit_rows": 58,
+    "constant_twist_sample_counts_50_100_200ms": [53, 54, 50],
+    "cross_reversal_sample_counts_50_100_200ms": [4, 4, 7]
+  },
+  "sealed_test_cross_depth_p95_mm": {
+    "constant_twist": {
+      "hold": [169.7, 309.9, 499.9],
+      "same_slot_world_cv": [304.8, 448.4, 654.1],
+      "v1_isotropic_single_window": [101.8, 166.5, 351.6],
+      "los_memory31": [36.0, 41.5, 52.0],
+      "direct_joint_omega_phase": [22.6, 22.0, 30.9],
+      "direct_oracle_omega": [10.7, 11.9, 14.8]
+    },
+    "cross_reversal": {
+      "hold": [257.1, 272.3, 367.2],
+      "same_slot_world_cv": [219.7, 432.2, 567.0],
+      "v1_isotropic_single_window": [58.5, 177.2, 426.9],
+      "los_memory31": [27.0, 127.2, 323.0],
+      "direct_joint_omega_phase": [16.0, 21.9, 15.8],
+      "direct_oracle_omega": [7.7, 7.4, 11.5]
+    }
+  },
+  "sealed_test_direct_joint_cross_depth_p50_mm": {
+    "constant_twist": [10.0, 7.5, 10.5],
+    "cross_reversal": [10.5, 6.3, 11.6]
+  },
+  "sealed_test_direct_joint_depth_p95_mm": {
+    "constant_twist": [88.6, 94.0, 102.1],
+    "cross_reversal": [82.0, 82.4, 83.2]
+  },
+  "sealed_test_omega_absolute_error_p50_p95_rad_s": {
+    "v1_isotropic_single_window": [0.627, 2.154],
+    "los_raw": [0.456, 1.217],
+    "los_memory31": [0.088, 0.244],
+    "direct_joint": [0.030, 0.052]
+  },
+  "development_direct_joint_cross_depth_p95_mm": {
+    "train_constant_twist": [87.4, 96.6, 122.0],
+    "train_cross_reversal": [37.4, 25.0, 55.0],
+    "validation_constant_twist": [97.2, 98.8, 85.7],
+    "validation_cross_reversal": [17.2, 88.1, 240.5]
+  },
+  "decision": [
+    "accept direct bounded-translation plus rigid-rotation fitting as the correct clean physical explanation",
+    "accept LOS anisotropic fitting and cross-window omega memory as improvements over the v1 local estimator",
+    "reject per-frame or per-window center-first reflection as the primary online path",
+    "accept the 4 s direct joint omega/translation-phase model as a supported mature-track expert",
+    "use a local factorized expert before reflection phase is identifiable",
+    "retain multiple translation-phase hypotheses or gate firing when no endpoint/change point has been observed",
+    "do not claim universal 55 mm deployment acceptance because development conditions still fail and sealed cross-reversal n is small"
+  ],
+  "production_blockers": [
+    "non-oracle physical plate identity and reacquisition",
+    "online path-axis speed and span estimation with uncertainty",
+    "deployable phase ambiguity and change-point activation gate",
+    "broader held-out distance speed omega and reversal coverage",
+    "remaining approximately 0.1 m depth P95",
+    "online RobotEstimator and fire-control integration not performed"
+  ],
+  "retained_complete_distributions": [
+    "prediction_distribution.csv.gz",
+    "fit_distribution.csv.gz",
+    "prediction_summary.csv"
+  ],
+  "retained_figures_each_png_svg_pdf": [
+    "final_test_cross_depth_p95",
+    "final_test_cross_depth_ecdf_200ms",
+    "final_test_prediction_truth_overlay_200ms",
+    "final_test_omega_error_ecdf"
+  ]
+}

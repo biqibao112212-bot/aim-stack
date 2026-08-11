@@ -232,3 +232,15 @@ D:\仿真\runtime\combined-motion-factorization-v1-full
 ```
 
 本轮关闭的是“组合运动是否具有可解释物理模型、逐帧中心是否应作为主路径、CV 是否足够”三个问题。只有在引入 LOS-aware 拟合、非 oracle 身份、跨窗多 `omega` 假设或平移反向模型后，才需要重新打开对应实验。
+
+## 12. 后续研究已经完成
+
+上述 reopen 条件中的 LOS-aware 拟合、跨窗口 `omega` 记忆和平移反向模型已于 2026-08-11 完成。最终方法不逐帧恢复中心，而是用 4 s 装甲板历史直接联合拟合“有界直线三角波平移 + 刚体旋转”的 `omega` 和反转相位。
+
+一次性封存测试 `combined-04` 中，当前 PnP 的恒定段横向 P95 为 `22.6/22.0/30.9 mm`，稀疏跨反转样本为 `16.0/21.9/15.8 mm`。开发集仍存在未通过条件，因此这是模型可行性和单条件封存通过，不是全条件部署验收。
+
+完整结果、失败方案、限制和证据锁见：
+
+- `combined_motion_final_result.md`
+- `combined_motion_final_registry.json`
+- `combined_motion_final_selection_contract.json`

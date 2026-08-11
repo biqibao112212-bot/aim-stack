@@ -749,3 +749,18 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 下一版组合运动方法应是跨窗相位记忆 + `omega` 候选库 + 固定四板几何 + 平移反向模式，而不是再直接套一个单模态 EKF。PnP depth 和 cross-depth 还应使用不同噪声尺度，优先验证 LOS-aware 各向异性稳健拟合。
 
 完整叙事见 `combined_motion_factorization.md`。59,632 条逐预测、23,921 条中心恢复、5,118 条角速度估计、逐条件分层和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-factorization-v1-full`，由 `combined_motion_factorization_registry.json` 和目录内 `manifest.json` 锁定；manifest SHA-256 为 `385f33ece00dbfcc51e2b8d625a4c268f21c8bce52230034ae04b322d7753248`。
+
+## 阶段 9：组合运动 LOS、跨窗角速度与直接反转相位模型
+
+阶段 8 的 reopen 条件已依次实验并冻结：
+
+1. LOS 各向异性 Huber 扫描选择 tracker 深度平方权重 `0.1`、横向权重 `1.0`、delta `20 mm`。继续把深度权重降到 `0.01/0.001` 会退化。
+2. `omega` 从每窗独立估计改为最近 31 个因果窗口中位数，train/validation 的 200 ms 横向 P95 从 `200.0/163.9 mm` 降到 `133.1/108.2 mm`。
+3. 真值中心上的端点反射可以把 clean 跨反转误差压到约 10 mm；从 PnP 局部拟合中拆中心/速度再传播会失败，证明隐变量补偿使 center-first 状态不可靠。
+4. 直接将平移写成有限行程三角波，并与四板刚体旋转共同拟合。固定 `omega`、4 s PnP 历史时，train 跨反转 P95 为 `31.3/24.0/31.6 mm`。
+5. 最终模型在同一个长窗内联合搜索 `omega` 和反转相位。clean train 的恒定段与跨反转均近数值精确；PnP train 跨反转为 `37.4/25.0/55.0 mm`。未见端点时平移相位不可辨识，必须保留多假设或 gate，不能强行输出高置信单点。
+6. 候选在 Git `743aa80` 冻结后，`combined-04` 封存 test 只读取一次且测试后不调参。该条件为 4.56 m、1.865 m/s、+11.868 rad/s。直接联合模型恒定段横向 P95 为 `22.6/22.0/30.9 mm`，跨反转为 `16.0/21.9/15.8 mm`，后者只有 `4/4/7` 个样本。深度 P95 仍约 `82--102 mm`。
+
+最终选择是“400 ms 局部 LOS 因子化专家 + 31 窗口 `omega` 慢状态 + 4 s 直接反转相位专家 + 相位歧义多假设/gate”，不是通用 CV、裸 11 维 EKF 或逐帧求中心。开发集仍有条件级 P95 超过 55 mm，truth slot、在线路径参数辨识和生产切换 gate 也未解决，因此尚不接入在线 fire control。
+
+完整逐预测、逐拟合分布与四组 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-final-acceptance-test-04-v1`。正式事实源为 `combined_motion_final_result.md`、`combined_motion_final_registry.json` 和 `combined_motion_final_selection_contract.json`。除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标实质变化，本阶段不再重复实验。
