@@ -173,7 +173,39 @@ LayerNorm + SiLU + dropout 0.05
 - 不用当前 ensemble spread 冒充 calibrated covariance；
 - 不删除旧 refinement、失败运行或历史负证据。
 
-## 10. 证据入口
+## 10. 为什么按运动场景分组，以及组合运动下游传播
+
+角点网络本身**不使用时序，也不按运动场景选择模型**。每个检测帧独立输入 15 维 raw 四边形几何，独立输出四个角点的 8 维修正量；motion mode、session、segment、角速度、线速度和未来状态均未进入网络。完整 segment/session 分组只用于训练外评估，原因有二：
+
+1. 相邻视频帧高度相关，随机拆帧会让几乎相同的相邻图像同时进入训练集和测试集，夸大泛化结果；
+2. 不同运动配置会改变距离、斜视角、板面朝向、可见边缘和图像位置的覆盖。它们不是网络输入，但会改变输入分布，因此必须检查修复规律是否跨采集域成立。
+
+这一区分由两个 OOF 口径同时保留：`network_segment_oof` 表示同采集域内完整 segment 外留；`network_session_oof` 表示整个 combined session 外留、网络只从 spin session 学习。前者回答“同域新轨迹能否改善”，后者回答“未见过的组合运动观测域能否泛化”。部署时若未来通过验证，只会是一个逐帧角点网络，不会先分类平移/旋转/组合运动。
+
+为回答角点改善最终映射到多少组合运动误差，保持 PnP 和阶段 9 冻结的 400 ms 局部 LOS 刚体专家不变，将 `current_refined/raw/network_segment_oof/network_session_oof/exact` 五种同帧角点输入分别传播到 50/100/200 ms 后真值。预测只使用 anchor 及其过去 400 ms；未来真值只在预测生成后评分。主指标为用户定义的 tracker 横向合误差 `sqrt(error_y^2+error_z^2)`，不含 depth。该 atlas 只有 6 个相互独立、每个约 2.2 s 的 combined 配置，因此只能验证局部专家，不能伪造 4 s 反转相位专家结果。
+
+冻结局部专家的全分布摘要如下；`55 mm` 列是诊断覆盖率，不是实弹命中率：
+
+| 角点/PnP 输入 | 时域 | n | mean | P50 | P75 | P90 | <=55 mm |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| current refined | 50 ms | 51 | 41.0 | 11.7 | 43.5 | 110.2 | 80.4% |
+| segment OOF network | 50 ms | 51 | 39.4 | 10.7 | 32.1 | 96.4 | 86.3% |
+| session OOF network | 50 ms | 51 | 50.5 | 17.8 | 51.3 | 125.8 | 74.5% |
+| exact | 50 ms | 51 | 24.6 | 0.0 | 0.0 | 26.4 | 92.2% |
+| current refined | 100 ms | 48 | 60.4 | 13.9 | 51.3 | 141.8 | 77.1% |
+| segment OOF network | 100 ms | 48 | 56.0 | 11.1 | 34.9 | 106.6 | 85.4% |
+| session OOF network | 100 ms | 48 | 67.2 | 17.9 | 58.3 | 147.7 | 70.8% |
+| exact | 100 ms | 48 | 43.0 | 0.0 | 0.0 | 47.7 | 89.6% |
+| current refined | 200 ms | 47 | 96.4 | 44.2 | 87.8 | 187.8 | 55.3% |
+| segment OOF network | 200 ms | 47 | 87.5 | 36.0 | 76.4 | 146.0 | 70.2% |
+| session OOF network | 200 ms | 47 | 92.8 | 42.7 | 71.7 | 177.2 | 68.1% |
+| exact | 200 ms | 47 | 57.7 | 0.0 | 0.01 | 64.6 | 87.2% |
+
+相对 current refined 的同 anchor 配对结果，segment OOF 网络在 50/100/200 ms 分别有 `64.7/68.8/66.0%` 样本改善，平均横向误差变化为 `-1.6/-4.4/-8.9 mm`。但严格 session OOF 在 50/100 ms 仅有 `43.1/45.8%` 样本改善，平均反而增加 `9.6/6.8 mm`；200 ms 平均减少 `3.6 mm`，仍不足以抵消前两时域的负迁移。因此当前网络只证明了**同采集域内可学习、可传播的收益**，尚未证明对未见 combined 域稳定有效。
+
+exact 输入在大多数 anchor 上接近零，却仍在高角速或换向附近出现巨大尾部；精确角点的 PnP 世界位置 P95 只有 `0.0083 mm`，所以这些未来误差属于局部组合运动模型/相位覆盖，而不是角点或 PnP。结论不能写成“优化角点即可解决组合运动”，也不能把 segment OOF 的较好数字当作部署预期。
+
+## 11. 证据入口
 
 训练与模型：
 
@@ -188,4 +220,10 @@ PnP 传播、全分布与图：
 D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4
 ```
 
-其中 `oof_corner_predictions.csv.gz`、`oof_pnp_rows.csv.gz` 和 `paired_deltas_vs_raw.csv.gz` 是逐样本权威；CSV summary、Markdown 和 PNG/PDF 只用于导航，不替代完整分布。精确哈希和失败目录见 `sim_corner_residual_network_registry.json`。
+冻结局部组合运动预测传播、逐预测误差与 ECDF：
+
+```text
+D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2
+```
+
+其中 `oof_corner_predictions.csv.gz`、`oof_pnp_rows.csv.gz`、`paired_deltas_vs_raw.csv.gz` 和下游的 `prediction_rows.csv.gz` 是逐样本权威；CSV summary、Markdown 和 PNG/PDF 只用于导航，不替代完整分布。精确哈希和失败目录见 `sim_corner_residual_network_registry.json`。

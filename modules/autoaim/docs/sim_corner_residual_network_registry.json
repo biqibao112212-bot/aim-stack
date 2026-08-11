@@ -18,6 +18,10 @@
     "pnp_evaluation": {
       "path": "scripts/evaluate-sim-corner-residual-network.py",
       "sha256": "0e320e688b8baf7976a9e45fead50a416465044f7695f7b25174d383a9b2514e"
+    },
+    "combined_downstream_evaluation": {
+      "path": "scripts/evaluate-corner-repair-combined-prediction.py",
+      "sha256": "9078c5b0f112b54cdf246efcfc128923fa4acc29d14e0389109c7b800ead9486"
     }
   },
   "data": {
@@ -54,6 +58,19 @@
       "pose_rows": 51360,
       "paired_delta_rows": 171200,
       "raw_ippe_parity": "passed"
+    },
+    "combined_downstream_evidence": {
+      "path": "D:/仿真/runtime/corner-repair-combined-prediction-20260811-r2",
+      "manifest_sha256": "29a5ab158d3bde7dc6e8ebcb6f7108f03a7e7aba5608414f3865ac049173768e",
+      "report_sha256": "3b2ba2e0bcf61b19848aa3b1a708201b48e948bad617ec60d7c7fa4b706a7bd3",
+      "prediction_rows_sha256": "155771e6838e66b4904c9402f50447089bb4b66270fb960aa7c90d78f555f1bf",
+      "ecdf_png_sha256": "fb451df28d506ec20cc836c8eb9f71b1cd584119087c94cd31c83f5ed304c679",
+      "prediction_rows": 3615,
+      "eligible_causal_anchors": 53,
+      "scope": "frozen 400 ms local LOS expert only; 4 s reversal-phase expert not evaluated",
+      "future_truth_used_as_input": false,
+      "current_refined_tracker_parity_max_m": 1.0011818037879966e-7,
+      "exact_corner_world_position_p95_m": 8.306752729622905e-6
     }
   },
   "failed_and_superseded_runs": [
@@ -110,6 +127,44 @@
       "raw_p50_p95_px": [0.952241, 2.082145],
       "network_p50_p95_px": [0.634703, 1.343260]
     }
+  },
+  "combined_downstream_local_expert": {
+    "metric": "tracker cross-depth sqrt(error_y^2 + error_z^2), excluding depth",
+    "unit": "mm",
+    "horizons_ms": [50, 100, 200],
+    "current_refined": {
+      "mean": [40.96, 60.37, 96.35],
+      "p50": [11.70, 13.90, 44.15],
+      "p75": [43.49, 51.27, 87.79],
+      "p90": [110.18, 141.82, 187.81],
+      "within_55mm_fraction": [0.804, 0.771, 0.553]
+    },
+    "network_segment_oof": {
+      "mean": [39.37, 55.98, 87.48],
+      "p50": [10.71, 11.14, 36.04],
+      "p75": [32.14, 34.87, 76.35],
+      "p90": [96.43, 106.63, 146.00],
+      "within_55mm_fraction": [0.863, 0.854, 0.702],
+      "paired_improved_fraction_vs_current_refined": [0.647, 0.688, 0.660],
+      "paired_mean_delta_mm_vs_current_refined": [-1.59, -4.39, -8.87]
+    },
+    "network_session_oof": {
+      "mean": [50.53, 67.18, 92.80],
+      "p50": [17.80, 17.89, 42.74],
+      "p75": [51.34, 58.33, 71.66],
+      "p90": [125.79, 147.74, 177.22],
+      "within_55mm_fraction": [0.745, 0.708, 0.681],
+      "paired_improved_fraction_vs_current_refined": [0.431, 0.458, 0.638],
+      "paired_mean_delta_mm_vs_current_refined": [9.57, 6.81, -3.55]
+    },
+    "exact": {
+      "mean": [24.58, 42.96, 57.72],
+      "p50": [0.0, 0.0, 0.0],
+      "p75": [0.0, 0.0, 0.01],
+      "p90": [26.44, 47.74, 64.57],
+      "within_55mm_fraction": [0.922, 0.896, 0.872]
+    },
+    "decision": "same-domain segment OOF benefit propagates, but held-combined session OOF is negative at 50/100 ms; current coordinate-only network is not a deployable combined-domain repairer"
   },
   "decision": {
     "pilot_contract_passed": true,

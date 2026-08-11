@@ -792,4 +792,11 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 6. exact corners 的 3D P95 为 `0.0089 mm`，说明 solver/坐标链数值闭合；主误差来自角点模式经平面 PnP 放大。三 seed spread 尚不能可靠识别负迁移，不能当 calibrated covariance 或在线 gate。
 7. 当前结论只授权下一轮仿真图像 patch/heatmap 采集和 image-conditioned 联合修复实验，不授权生产 detector/PnP/tracker/fire control，也不支持 sim-to-real 声明。
 
-完整方法、每个分位、四角点分布、held-session 拆分、图表和限制见 `sim_corner_residual_network.md` 与 `sim_corner_residual_network_registry.json`。逐样本角点和 PnP 权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。
+补充的组合运动下游闭环保持阶段 9 的 400 ms 局部 LOS 专家冻结。角点网络仍是逐帧 15 维几何输入，运动模式和时序不进入模型；segment/session 只用于防止相邻帧泄漏和检查观测域迁移。在 6 个独立短 combined 配置上：
+
+1. 同域 segment OOF 网络相对 current refined，在 50/100/200 ms 的 tracker-y/z 合误差 55 mm 覆盖从 `80.4/77.1/55.3%` 提高到 `86.3/85.4/70.2%`，平均误差减少 `1.6/4.4/8.9 mm`。
+2. 整个 combined session 外留、只用 spin 训练时，50/100 ms 覆盖反而降到 `74.5/70.8%`，平均误差增加 `9.6/6.8 mm`；这证明运动分组是必要的泛化审计，不是网络按运动模式训练。
+3. exact corners 的 PnP 世界位置 P95 为 `0.0083 mm`，但局部专家仍只达到 `92.2/89.6/87.2%` 的 55 mm 覆盖，剩余长尾集中在高角速/换向配置，属于组合模型和相位覆盖问题。
+4. 该 atlas 每个配置仅约 2.2 s，不能评估冻结的 4 s 反转相位专家；当前数字不是完整 hybrid 的生产性能，也不是实弹命中率。
+
+完整方法、每个分位、四角点分布、held-session 拆分、下游 ECDF 和限制见 `sim_corner_residual_network.md` 与 `sim_corner_residual_network_registry.json`。逐样本角点、PnP 和局部组合预测权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`、`D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。
