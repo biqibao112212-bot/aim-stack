@@ -779,3 +779,17 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 8. exact-corner 历史消融已证明当前 IPPE/坐标链可在理想角点下闭合；正式 144-session schema 没有角点，不能伪造同帧角点全链消融。两层证据共同指向 tracker-y/hit-plane 方向敏感的角点/PnP 目标。
 
 完整叙事和全分布入口为 `combined_motion_pnp_error_reduction.md` 与 `combined_motion_pnp_error_reduction_registry.json`。正式预测证据位于 `D:\仿真\runtime\combined-pnp-error-reduction-144-v2`，测量筛选位于 `D:\仿真\runtime\combined-pnp-correction-screen-144-v1`。生产 PnP、tracker、predictor、simulator、SDK、Release 和 fire control 均未修改。
+
+## 阶段 11：仿真四角点联合残差网络
+
+阶段 10 的组合运动模型和预测结果保持冻结；本阶段回到角点上游，只研究“联合修复四个 raw detector 角点能否改善未改动 free-IPPE”。
+
+1. 使用 4,280 个检测、2 个 session、12 个完整 segment 的 frozen atlas。15 维输入只来自 raw 四边形中心、尺度、形状和方向；禁止输入 truth、range、斜视角、运动模式、session、身份、PnP 或未来量。
+2. 低容量 `15-64-64-8` MLP 联合输出四点 `(dx,dy)`；三 seed ensemble。主验证为 12 折完整 segment 外留，压力验证为 2 折完整 session 外留，内验证也使用完整 segment，不随机拆帧。
+3. 主折角点 RMS P25/P50/P75/P90/P95/P99 从 raw `0.679/0.962/1.324/1.779/2.139/2.891 px` 降到 `0.424/0.586/0.857/1.205/1.446/2.144 px`。四个角点分别改善，当前 inherited refinement 在该 atlas 上反而更差。
+4. 训练完成后独立运行原 free-IPPE。4,280 条 raw 重算与历史 production-matched 证据的最大位置差 `<1.1e-12 mm`。网络将 3D P50/P90/P95 从 `142.9/369.5/458.3 mm` 降至 `59.9/203.3/277.9 mm`，camera 横向从 `7.90/17.55/21.28 mm` 降至 `3.45/11.05/14.59 mm`。
+5. 改善不是逐帧保证：主折 3D/横向仍有 `25.35%/22.92%` 样本变差。跨 session 合并后仍改善，但 held-combined 的角点 P50/P95 从 raw `0.969/2.186 px` 恶化到网络 `1.177/2.317 px`；held-spin 则显著改善到 `0.635/1.343 px`。总体分布不能掩盖这个方向不对称。
+6. exact corners 的 3D P95 为 `0.0089 mm`，说明 solver/坐标链数值闭合；主误差来自角点模式经平面 PnP 放大。三 seed spread 尚不能可靠识别负迁移，不能当 calibrated covariance 或在线 gate。
+7. 当前结论只授权下一轮仿真图像 patch/heatmap 采集和 image-conditioned 联合修复实验，不授权生产 detector/PnP/tracker/fire control，也不支持 sim-to-real 声明。
+
+完整方法、每个分位、四角点分布、held-session 拆分、图表和限制见 `sim_corner_residual_network.md` 与 `sim_corner_residual_network_registry.json`。逐样本角点和 PnP 权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。

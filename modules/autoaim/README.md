@@ -41,7 +41,8 @@ Windows 原生桥的正式二进制和 engine 由上述端到端脚本校验；�
 普通装甲板 PnP yaw 的历史阶段二（G2）修复、坐标语义和动态靶场证据记录在
 [docs/pnp_yaw_stage2.md](docs/pnp_yaw_stage2.md)。当前从四角点开始的逐阶段数据处理、
 证据边界和待补缺口统一记录在
-[docs/trajectory_evidence_chain.md](docs/trajectory_evidence_chain.md)；预测器研究当前暂停。
+[docs/trajectory_evidence_chain.md](docs/trajectory_evidence_chain.md)。2026-08-11 的仿真四角点联合残差网络、完整 OOF 分布、跨 session 负迁移和 PnP 传播记录在
+[docs/sim_corner_residual_network.md](docs/sim_corner_residual_network.md)；该网络仅为离线仿真 pilot，预测器研究和生产接入仍暂停。
 
 ## 当前联合性能基线
 

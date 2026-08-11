@@ -1,0 +1,82 @@
+{
+  "schema_version": "autoaim-sim-corner-residual-network-contract-v1",
+  "frozen_at": "2026-08-11",
+  "status": "offline simulation pilot; no production detector, PnP, tracker or fire-control integration",
+  "question": "Can one joint network predict a transferable 8-D correction for the detector's four raw corners and improve the unchanged free-IPPE pose chain?",
+  "data": {
+    "atlas": "D:/仿真/runtime/stage3-corner-observation-atlas-v1-observational-20260805-r3/rows.csv",
+    "atlas_sha256": "dd4e35cd5e67971fa996776466817ae7c521349b6e2223328f7267e1ede6bc88",
+    "samples": 4280,
+    "sessions": 2,
+    "segments": 12,
+    "image_patches_available": false,
+    "camera_profile": "wide_6mm",
+    "distance_range_m": [1.6791871453325329, 5.6898939402446755]
+  },
+  "input_allowlist": [
+    "raw bl/tl/tr/br image coordinates",
+    "image width and height",
+    "features derived only from the raw quadrilateral: center, centered shape, scale, aspect and orientation"
+  ],
+  "input_forbidden": [
+    "truth corners or truth pose",
+    "range_m",
+    "view_incidence_cos",
+    "motion_mode or configured motion",
+    "session, segment, truth slot or association fields",
+    "PnP output, future truth or prediction horizon"
+  ],
+  "label": "exact_projected_corners_px - raw_detector_corners_px",
+  "model": {
+    "family": "joint-four-corner-residual-mlp-v1",
+    "feature_dimension": 15,
+    "hidden_dimensions": [64, 64],
+    "activation": "SiLU",
+    "normalization": "LayerNorm",
+    "dropout": 0.05,
+    "output_dimension": 8,
+    "maximum_absolute_correction_px": 6.0,
+    "loss": "SmoothL1 on train-standardized signed corner residuals",
+    "optimizer": "AdamW",
+    "learning_rate": 0.001,
+    "weight_decay": 0.0001,
+    "batch_size": 256,
+    "maximum_epochs": 240,
+    "early_stopping_patience": 30,
+    "gradient_clip_norm": 1.0,
+    "seeds": [17, 29, 43]
+  },
+  "split_contract": {
+    "primary": "12-fold leave-one-complete-(session_id, segment_index)-group-out",
+    "stress": "2-fold leave-one-complete-session-out",
+    "inner_validation": "one deterministic complete training group, never a random frame split",
+    "outer_test_used_for_early_stopping": false,
+    "ensemble": "mean of the three seed predictions; standard deviation retained as uncertainty evidence"
+  },
+  "baselines": [
+    "raw corners",
+    "train-fold per-coordinate mean residual correction",
+    "train-fold ridge residual mapping using the identical observable features",
+    "current inherited raw-to-refined corner heuristic",
+    "oracle exact projected corners"
+  ],
+  "pnp_contract": {
+    "solver": "unchanged production-matched cv2 SOLVEPNP_IPPE with Point2f/Point3f, 135x55 mm object, lowest reprojection candidate",
+    "camera_matrix_and_distortion": "exact exposure observation metadata; not model input",
+    "truth_usage": "offline pose scoring only",
+    "required_raw_parity": "recomputed raw arm must reproduce the retained production-matched arm rows before network conclusions are accepted"
+  },
+  "metrics": {
+    "corner": "complete paired 8-D and per-corner empirical distributions, mean/P10/P25/P50/P75/P90/P95/P99/max and CDF gates",
+    "pnp": "3-D, camera-lateral, absolute-depth, reprojection and paired improve/worsen distributions",
+    "reporting_unit": "point, detection, held group and held session",
+    "percentile_only_reporting_forbidden": true
+  },
+  "pilot_acceptance": [
+    "primary OOF joint-network corner P50, P90 and P95 are all lower than raw and current refinement",
+    "primary OOF selected PnP 3-D and camera-lateral P50, P90 and P95 are all no worse than raw",
+    "stress leave-session-out reports the same metrics without being hidden by the primary result",
+    "every prediction row, fold assignment, checkpoint hash and failed run is retained"
+  ],
+  "boundary": "Passing this pilot only authorizes a new simulation image/heatmap collection and image-conditioned network experiment; it does not authorize real-car or online use."
+}
