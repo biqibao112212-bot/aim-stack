@@ -166,6 +166,54 @@
     },
     "decision": "same-domain segment OOF benefit propagates, but held-combined session OOF is negative at 50/100 ms; current coordinate-only network is not a deployable combined-domain repairer"
   },
+  "continued_generalization_audit": {
+    "evidence_root": "D:\\仿真\\runtime\\corner-repair-generalization-shrinkage-20260811-r1",
+    "manifest_sha256": "372da889f427e92400723e4925ce5ac5044a70d351c956a9ddef14b704e9fc97",
+    "method": "mean correction plus inner-validation-selected alpha times the network-minus-mean residual",
+    "selection_metric": "mean coordinate RMS over the complete inner validation distribution",
+    "outer_test_accessed_for_alpha_selection": false,
+    "held_combined": {
+      "selected_alpha": 1.0,
+      "raw_mean_p50_p90_p95_p99_px": [1.089322, 0.969022, 1.797764, 2.185597, 3.188223],
+      "nested_mean_p50_p90_p95_p99_px": [1.294565, 1.176864, 2.033107, 2.317060, 3.073918]
+    },
+    "held_spin": {
+      "selected_alpha": 0.95,
+      "raw_mean_p50_p90_p95_p99_px": [1.049485, 0.952241, 1.772285, 2.082145, 2.675531],
+      "nested_mean_p50_p90_p95_p99_px": [0.687801, 0.636412, 1.157391, 1.333993, 1.935687]
+    },
+    "decision": "inner-session validation does not identify held-combined negative transfer; shrinkage, early stopping, and ensemble spread do not make the two-session coordinate network deployable"
+  },
+  "image_conditioned_training_blocker": {
+    "simulator_release": "1.2.1",
+    "distribution_locked": true,
+    "exact_exposure_camera_rows": 1541,
+    "saved_images": 308,
+    "rows_with_nonempty_ground_truth_targets": 0,
+    "uniform_motion_only": true,
+    "endpoint_or_reversal_in_scope": false,
+    "proposal": "modules/autoaim/docs/corner_repair_image_training_data_proposal.md",
+    "simulator_change_approved": false,
+    "decision": "do not train an image repairer with approximate screenshot labels; wait for an approved simulator-owned offline exact-corner label export"
+  },
+  "detector_engine_contract_audit": {
+    "onnx": "0526.onnx",
+    "failure": "direct FP16 ONNX to TensorRT conversion degraded both FP16-optimized and FP32 engines",
+    "repair": "convert the FP16 input, 120 FP16 initializers, and FP16 value-info contracts to FP32 before building a TensorRT FP32 engine",
+    "conversion_script": "scripts/convert-armor-onnx-fp16-to-fp32.py",
+    "converted_onnx_sha256": "1d9233eb74391347d20352cd6cbcb847976784be0ac609ebec2bee626ac1b303",
+    "engine_sha256": "9ea042fbff7d52b2675255db34082e57a16c516775b784cb11af80c4422587e7",
+    "single_image_onnx_trt_confidence": [0.868835, 0.868896],
+    "single_image_same_candidate_row": 2441,
+    "uniform_spin_smoke": {
+      "evidence_root": "D:\\仿真\\runtime\\stage3-corner-engine-fixed-smoke-20260811-r1",
+      "stage3_rows": 829,
+      "rows_with_armors": 817,
+      "armor_observations": 1099,
+      "saved_images": 212
+    },
+    "decision": "consumer image and detector/PnP acquisition is operational; exact projected-corner supervision remains absent"
+  },
   "decision": {
     "pilot_contract_passed": true,
     "production_integration": false,

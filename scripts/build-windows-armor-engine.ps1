@@ -4,6 +4,8 @@ param(
   [string]$TensorRtRoot,
   [string]$CudnnBin,
   [string]$OutputPath,
+  [ValidateSet('fp16', 'fp32')]
+  [string]$Precision = 'fp16',
   [int]$WorkspaceMiB = 2048
 )
 
@@ -19,7 +21,7 @@ if (-not $CudnnBin) {
   $CudnnBin = Join-Path $workspace 'runtime\tool-cache\cudnn-8.9.6.50-windows-cuda11\package\cudnn-windows-x86_64-8.9.6.50_cuda11-archive\bin'
 }
 if (-not $OutputPath) {
-  $OutputPath = Join-Path $workspace 'models\engines\windows\armor-0708-trt861-win-rtx4060-fp16.engine'
+  $OutputPath = Join-Path $workspace "models\engines\windows\armor-0708-trt861-win-rtx4060-$Precision.engine"
 }
 $python = 'D:\Anaconda\envs\yolov8\python.exe'
 $cudaBin = 'C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v11.3\bin'
@@ -52,6 +54,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--onnx", required=True)
 parser.add_argument("--output", required=True)
 parser.add_argument("--workspace-mib", type=int, required=True)
+parser.add_argument("--precision", choices=("fp16", "fp32"), required=True)
 args = parser.parse_args()
 
 import tensorrt as trt
@@ -80,9 +83,10 @@ finally:
 
 config = builder.create_builder_config()
 config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, args.workspace_mib * 1024 * 1024)
-if not builder.platform_has_fast_fp16:
-    raise RuntimeError("The active Windows GPU does not report fast FP16 support")
-config.set_flag(trt.BuilderFlag.FP16)
+if args.precision == "fp16":
+    if not builder.platform_has_fast_fp16:
+        raise RuntimeError("The active Windows GPU does not report fast FP16 support")
+    config.set_flag(trt.BuilderFlag.FP16)
 serialized = builder.build_serialized_network(network, config)
 if serialized is None:
     raise RuntimeError("TensorRT returned no serialized engine")
@@ -123,7 +127,7 @@ metadata = {
     "onnx_sha256": hashlib.sha256(onnx_path.read_bytes()).hexdigest(),
     "onnx_bytes": onnx_path.stat().st_size,
     "tensorrt_version": trt.__version__,
-    "precision": "fp16",
+    "precision": args.precision,
     "workspace_mib": args.workspace_mib,
     "io_tensors": io,
     "gpu": gpu.stdout.strip(),
@@ -133,7 +137,7 @@ meta_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2) + "\n", 
 print(json.dumps(metadata, ensure_ascii=False, indent=2))
 '@
 
-$builder | & $python - --onnx $OnnxPath --output $OutputPath --workspace-mib $WorkspaceMiB
+$builder | & $python - --onnx $OnnxPath --output $OutputPath --workspace-mib $WorkspaceMiB --precision $Precision
 if ($LASTEXITCODE -ne 0) {
   throw "TensorRT engine generation failed with exit code $LASTEXITCODE"
 }

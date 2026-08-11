@@ -1,5 +1,6 @@
 #include "aim_sim_bridge/pipeline.hpp"
 #include "aim_sim_bridge/stage3_capture.hpp"
+#include "stage3_image_capture.hpp"
 
 #include <daedalus_sim_sdk/talos_metadata_reader.hpp>
 #include <daedalus_sim_sdk/tcp_image_client.hpp>
@@ -56,6 +57,11 @@ int main(int argc, char** argv) {
   config.publish_no_target = false;
   config.pre_tracker_observation_sink = aim_sim_bridge::createStage3ObservationSinkFromEnv();
   auto pipeline = aim_sim_bridge::createAimPipeline(config);
+  aim_sim_bridge::Stage3ImageCapture image_capture;
+  if (!image_capture.error().empty()) {
+    std::cerr << image_capture.error() << '\n';
+    return 7;
+  }
   TcpImageClient images;
   const auto connected = images.connect();
   if (!connected) { std::cerr << "tcp connect failed: " << connected.message << '\n'; return 2; }
@@ -89,6 +95,12 @@ int main(int argc, char** argv) {
     frame.source_capture_timestamp_ns = image.value->header.capture_timestamp_ns;
     frame.source_image_width = raw.cols;
     frame.source_image_height = raw.rows;
+    if (!image_capture.submit(frame.bgr_image, frame.source_producer_epoch,
+                              frame.source_image_seq,
+                              frame.source_capture_timestamp_ns)) {
+      std::cerr << image_capture.error() << '\n';
+      return 8;
+    }
     if (gimbal) {
       frame.gimbal_pose_timestamp_ns = gimbal.value->timestamp_ns;
       frame.gimbal_pose_exposure_matched = gimbal.value->frame_seq == sequence;
