@@ -1,0 +1,122 @@
+{
+  "schema_version": "autoaim-combined-motion-pnp-error-reduction-registry-v1",
+  "updated_at": "2026-08-11",
+  "scope": "held-session PnP downstream correction, combined-motion future replay, coordinate truth restoration, residual scaling, state-fit attribution, nested postprocessing and upstream corner linkage",
+  "status": "offline evidence accepted; no production PnP, tracker, predictor or fire-control integration authorized",
+  "metric": {
+    "primary": "sqrt(error_tracker_y_m^2 + error_tracker_z_m^2)",
+    "diagnostic_gate_m": 0.055,
+    "gate_is_live_hit_probability": false,
+    "fixed_horizons_s": [0.05, 0.1, 0.2],
+    "distance_or_projectile_speed_used_to_choose_horizon": false
+  },
+  "authorities": {
+    "measurement_screen": {
+      "path": "D:\\仿真\\runtime\\combined-pnp-correction-screen-144-v1",
+      "manifest_sha256": "2230059111b6f54901d5b871f38cdc8c015183f6c1d285bb94bc0af6e37c4ce7",
+      "sessions": 144,
+      "events": 465311,
+      "complete_distribution": "measurement_error_distribution.csv.gz"
+    },
+    "accepted_prediction_replay": {
+      "path": "D:\\仿真\\runtime\\combined-pnp-error-reduction-144-v2",
+      "manifest_sha256": "291e2e4f63315d4a3811fd645cc08747c281b97c7590dbc98dc48d849b81e41a",
+      "sessions": 144,
+      "prediction_rows": 76945,
+      "fit_rows": 27401,
+      "coverage_rows": 4122,
+      "failures": 0
+    },
+    "accepted_analysis": {
+      "path": "D:\\仿真\\runtime\\combined-pnp-error-reduction-144-v2\\analysis-v1",
+      "manifest_sha256": "a3c5360413fbb06d334576ef3f6dbbc6e7ed6cabe29a2de816c2a4ed59cee362",
+      "parent_parity": "raw_pnp and clean_exact each match all 6995 parent predictions exactly across cross-depth, depth and 3D metrics"
+    },
+    "nested_postprocessor": {
+      "path": "D:\\仿真\\runtime\\combined-pnp-nested-postprocess-144-v1-r2",
+      "result_sha256": "eee5175d8efc479912430cf73fbfdee34496f9e1a5a30ce43a4b415945d46daf",
+      "promoted": false,
+      "finding": "all outer folds selected cross_yz_only/full-strength/unbounded, but it ties full xyz on the current metric"
+    },
+    "yz_prediction_probe": {
+      "path": "D:\\仿真\\runtime\\combined-pnp-yz-prediction-probe-144-v1",
+      "manifest_sha256": "58247321508d030e43155a2cf071191d0c3ea0f45e5247c4d66a8d086ffbb8e1",
+      "promoted": false,
+      "finding": "slightly better median and gate coverage, but worse P90/P95 at 100/200 ms; fails the frozen all-horizon rule"
+    }
+  },
+  "invalid_or_failed_evidence": [
+    {
+      "path": "D:\\仿真\\runtime\\combined-pnp-error-reduction-144-v1",
+      "status": "invalid",
+      "reason": "valid PnP position events with unavailable yaw were incorrectly deleted from every intervention history"
+    },
+    {
+      "path": "D:\\仿真\\runtime\\combined-pnp-nested-postprocess-144-v1",
+      "status": "failed before result",
+      "reason": "Windows worker could not deserialize a dynamically loaded module function; fixed by a top-level worker wrapper in r2"
+    }
+  ],
+  "measurement_result": {
+    "raw_cross_depth_p50_p90_p95_p99_mm": [96.97, 317.61, 427.43, 2100.06],
+    "corrected_cross_depth_p50_p90_p95_p99_mm": [46.40, 205.23, 303.25, 1691.04],
+    "raw_55mm_coverage": 0.31885,
+    "corrected_55mm_coverage": 0.55404
+  },
+  "constant_twist_prediction_result": {
+    "raw_55mm_coverage_50_100_200ms": [0.2531, 0.2580, 0.2699],
+    "corrected_55mm_coverage_50_100_200ms": [0.5864, 0.5352, 0.4376],
+    "raw_p50_mm_50_100_200ms": [103.0, 102.6, 105.7],
+    "corrected_p50_mm_50_100_200ms": [43.8, 49.5, 67.3],
+    "corrected_p90_mm_50_100_200ms": [182.0, 210.6, 257.3],
+    "corrected_p95_mm_50_100_200ms": [261.7, 295.5, 371.2],
+    "paired_improved_fraction_50_100_200ms": [0.821, 0.771, 0.694],
+    "paired_worsened_fraction_50_100_200ms": [0.179, 0.229, 0.306]
+  },
+  "causal_attribution": {
+    "dominant_coordinate": "tracker_y",
+    "truth_tracker_y_55mm_coverage_50_100_200ms": [0.911, 0.891, 0.849],
+    "truth_depth_only_55mm_coverage_50_100_200ms": [0.252, 0.276, 0.289],
+    "remaining_residual_alpha_0_25_55mm_coverage_50_100_200ms": [0.787, 0.795, 0.740],
+    "remaining_residual_alpha_0_25_p90_mm_50_100_200ms": [76.1, 77.2, 90.4],
+    "conclusion": "about 75 percent uniform PnP residual reduction is sufficient for a large majority, but insufficient for P90 within 55 mm"
+  },
+  "state_fit": {
+    "raw_omega_abs_error_p50_p95_rad_s": [0.180, 0.445],
+    "corrected_omega_abs_error_p50_p95_rad_s": [0.119, 0.417],
+    "truth_tracker_y_omega_abs_error_p50_p95_rad_s": [0.046, 0.168],
+    "clean_omega_abs_error_p50_p95_rad_s": [0.000020, 0.000121]
+  },
+  "corner_bridge": {
+    "same_frame_corner_intervention_available_in_formal_144": false,
+    "exact_corner_pnp_position_p50_p95_p99_mm": [0.003137, 0.008862, 0.012252],
+    "refined_corner_pnp_position_p50_p95_p99_mm": [140.776, 500.283, 708.478],
+    "refined_corner_pnp_lateral_p50_p95_p99_mm": [6.742, 25.015, 35.000],
+    "authorities": [
+      "modules/autoaim/docs/corner_evidence_registry.json",
+      "modules/autoaim/docs/hit_oriented_ablation_registry.json"
+    ],
+    "implication": "future corner/PnP optimization should target tracker-y or truth-depth hit-plane error, not reprojection RMS or undirected 3D error alone"
+  },
+  "decision": {
+    "retained_downstream_candidate": "cross-fitted observed-yaw harmonic full-xyz correction with raw fallback, offline only",
+    "not_selected": [
+      "oracle slot or truth-phase conditioning as the next priority",
+      "nested blend/cap postprocessing",
+      "cross-yz-only correction",
+      "depth-only correction",
+      "higher-order nonlinear correction without independent evidence",
+      "direct EKF retuning"
+    ],
+    "next_priorities": [
+      "independent-session validation of the low-capacity correction",
+      "tracker-y/hit-plane-oriented corner and PnP optimization",
+      "tail support, calibrated rejection and uncertainty",
+      "separate reversal mode/change-point hypotheses"
+    ]
+  },
+  "source_commits": {
+    "frozen_screen_and_replay_implementation": "2cf4379",
+    "parent_large_scale_validation": "c9b45901b085d0a9a2345918669b0e4bf76c1128"
+  }
+}

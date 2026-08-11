@@ -56,6 +56,11 @@ def parse_args() -> argparse.Namespace:
         "--workers", type=int, default=max(1, min(8, os.cpu_count() or 1))
     )
     parser.add_argument("--session-limit", type=int, default=None)
+    parser.add_argument(
+        "--arm-filter",
+        default=None,
+        help="Optional comma-separated subset for a targeted follow-up replay.",
+    )
     return parser.parse_args()
 
 
@@ -105,10 +110,14 @@ def read_conditions(manifest_path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def arm_names(promoted: str | None, oracle: str) -> list[str]:
+def arm_names(
+    promoted: str | None, oracle: str, include_cross_yz: bool = False
+) -> list[str]:
     names = ["raw_pnp"]
     if promoted is not None:
         names.append(f"crossfit_{promoted}")
+        if include_cross_yz:
+            names.append(f"crossfit_{promoted}_cross_yz")
     names.append(f"oracle_{oracle}")
     names.extend(
         (
@@ -128,13 +137,24 @@ def build_arm_histories(
     workspace: Path,
     condition: dict[str, Any],
     models_path: Path,
+    arm_filter: str | None = None,
 ) -> tuple[list[Any], dict[str, Any], list[str]]:
     large, screen, base, _, _ = modules(repo)
     frames, audit, _ = large.load_formal_session(repo, workspace, condition)
     payload = json.loads(models_path.read_text(encoding="utf-8-sig"))
     promoted = payload.get("promoted_deployable_arm")
     oracle = str(payload["best_oracle_arm"])
-    names = arm_names(promoted, oracle)
+    requested = {
+        name.strip() for name in (arm_filter or "").split(",") if name.strip()
+    }
+    cross_yz_name = (
+        f"crossfit_{promoted}_cross_yz" if promoted is not None else None
+    )
+    names = arm_names(
+        promoted,
+        oracle,
+        include_cross_yz=cross_yz_name is not None and cross_yz_name in requested,
+    )
     for frame in frames:
         frame.intervention_world_m = {
             name: np.full((4, 3), np.nan, dtype=np.float64) for name in names
@@ -166,6 +186,8 @@ def build_arm_histories(
             frame.intervention_world_m["raw_pnp"][slot] = observed_world
             if promoted is not None:
                 frame.intervention_world_m[f"crossfit_{promoted}"][slot] = observed_world
+                if cross_yz_name in names:
+                    frame.intervention_world_m[cross_yz_name][slot] = observed_world
             frame.intervention_world_m[f"oracle_{oracle}"][slot] = observed_world
             for name, tracker in tracker_values.items():
                 frame.intervention_world_m[name][slot] = (
@@ -258,9 +280,15 @@ def build_arm_histories(
     fold_models = payload["models"][str(fold)]
     values: dict[str, np.ndarray] = {}
     if promoted is not None:
-        values[f"crossfit_{promoted}"] = screen.predict_model(
+        corrected = screen.predict_model(
             feature_rows, fold_models[promoted]
         )
+        values[f"crossfit_{promoted}"] = corrected
+        if cross_yz_name in names:
+            observed, _ = screen.targets(feature_rows)
+            values[cross_yz_name] = np.column_stack(
+                (observed[:, 0], corrected[:, 1], corrected[:, 2])
+            )
     values[f"oracle_{oracle}"] = screen.predict_model(feature_rows, fold_models[oracle])
 
     for index, (frame, slot) in enumerate(references):
@@ -307,8 +335,8 @@ def intervention_history(
     )
 
 
-def evaluate_session(task: tuple[str, str, str, dict[str, Any]]) -> dict[str, Any]:
-    repo_raw, workspace_raw, models_raw, condition = task
+def evaluate_session(task: tuple[str, str, str, dict[str, Any], str | None]) -> dict[str, Any]:
+    repo_raw, workspace_raw, models_raw, condition, arm_filter = task
     repo = Path(repo_raw)
     workspace = Path(workspace_raw)
     models_path = Path(models_raw)
@@ -316,8 +344,14 @@ def evaluate_session(task: tuple[str, str, str, dict[str, Any]]) -> dict[str, An
     try:
         large, _, base, direct, joint = modules(repo)
         frames, audit, names = build_arm_histories(
-            repo, workspace, condition, models_path
+            repo, workspace, condition, models_path, arm_filter
         )
+        if arm_filter:
+            requested = [name.strip() for name in arm_filter.split(",") if name.strip()]
+            missing = sorted(set(requested) - set(names))
+            if missing:
+                raise ValueError(f"unknown arm filter values: {missing}")
+            names = requested
         geometry = frames[0].armor_local_m
         direction = math.radians(float(condition["direction_deg"]))
         axis = np.asarray([math.cos(direction), math.sin(direction), 0.0])
@@ -635,7 +669,8 @@ def main() -> None:
     if args.session_limit is not None:
         conditions = conditions[: args.session_limit]
     tasks = [
-        (str(repo), str(workspace), str(models_path), condition) for condition in conditions
+        (str(repo), str(workspace), str(models_path), condition, args.arm_filter)
+        for condition in conditions
     ]
     predictions: list[dict[str, Any]] = []
     fits: list[dict[str, Any]] = []

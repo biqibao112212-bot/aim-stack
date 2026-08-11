@@ -251,3 +251,21 @@ D:\仿真\runtime\combined-motion-large-scale-144-v2
 - `analysis/analysis_summary.json`：机器可读结论。
 
 评测协议见 `combined_motion_large_scale_validation_contract.json`，证据哈希和关键结果见 `combined_motion_large_scale_validation_registry.json`。
+
+## 14. 后续 PnP 压误差与分层消融
+
+本报告的 raw PnP 与 clean direct-joint 结果已被后续回放逐行复现：两臂各 6,995 条预测在横向、深度和 3D 误差上最大差均为 0。后续研究没有更换组合运动模型，而是在相同 anchor、相同可见弧、相同 offline slot 和相同未来真值上加入：
+
+- 五折整 session 的低容量 PnP 偏差校正；
+- tracker `x/y/z` 分坐标真值复原；
+- `alpha=0.75/0.50/0.25` 的 PnP 残差缩放；
+- 嵌套 blend/cap/coordinate-mask 后处理；
+- y/z-only 未来预测 probe。
+
+正式结论是：observed-yaw harmonic 把恒扭段 50/100/200 ms 的 55 mm 覆盖从 `25.3/25.8/27.0%` 提升到 `58.6/53.5/43.8%`，但 P95 仍为 `261.7/295.5/371.2 mm`。tracker-y 是主导因果坐标；depth-only 几乎不改善当前命中相关横向预测。整体 PnP 残差缩小约 75% 可让约四分之三预测进入门限，但仍不能让 P90 通过。
+
+完整协议、全分布和角点上游连接见：
+
+- `combined_motion_pnp_error_reduction.md`；
+- `combined_motion_pnp_error_reduction_contract.json`；
+- `combined_motion_pnp_error_reduction_registry.json`。

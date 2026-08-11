@@ -1,0 +1,18 @@
+{
+  "schema_version": "autoaim-combined-motion-pnp-yz-prediction-probe-contract-v1",
+  "frozen_at": "2026-08-11",
+  "purpose": "Determine whether preserving raw PnP depth while applying the cross-fitted yaw-harmonic correction only to tracker y/z improves the downstream combined-motion physical fit.",
+  "motivation_evidence": [
+    "Nested outer-session measurement selection chose cross_yz_only in all five folds, tied exactly with full_xyz on current cross-depth error.",
+    "The frozen coordinate intervention found truth depth alone had negligible effect on future cross-depth error, while tracker-y restoration dominated."
+  ],
+  "parent_replay": "D:/仿真/runtime/combined-pnp-error-reduction-144-v2",
+  "candidate": "crossfit_yaw_harmonic_cross_yz: corrected tracker y/z with raw tracker x depth",
+  "reference": "crossfit_yaw_harmonic full xyz correction from the parent replay",
+  "replay_arm_filter": "crossfit_yaw_harmonic_cross_yz",
+  "dataset_and_split": "same 144 formal combined sessions and the same held-session correction fold per session",
+  "anchor_future_identity_model": "identical to combined_motion_pnp_error_reduction_contract.json",
+  "selection": "Prefer yz-only only if 55 mm coverage is no worse and P50, P90 and P95 are all no worse than full xyz at every constant-twist horizon; otherwise retain full xyz.",
+  "status_boundary": "offline oracle-identity downstream diagnostic; not production authorization",
+  "complete_row_level_predictions_retained": true
+}

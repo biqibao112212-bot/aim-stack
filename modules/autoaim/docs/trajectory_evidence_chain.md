@@ -764,3 +764,18 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 最终选择是“400 ms 局部 LOS 因子化专家 + 31 窗口 `omega` 慢状态 + 4 s 直接反转相位专家 + 相位歧义多假设/gate”，不是通用 CV、裸 11 维 EKF 或逐帧求中心。开发集仍有条件级 P95 超过 55 mm，truth slot、在线路径参数辨识和生产切换 gate 也未解决，因此尚不接入在线 fire control。
 
 完整逐预测、逐拟合分布与四组 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-final-acceptance-test-04-v1`。正式事实源为 `combined_motion_final_result.md`、`combined_motion_final_registry.json` 和 `combined_motion_final_selection_contract.json`。除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标实质变化，本阶段不再重复实验。
+
+## 阶段 10：组合运动 PnP 下游校正与分层因果定位
+
+阶段 9 的物理模型保持冻结；本阶段只研究当前 PnP 如何限制最终组合预测：
+
+1. 144 条正式 combined session、465,311 个观测事件按 session hash 做五折交叉拟合；可部署候选只使用 PnP tracker XYZ、range、camera profile 和 observed yaw harmonics。
+2. 当前观测的 tracker-y/z 合误差从 raw `97.0/317.6/427.4/2100.1 mm` P50/P90/P95/P99 改善到 `46.4/205.2/303.2/1691.0 mm`，55 mm 覆盖从 31.9% 提高到 55.4%。
+3. 在父实验完全相同的常规恒扭 anchor 上，50/100/200 ms 55 mm 覆盖从 `25.3/25.8/27.0%` 提高到 `58.6/53.5/43.8%`；逐样本变好比例为 `82.1/77.1/69.4%`，但仍有 `17.9/22.9/30.6%` 变差。
+4. tracker-y 真值复原把覆盖提高到 `91.1/89.1/84.9%`；depth-only 与 z-only 几乎不变。当前命中相关主瓶颈是 tracker-y，不是 depth 3D 长尾本身。
+5. 保留 25% PnP 残差时，覆盖为 `78.7/79.5/74.0%`，但 P90 仍为 `76.1/77.2/90.4 mm`。约 75% 残差缩减足以让大部分点进入门限，却不足以让 90% 点稳定通过。
+6. cross-reversal 的 clean P95 仍为 `24.1/142.1/342.3 mm`，说明反转模式/时刻是独立于 PnP 的未来信息问题。
+7. 五折嵌套后处理选择 y/z-only、全强度、不限幅，但未来 probe 在改善中位和 gate 的同时损害 100/200 ms P90/P95，未通过冻结规则；正式保留 full-XYZ yaw harmonic 作为离线候选，不接入生产。
+8. exact-corner 历史消融已证明当前 IPPE/坐标链可在理想角点下闭合；正式 144-session schema 没有角点，不能伪造同帧角点全链消融。两层证据共同指向 tracker-y/hit-plane 方向敏感的角点/PnP 目标。
+
+完整叙事和全分布入口为 `combined_motion_pnp_error_reduction.md` 与 `combined_motion_pnp_error_reduction_registry.json`。正式预测证据位于 `D:\仿真\runtime\combined-pnp-error-reduction-144-v2`，测量筛选位于 `D:\仿真\runtime\combined-pnp-correction-screen-144-v1`。生产 PnP、tracker、predictor、simulator、SDK、Release 和 fire control 均未修改。
