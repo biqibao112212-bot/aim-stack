@@ -1,0 +1,88 @@
+{
+  "schema_version": "autoaim-combined-motion-pnp-error-reduction-contract-v1",
+  "frozen_at": "2026-08-11",
+  "purpose": "Test whether a causal downstream correction can reduce PnP-driven combined-motion prediction error, then localize the remaining error with coordinate and upstream truth interventions.",
+  "dataset": {
+    "dataset_id": "stage3-20260719-v1",
+    "manifest_path": "D:/仿真/dataset/autoaim-stage3-v1/stage3-20260719-v1/session_manifest.jsonl",
+    "included_mode": "linear_and_spin",
+    "planned_session_count": 144,
+    "authoritative_runs": "D:/仿真/runtime/stage3-formal-20260720-v2/<session_id>/session_result.json",
+    "session_is_independent_unit": true
+  },
+  "measurement_screen": {
+    "split": "five deterministic session-hash folds; every reported deployable prediction is cross-fitted from the other four folds",
+    "no_random_frame_split": true,
+    "runtime_features": [
+      "selected PnP tracker-frame x/y/z",
+      "selected PnP range",
+      "selected PnP yaw_absolute_rad",
+      "camera_profile_id"
+    ],
+    "missing_yaw_policy": "Preserve the position event and fall back to raw PnP for correction arms; never delete a valid position merely because yaw is unavailable.",
+    "deployable_candidates": [
+      "cross-session robust affine",
+      "cross-session robust affine plus four observed-yaw harmonics and range interactions"
+    ],
+    "oracle_candidates": [
+      "observed-yaw model plus offline truth slot",
+      "truth radial phase harmonics",
+      "truth radial phase harmonics plus offline truth slot"
+    ],
+    "fixed_fit": {
+      "ridge_lambda": 0.001,
+      "irls_iterations": 5,
+      "huber_delta_m": 0.1,
+      "robust_norm_depth_weight": 0.1
+    },
+    "promotion_rule": "A deployable candidate enters the expensive predictor replay only if held-out cross-depth P50 and P90 are no worse than raw PnP and 55 mm pass rate is strictly higher. If several pass, choose the largest mean relative reduction across P50 and P90; ties choose the lower-capacity affine model.",
+    "complete_row_level_errors_retained": true
+  },
+  "prediction_replay": {
+    "parent_contract": "modules/autoaim/docs/combined_motion_large_scale_validation_contract.json",
+    "unchanged_model": "four-second robust direct joint physical model",
+    "unchanged_anchor_and_future_contract": true,
+    "input_arms": [
+      "raw_pnp",
+      "promoted_cross_fitted_correction_if_any",
+      "best_oracle_conditioned_correction",
+      "truth_depth_only",
+      "truth_tracker_y_only",
+      "truth_tracker_z_only",
+      "truth_cross_depth_yz",
+      "pnp_residual_alpha_0.75",
+      "pnp_residual_alpha_0.50",
+      "pnp_residual_alpha_0.25",
+      "clean_exact"
+    ],
+    "truth_intervention_policy": "Truth interventions preserve timestamps, missingness, visible arcs, anchor selection and offline association; they are causal ablations, never deployable inputs.",
+    "primary_metric": "sqrt(error_tracker_y_m^2 + error_tracker_z_m^2)",
+    "diagnostic_gate_m": 0.055,
+    "reported_distribution": [
+      "mean",
+      "p10",
+      "p25",
+      "p50",
+      "p75",
+      "p90",
+      "p95",
+      "p99",
+      "maximum",
+      "10/25/55/100/200 mm CDF coverage"
+    ],
+    "regular_grid_and_reversal_stress_reported_separately": true,
+    "complete_row_level_predictions_retained": true
+  },
+  "corner_layer": {
+    "same_frame_corner_intervention_available_in_formal_144": false,
+    "reason": "stage3-observation-v1 stores PnP pose fields but not raw/refined corners or candidates",
+    "historical_authorities": [
+      "modules/autoaim/docs/corner_evidence_registry.json",
+      "modules/autoaim/docs/hit_oriented_ablation_registry.json",
+      "D:/仿真/runtime/autoaim-b-corner-evidence-complete-20260810",
+      "D:/仿真/runtime/autoaim-b-hit-oriented-ablation-20260810-r1"
+    ],
+    "causal_use": "Use exact/raw/refined corner-to-PnP evidence to bound the corner layer; do not claim a same-sample corner-to-combined-prediction intervention on the 144 sessions."
+  },
+  "decision_rule": "Prefer a downstream correction only when it transfers by held-out session and improves the full central distribution without hiding coverage loss. Otherwise use the intervention ladder to identify whether cross-depth PnP coordinates, depth, physical-state fitting, or upstream corners dominate."
+}

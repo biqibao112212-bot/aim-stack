@@ -1,0 +1,26 @@
+{
+  "schema_version": "autoaim-combined-motion-pnp-nested-postprocess-contract-v1",
+  "frozen_at": "2026-08-11",
+  "purpose": "Test whether coordinate-selective, bounded application of the already selected yaw-harmonic correction improves held-session PnP measurements without using the scored outer fold for postprocessor selection.",
+  "parent_models": "D:/仿真/runtime/combined-pnp-correction-screen-144-v1/cross_fitted_models.json",
+  "outer_split": "the existing five deterministic session-hash folds",
+  "inner_split": "for each outer fold, generate predictions for each of the other four folds from a model fitted on the remaining three folds",
+  "candidate_grid": {
+    "coordinate_masks": {
+      "full_xyz": [1, 1, 1],
+      "cross_yz_only": [0, 1, 1],
+      "tracker_y_only": [0, 1, 0]
+    },
+    "blend_scales": [0.5, 0.75, 1.0],
+    "weighted_correction_caps_m": [0.1, 0.2, 0.4, "infinite"],
+    "weighted_norm": "sqrt(0.1*delta_x^2 + delta_y^2 + delta_z^2)"
+  },
+  "selection": {
+    "eligibility": "inner out-of-fold P50, P90 and P95 cross-depth error must not exceed raw PnP and 55 mm coverage must exceed raw PnP",
+    "ranking": "lexicographically maximize 55 mm coverage, then minimize P90, P50 and P95; final ties prefer fewer corrected coordinates, smaller blend and smaller finite cap",
+    "outer_evaluation": "apply the selected outer-fold-specific postprocessor to the original outer-fold yaw-harmonic prediction"
+  },
+  "promotion": "Promote only if aggregate outer-held 55 mm coverage strictly exceeds the unprocessed yaw-harmonic correction and P50, P90 and P95 are all no worse.",
+  "truth_policy": "Truth is used to select the postprocessor only inside outer-training folds and to score the held outer fold; it is never a runtime feature.",
+  "complete_row_level_distribution_retained": true
+}
