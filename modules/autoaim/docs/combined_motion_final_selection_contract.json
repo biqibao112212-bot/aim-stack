@@ -1,0 +1,98 @@
+{
+  "schema_version": "autoaim-combined-motion-final-selection-contract-v1",
+  "frozen_at": "2026-08-11",
+  "development_sessions": {
+    "train": [
+      "stage3-generalization-fixed6mm-20260729-v1-combined-01",
+      "stage3-generalization-fixed6mm-20260729-v1-combined-02",
+      "stage3-generalization-fixed6mm-20260729-v1-combined-03",
+      "stage3-generalization-fixed6mm-20260729-v1-combined-05"
+    ],
+    "validation": [
+      "stage3-generalization-fixed6mm-20260729-v1-combined-00"
+    ]
+  },
+  "sealed_test": {
+    "session": "stage3-generalization-fixed6mm-20260729-v1-combined-04",
+    "access_count_allowed": 1,
+    "post_test_parameter_tuning_allowed": false,
+    "failure_policy": "retain and report the failure without reopening development"
+  },
+  "metric_contract": {
+    "primary": "cross-depth error in the anchor tracker frame",
+    "cross_depth_definition": "sqrt(error_tracker_y_m^2 + error_tracker_z_m^2)",
+    "retained": [
+      "signed tracker xyz",
+      "absolute depth",
+      "cross-depth",
+      "world planar",
+      "3d"
+    ],
+    "reported_quantiles": [0.5, 0.9, 0.95, 0.99],
+    "diagnostic_gate_m": 0.055,
+    "gate_is_not_hit_probability": true
+  },
+  "frozen_local_model": {
+    "equation": "p_j(t)=c0+v*t+R(omega*t)R(theta0)q_j",
+    "history_window_s": 0.4,
+    "los_depth_squared_weight": 0.1,
+    "cross_depth_squared_weight": 1.0,
+    "huber_delta_m": 0.02,
+    "omega_grid_rad_s": [-16.0, 16.0],
+    "omega_grid_step_rad_s": 1.0,
+    "causal_omega_memory": "median of the most recent 31 eligible estimates"
+  },
+  "frozen_long_window_model": {
+    "equation": "p_j(t)=c0+u*triangle(phi+speed*t,span)+R(omega*t)R(theta0)q_j",
+    "history_window_s": 4.0,
+    "configured_parameters": [
+      "translation axis",
+      "translation speed",
+      "translation span",
+      "four-plate geometry"
+    ],
+    "jointly_fitted_parameters": [
+      "omega",
+      "translation phase",
+      "shared current center",
+      "shared armor rotation phase/scale"
+    ],
+    "omega_grid_rad_s": [-16.0, 16.0],
+    "omega_grid_step_rad_s": 1.0,
+    "phase_grid_count": 25,
+    "los_depth_squared_weight": 0.1,
+    "huber_delta_m": 0.02,
+    "per_frame_center_reconstruction": false
+  },
+  "hybrid_decision": {
+    "constant_twist_or_short_track": "use the frozen local factorized model",
+    "bounded_translation_phase_observed": "use the frozen direct long-window joint model",
+    "endpoint_phase_not_identifiable": "retain translation-phase hypotheses and do not claim a high-confidence single future point across a possible reversal",
+    "production_activation_status": "not yet implemented; a non-oracle phase-ambiguity/change-point gate is still required"
+  },
+  "final_test_common_anchor_contract": {
+    "minimum_direct_history_s": 4.0,
+    "anchor_stride_frames": 24,
+    "requested_horizons_s": [0.05, 0.1, 0.2],
+    "same_physical_plate_scoring": true,
+    "truth_slot_identity": "offline non-deployable analysis handle",
+    "future_truth_estimator_input": false,
+    "constant_twist_and_cross_reversal_reported_separately": true
+  },
+  "baselines": [
+    "hold",
+    "same-slot world CV",
+    "v1 isotropic factorized fit with single-window omega",
+    "LOS local factorized fit with raw omega",
+    "LOS local factorized fit with 31-window omega memory",
+    "direct joint bounded-reflection model"
+  ],
+  "development_selection_evidence": [
+    "D:\\仿真\\runtime\\combined-motion-los-fit-dev-v1",
+    "D:\\仿真\\runtime\\combined-motion-omega-memory-dev-v1",
+    "D:\\仿真\\runtime\\combined-motion-reversal-dev-v1",
+    "D:\\仿真\\runtime\\combined-motion-reversal-dev-v2",
+    "D:\\仿真\\runtime\\combined-motion-direct-reflection-dev-v1",
+    "D:\\仿真\\runtime\\combined-motion-direct-joint-dev-v1"
+  ]
+}
