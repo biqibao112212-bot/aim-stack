@@ -1,0 +1,137 @@
+{
+  "schema_version": "autoaim-combined-motion-large-scale-validation-contract-v1",
+  "frozen_at": "2026-08-11",
+  "purpose": "External condition-level generalization validation of the already frozen combined-motion model; no parameter selection or post-result tuning is allowed.",
+  "frozen_candidate_revision": "d3ba33d6be92530e56ce84de3f3f4fef24b32094",
+  "parent_selection_contract": {
+    "path": "modules/autoaim/docs/combined_motion_final_selection_contract.json",
+    "sha256": "f32591131d0aa6dacdddb0e54a8072b865d94de127912c55d65814da042bbbdf"
+  },
+  "dataset": {
+    "dataset_id": "stage3-20260719-v1",
+    "manifest_path": "D:/仿真/dataset/autoaim-stage3-v1/stage3-20260719-v1/session_manifest.jsonl",
+    "manifest_sha256": "8b9c34344384f3af1e2dff6a3576f92ae8c4b831697efb016f5da53c978f3435",
+    "included_mode": "linear_and_spin",
+    "planned_session_count": 144,
+    "session_is_the_independent_condition_unit": true,
+    "successful_run_source": "D:/仿真/runtime/stage3-formal-20260720-v2/<session_id>/session_result.json",
+    "historical_retry_runs_are_excluded": true,
+    "all_qualifying_sessions_are_evaluated": true
+  },
+  "frozen_model": {
+    "equation": "p_j(t)=c0+u*triangle(phi+speed*t,span)+Rz(omega*t)Rz(theta0)q_j",
+    "history_window_s": 4.0,
+    "configured_parameters": [
+      "translation axis from direction_deg",
+      "positive translation speed magnitude from linear_speed_mps",
+      "translation span from linear_span_m",
+      "four-plate chassis-local geometry from exact metadata"
+    ],
+    "searched_parameters": [
+      "constant yaw rate omega",
+      "triangle-wave translation phase"
+    ],
+    "linearly_fitted_parameters": [
+      "shared current center",
+      "shared armor rotation phase and one common radius scale"
+    ],
+    "omega_range_rad_s": [-16.0, 16.0],
+    "omega_grid_step_rad_s": 1.0,
+    "phase_grid_count": 25,
+    "depth_squared_weight": 0.1,
+    "cross_depth_squared_weight": 1.0,
+    "vector_huber_delta_m": 0.02,
+    "per_frame_center_reconstruction": false
+  },
+  "causality_and_identity": {
+    "history_up_to_anchor_only": true,
+    "future_truth_estimator_input": false,
+    "actual_timestamps_used": true,
+    "same_physical_plate_scoring": true,
+    "truth_slot_identity": "offline non-deployable association and scoring handle",
+    "configured_path_parameters": "oracle/configuration inputs, not estimated online",
+    "reversal_truth_use": "sampling-stratum construction and after-the-fact scoring only"
+  },
+  "anchor_sampling": {
+    "regular_grid": {
+      "interval_s": 2.0,
+      "start_after_history_s": 4.0,
+      "reason": "condition-level coverage with reduced within-session autocorrelation"
+    },
+    "reversal_stress": {
+      "target_leads_s": [0.05, 0.1, 0.2],
+      "reason": "explicitly measure the difficult cross-reversal regime",
+      "reported_separately_from_regular_grid": true
+    },
+    "requested_prediction_horizons_s": [0.05, 0.1, 0.2],
+    "common_anchor_denominator": true,
+    "sessions_or_anchors_with_no_valid_observation_are_retained_in_coverage_counts": true
+  },
+  "methods": [
+    {
+      "name": "pnp_hold",
+      "input": "current PnP position"
+    },
+    {
+      "name": "pnp_same_slot_cv_400ms",
+      "input": "truth-associated PnP history for the scored plate"
+    },
+    {
+      "name": "pnp_direct_joint",
+      "input": "availability-matched PnP histories for all associated plates"
+    },
+    {
+      "name": "pnp_direct_oracle_omega",
+      "input": "PnP history plus truth yaw rate ablation"
+    },
+    {
+      "name": "clean_hold",
+      "input": "exact current position at PnP availability"
+    },
+    {
+      "name": "clean_same_slot_cv_400ms",
+      "input": "exact positions at PnP availability"
+    },
+    {
+      "name": "clean_direct_joint",
+      "input": "exact positions at PnP availability"
+    },
+    {
+      "name": "clean_direct_oracle_omega",
+      "input": "exact positions and truth yaw rate at PnP availability"
+    }
+  ],
+  "metric_contract": {
+    "primary": "cross-depth miss in the anchor tracker frame",
+    "cross_depth_definition": "sqrt(error_tracker_y_m^2 + error_tracker_z_m^2)",
+    "retained_per_prediction": [
+      "signed tracker x/y/z error",
+      "absolute depth error",
+      "cross-depth error",
+      "world-planar error",
+      "3D error",
+      "prediction and truth xyz"
+    ],
+    "reported_quantiles": [0.5, 0.9, 0.95, 0.99],
+    "diagnostic_gate_m": 0.055,
+    "gate_is_not_hit_probability": true,
+    "micro_and_session_macro_summaries_are_both_required": true,
+    "condition_strata": [
+      "distance_bin",
+      "linear_speed_bin",
+      "absolute_yaw_rate_bin",
+      "direction_sector",
+      "camera_profile_id at the anchor",
+      "constant_twist versus cross_reversal"
+    ],
+    "complete_row_level_distributions_must_be_retained": true
+  },
+  "failure_policy": {
+    "load_failure": "retain session id and reason in audit table",
+    "no_current_observation": "retain in anchor coverage denominator",
+    "insufficient_four_second_history": "retain in anchor coverage denominator",
+    "unavailable_cv_history": "retain method availability count; do not substitute another method",
+    "zero_eligible_session": "count as zero coverage, never silently drop",
+    "post_result_parameter_tuning_allowed": false
+  }
+}

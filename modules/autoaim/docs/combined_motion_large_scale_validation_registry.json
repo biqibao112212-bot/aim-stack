@@ -1,0 +1,148 @@
+{
+  "schema_version": "autoaim-combined-motion-large-scale-validation-registry-v1",
+  "updated_at": "2026-08-11",
+  "research_state": "formal 144-condition frozen validation complete; physical model supported on clean histories; PnP deployment acceptance rejected",
+  "validation_contract": {
+    "path": "modules/autoaim/docs/combined_motion_large_scale_validation_contract.json",
+    "sha256": "47de4c8c530466b4f2a7cf4b3219637d2a8f6fb532bbca9bc431ef65f552dd28"
+  },
+  "evidence": {
+    "path": "D:/仿真/runtime/combined-motion-large-scale-144-v2",
+    "manifest_sha256": "6c6070381e29a97cb5259175a5bdb148c55b4e454efccd12bda5520fffcb06f3",
+    "analysis_manifest_sha256": "84082683562dc0e0170baf95e77e1e85fd3e609a32252e27b2ffdf0048c19374",
+    "analysis_summary_sha256": "8feedc46f0af08fb18312a9607a2e899ae409309f7bc9bf7035bd24a9163b883",
+    "formal_complete_run": true,
+    "planned_sessions": 144,
+    "successful_sessions": 144,
+    "failed_sessions": 0,
+    "prediction_rows": 54760,
+    "fit_rows": 9964,
+    "anchor_coverage_rows": 4122
+  },
+  "code": [
+    {
+      "path": "scripts/evaluate-combined-motion-large-scale.py",
+      "sha256": "2e041b911d28a61a942779365866b96b66a01421daf79afc46d7ebaa2cb71507"
+    },
+    {
+      "path": "scripts/summarize-combined-motion-large-scale.py",
+      "sha256": "c272b04ef6387722575ba57abf30bf22cac3458d589ec62140c004ec6fa1b05e"
+    }
+  ],
+  "condition_coverage": {
+    "distance_m_min_max": [1.0381397390642133, 7.988894552394138],
+    "linear_speed_mps_min_max": [0.13924038430598862, 2.992466796651726],
+    "spin_rad_s_min_max": [-14.861676560108435, 14.964106197093127],
+    "direction_sector_counts": [18, 18, 18, 18, 18, 18, 18, 18],
+    "distance_bin_counts": [48, 48, 48],
+    "duration_s": 30.0,
+    "linear_span_m": 8.0,
+    "speed_and_absolute_omega_bins_perfectly_confounded": true
+  },
+  "data_audit": {
+    "truth_frames_post_start": 484595,
+    "truth_frames_with_observation": 323691,
+    "truth_frames_without_observation": 160904,
+    "associated_observation_events": 465311,
+    "valid_candidate_count_histogram": {
+      "0": 159832,
+      "1": 184786,
+      "2": 136620,
+      "3": 1855,
+      "4": 430,
+      "5": 15
+    },
+    "camera_profile_frame_histogram": {
+      "wide_6mm": 394505,
+      "precision_16mm": 89033
+    },
+    "duplicate_observation_timestamps": 0,
+    "unmatched_observation_timestamps": 0,
+    "tracker_transform_unmatched": 0,
+    "ambiguous_truth_assignments": 0,
+    "over_four_candidate_frames_excluded": 15
+  },
+  "anchor_coverage": {
+    "regular_grid": {
+      "planned": 1976,
+      "evaluated": 1315,
+      "evaluated_rate": 0.6654858299595142,
+      "no_current_observation": 629,
+      "insufficient_four_second_history": 32,
+      "sessions_with_at_least_one_evaluated_anchor": 144
+    },
+    "reversal_stress": {
+      "planned": 2146,
+      "evaluated": 1185,
+      "evaluated_rate": 0.5521901211556384,
+      "no_current_observation": 921,
+      "insufficient_four_second_history": 40,
+      "sessions_with_zero_evaluated_anchor": 4
+    }
+  },
+  "regular_constant_twist_cross_depth_p50_p95_p99_mm": {
+    "clean_direct_joint": [
+      [0.0037, 0.0756, 83.453],
+      [0.0044, 0.4120, 150.539],
+      [0.0054, 1.4318, 193.089]
+    ],
+    "pnp_direct_joint": [
+      [103.042, 356.168, 591.194],
+      [102.642, 381.308, 677.629],
+      [105.664, 440.653, 741.559]
+    ],
+    "pnp_hold": [
+      [137.220, 521.753, 1558.548],
+      [173.645, 626.357, 1597.395],
+      [231.723, 871.431, 1400.284]
+    ],
+    "pnp_same_slot_cv_400ms": [
+      [162.103, 995.648, 2665.999],
+      [192.346, 1428.679, 4204.279],
+      [270.285, 2142.875, 6302.473]
+    ]
+  },
+  "regular_session_p95_within_55mm_rate": {
+    "clean_direct_joint_50_100_200ms": [0.9444444444444444, 0.8888888888888888, 0.8611111111111112],
+    "pnp_direct_joint_50_100_200ms": [0.020833333333333332, 0.0, 0.0]
+  },
+  "reversal_stress_cross_depth": {
+    "clean_direct_joint": {
+      "n_50_100_200ms": [197, 572, 926],
+      "p50_mm": [0.0321, 0.0350, 0.0368],
+      "p95_mm": [24.140, 142.139, 342.309],
+      "within_55mm_rate": [0.9847715736040609, 0.8024475524475524, 0.6630669546436285]
+    },
+    "pnp_direct_joint": {
+      "n_50_100_200ms": [197, 572, 926],
+      "p50_mm": [156.573, 133.869, 156.618],
+      "p95_mm": [725.895, 694.857, 730.942],
+      "within_55mm_rate": [0.1065989847715736, 0.23601398601398602, 0.21058315334773217]
+    }
+  },
+  "current_pnp_observation_cross_depth_p50_p95_p99_mm": {
+    "wide_6mm_n1179": [104.620, 421.260, 726.751],
+    "precision_16mm_n52": [175.308, 6163.566, 8046.654]
+  },
+  "direct_joint_absolute_omega_error_p50_p95_rad_s": {
+    "clean": [0.0000204, 0.0001207],
+    "pnp": [0.179696, 0.444939]
+  },
+  "decision": [
+    "retain bounded triangle-wave translation plus four-plate rigid rotation as the supported clean physical explanation",
+    "retain direct joint fitting as an explainable mature-track expert, not as a universally accepted predictor",
+    "reject deployment acceptance on the 144-session PnP distribution because no 100 ms or 200 ms session-level P95 passes the 55 mm diagnostic gate",
+    "require multiple translation-phase or next-reversal hypotheses when phase is not identifiable",
+    "treat observation availability as part of system performance, especially near reversals",
+    "do not attribute speed and yaw-rate effects separately because the formal design confounds their bins",
+    "do not interpret fixed 50/100/200 ms horizons as distance-derived ballistic flight times"
+  ],
+  "next_required_evidence": [
+    "new large-scale collection using the current production PnP and one locked camera profile",
+    "independent factorial linear-speed and absolute-yaw-rate grid",
+    "non-oracle armor identity and reacquisition",
+    "online path-axis speed and span estimation with uncertainty",
+    "deployable phase-multihypothesis or change-point gate",
+    "ballistic-time-indexed rather than fixed-horizon final fire-control validation"
+  ]
+}
