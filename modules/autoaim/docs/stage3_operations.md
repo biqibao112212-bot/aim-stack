@@ -1,18 +1,18 @@
 # 第三阶段数据采集操作手册
 
 本文是第三阶段装甲板集合预测数据采集的唯一操作入口。模拟器与 SDK
-的公共约束仍以仓库根目录 `SIMULATOR_CONSUMER_GUIDE.md`、
-`simulator.lock.json` 和锁定 Release 内文档为准；本文只补充 Stage 3
+的公共约束仍以仓库根目录的[模拟器消费者统一指南](../../../SIMULATOR_CONSUMER_GUIDE.md)、
+[版本锁](../../../simulator.lock.json)和锁定 Release 内文档为准；本文只补充 Stage 3
 的采集步骤。禁止手动并行启动第二个模拟器或第二个 Stage 3 runner。
 
 ## 1. 固定入口与所有权
 
 - 仓库：`D:\仿真\repos\aim-stack`
-- 单 session：`scripts\run-stage3-session.ps1`
-- manifest 串行采集：`scripts\run-stage3-manifest.ps1`
+- 单 session：[run-stage3-session.ps1](../../../scripts/run-stage3-session.ps1)
+- manifest 串行采集：[run-stage3-manifest.ps1](../../../scripts/run-stage3-manifest.ps1)
 - 正式 manifest：
   `D:\仿真\dataset\autoaim-stage3-v1\stage3-20260719-v1\session_manifest.jsonl`
-- 模拟器：只使用 `simulator.lock.json` 锁定的正式 Release；消费者任务
+- 模拟器：只使用[版本锁](../../../simulator.lock.json)指定的正式 Release；消费者任务
   不修改模拟器仓库、SDK 或 Release。
 
 runner 独占管理以下资源：Windows `daedalus.exe`、WSL

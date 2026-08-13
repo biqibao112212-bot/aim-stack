@@ -12,6 +12,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Verify documentation links (local targets and anchors)
+        run: python ./scripts/check-doc-links.py
+      - name: Verify public documentation links
+        run: python ./scripts/check-doc-links.py --external
       - name: Verify simulator consumer boundary
         shell: pwsh
         run: ./scripts/check-consumer-boundary.ps1

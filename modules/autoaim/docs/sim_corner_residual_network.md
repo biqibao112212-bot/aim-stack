@@ -33,7 +33,7 @@ exact_projected_corner_px - raw_detector_corner_px
 - log 尺度、log 长宽比、可见宽度和方向的 sin/cos；
 - 合计 15 维。
 
-以下字段明确禁止进入模型：truth corner/pose、`range_m`、斜视角、运动模式、session/segment、物理板身份、PnP 输出、未来状态。它们只用于离线分层和评分。完整预注册合同见 `sim_corner_residual_network_contract.json`。
+以下字段明确禁止进入模型：truth corner/pose、`range_m`、斜视角、运动模式、session/segment、物理板身份、PnP 输出、未来状态。它们只用于离线分层和评分。完整预注册合同见[机器合同](sim_corner_residual_network_contract.json)。
 
 ## 3. 网络与训练方式
 
@@ -226,7 +226,7 @@ D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4
 D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2
 ```
 
-其中 `oof_corner_predictions.csv.gz`、`oof_pnp_rows.csv.gz`、`paired_deltas_vs_raw.csv.gz` 和下游的 `prediction_rows.csv.gz` 是逐样本权威；CSV summary、Markdown 和 PNG/PDF 只用于导航，不替代完整分布。精确哈希和失败目录见 `sim_corner_residual_network_registry.json`。
+其中 `oof_corner_predictions.csv.gz`、`oof_pnp_rows.csv.gz`、`paired_deltas_vs_raw.csv.gz` 和下游的 `prediction_rows.csv.gz` 是逐样本权威；CSV summary、Markdown 和 PNG/PDF 只用于导航，不替代完整分布。精确哈希和失败目录见[机器登记](sim_corner_residual_network_registry.json)。
 
 ## 12. 只考虑匀速段后的继续训练审计（2026-08-11）
 
@@ -253,6 +253,6 @@ D:\仿真\runtime\corner-repair-generalization-shrinkage-20260811-r1
 
 同时，Windows Release 原图证据钩子已完成三次 smoke，共写入 308 张图和 1,541 条严格同曝光相机姿态。正式 `1.2.1` Release 为 `distribution_locked=true`，1,541 条 SDK 行的 `has_exact_exposure_truth` 均为 true，但目标批次均为空；所以新图无法获得 exact projected corners。不能用截图手工角点、运动指令近似重建或开发模拟器替代正式 Release 来伪造约 1 px 精度的监督。
 
-detector 侧还发现并闭合了一个独立问题：`0526.onnx` 在同一保存原图上正确输出数字 3 候选；原始 FP16 ONNX 直接生成的 `0526` FP16/FP32 TensorRT engine 都发生明显数值退化，不能靠降低阈值收集伪角点。将输入、120 个 FP16 initializer 和中间张量合同显式转换为 FP32 后再生成 FP32 engine，同一原图上 ONNX/TensorRT 选择相同的 row 2441、数字类别 3 和四角点，置信度分别为 `0.868835/0.868896`。转换由 `scripts/convert-armor-onnx-fp16-to-fp32.py` 无覆盖生成并执行 ONNX Runtime 对照。新的匀速旋转 smoke 在 829 条 Stage3 行中有 817 条包含 detector/PnP 观测，共 1,099 个 armor observation，并保存 212 张严格曝光身份图像；因此消费者原图采集与 detector/PnP 链已经可用。证据分别位于 `D:\仿真\runtime\corner-detector-engine-audit-20260811-r1` 和 `D:\仿真\runtime\stage3-corner-engine-fixed-smoke-20260811-r1`。这只闭合检测输入，仍不提供训练所需的 exact projected corners。
+detector 侧还发现并闭合了一个独立问题：`0526.onnx` 在同一保存原图上正确输出数字 3 候选；原始 FP16 ONNX 直接生成的 `0526` FP16/FP32 TensorRT engine 都发生明显数值退化，不能靠降低阈值收集伪角点。将输入、120 个 FP16 initializer 和中间张量合同显式转换为 FP32 后再生成 FP32 engine，同一原图上 ONNX/TensorRT 选择相同的 row 2441、数字类别 3 和四角点，置信度分别为 `0.868835/0.868896`。转换由[转换脚本](../../../scripts/convert-armor-onnx-fp16-to-fp32.py)无覆盖生成并执行 ONNX Runtime 对照。新的匀速旋转 smoke 在 829 条 Stage3 行中有 817 条包含 detector/PnP 观测，共 1,099 个 armor observation，并保存 212 张严格曝光身份图像；因此消费者原图采集与 detector/PnP 链已经可用。证据分别位于 `D:\仿真\runtime\corner-detector-engine-audit-20260811-r1` 和 `D:\仿真\runtime\stage3-corner-engine-fixed-smoke-20260811-r1`。这只闭合检测输入，仍不提供训练所需的 exact projected corners。
 
 需要模拟器侧新增离线 exact-corner 标签导出后，才能采集多独立 session 并训练图像条件修复器。具体复现、建议接口、版本变化和验收门禁见 [corner_repair_image_training_data_proposal.md](corner_repair_image_training_data_proposal.md)；在用户明确批准该提案前，模拟器仓库、SDK、Release 和版本锁保持不变。

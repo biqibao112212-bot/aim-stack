@@ -70,7 +70,7 @@ inputs or arm-specific supervision.
 ## Held-out pilot
 
 The hash-bound selection is
-`training/stage3/selections/causal_physical_state_ab_pilot_v1.json`. It contains
+[causal_physical_state_ab_pilot_v1.json](../../../training/stage3/selections/causal_physical_state_ab_pilot_v1.json). It contains
 16 train sessions and 8 disjoint validation sessions, covers stationary,
 linear, spin and combined motion, and includes positive/negative rotation,
 low/mid/high speed and yaw rate, and near/mid/far distance. Its test list is

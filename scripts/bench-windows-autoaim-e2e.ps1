@@ -8,12 +8,44 @@ param(
   [string]$InitialScene = '',
   [ValidateRange(0, 3)]
   [int]$TruthGimbalTarget = 0,
+  [ValidateSet('stationary', 'linear', 'spin', 'linear_and_spin')]
+  [string]$RangeMotionMode = 'spin',
+  [double]$RangeDirectionDeg = 90.0,
+  [double]$RangeLinearSpeedMps = 0.0,
+  [double]$RangeLinearSpanM = 0.0,
+  [double]$RangeSpinDegS = 114.59156,
+  [double]$RangeRadialScale = 1.0,
   [string]$EvidenceRoot
 )
 
 $ErrorActionPreference = 'Stop'
 if ($WarmupSeconds -lt 0 -or $DurationSeconds -lt 5) {
   throw 'WarmupSeconds must be nonnegative and DurationSeconds must be at least 5.'
+}
+if ($RangeDirectionDeg -lt -180.0 -or $RangeDirectionDeg -gt 180.0) {
+  throw 'RangeDirectionDeg must be in [-180, 180].'
+}
+if ($RangeLinearSpeedMps -lt 0.0 -or $RangeLinearSpeedMps -gt 3.0) {
+  throw 'RangeLinearSpeedMps must be in [0, 3].'
+}
+if ($RangeLinearSpanM -lt 0.0 -or $RangeLinearSpanM -gt 8.0) {
+  throw 'RangeLinearSpanM must be in [0, 8].'
+}
+if ([math]::Abs($RangeSpinDegS) -gt (15.0 * 180.0 / [math]::PI)) {
+  throw 'RangeSpinDegS exceeds the scene-control limit of 15 rad/s.'
+}
+if ($RangeRadialScale -lt 0.75 -or $RangeRadialScale -gt 1.25) {
+  throw 'RangeRadialScale must be in [0.75, 1.25].'
+}
+$hasLinear = $RangeLinearSpeedMps -gt 0.0 -and $RangeLinearSpanM -gt 0.0
+$hasSpin = [math]::Abs($RangeSpinDegS) -gt 0.0
+$motionConsistent =
+  ($RangeMotionMode -eq 'stationary' -and -not $hasLinear -and -not $hasSpin) -or
+  ($RangeMotionMode -eq 'linear' -and $hasLinear -and -not $hasSpin) -or
+  ($RangeMotionMode -eq 'spin' -and -not $hasLinear -and $hasSpin) -or
+  ($RangeMotionMode -eq 'linear_and_spin' -and $hasLinear -and $hasSpin)
+if (-not $motionConsistent) {
+  throw "Range motion parameters are inconsistent with mode $RangeMotionMode."
 }
 
 function Stop-ProcessTree([int]$RootPid) {
@@ -82,7 +114,7 @@ if ($TruthGimbalTarget -gt 0) {
   Remove-Item Env:DAEDALUS_RANGE_TRUTH_GIMBAL_TARGET_NUMBER -ErrorAction SilentlyContinue
 }
 $env:AIM_SIM_RANGE_TARGET_NUMBER = '3'
-$env:AIM_SIM_RANGE_SPIN_DEG_S = '114.59156'
+$env:AIM_SIM_RANGE_SPIN_DEG_S = "$RangeSpinDegS"
 $env:PATH = "$trt;$cudnn;$cuda;$opencv;$(Join-Path $release 'bin');$env:PATH"
 $stage3 = Join-Path $EvidenceRoot 'stage3_observations.jsonl'
 if ($EnableStage3) {
@@ -108,7 +140,17 @@ try {
   # service correctly rejects a set_scene while that construction is pending.
   Start-Sleep -Seconds 6
   if (-not $SkipSceneControl) {
-    $sceneProcess = Start-Process -FilePath $sceneControl -WorkingDirectory $repo -ArgumentList @('--session', "windows-e2e-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))") -PassThru -Wait -NoNewWindow `
+    $sceneSession = "windows-e2e-$((Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ'))"
+    $sceneArguments = @(
+      '--stage3', '--host', '127.0.0.1', '--session', $sceneSession,
+      '--target', '3', '--mode', $RangeMotionMode,
+      '--direction-deg', "$RangeDirectionDeg",
+      '--linear-speed-mps', "$RangeLinearSpeedMps",
+      '--linear-span-m', "$RangeLinearSpanM",
+      '--spin-deg-s', "$RangeSpinDegS",
+      '--radial-scale', "$RangeRadialScale"
+    )
+    $sceneProcess = Start-Process -FilePath $sceneControl -WorkingDirectory $repo -ArgumentList $sceneArguments -PassThru -Wait -NoNewWindow `
       -RedirectStandardOutput (Join-Path $EvidenceRoot 'scene_control.stdout.log') `
       -RedirectStandardError (Join-Path $EvidenceRoot 'scene_control.stderr.log')
     if ($sceneProcess.ExitCode -ne 0) { throw "Scene control failed with exit code $($sceneProcess.ExitCode)." }
@@ -202,7 +244,7 @@ $index = [ordered]@{
   consumer_commit = (git -C $repo rev-parse HEAD).Trim()
   engine_sha256 = (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash
   mode = if ($EnableStage3) { 'stage3_capture' } else { 'runtime_only' }
-  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' }) + $(if ($SkipSceneControl) { ' -SkipSceneControl' } else { '' }) + $(if ($InitialScene) { " -InitialScene $InitialScene" } else { '' }) + $(if ($TruthGimbalTarget -gt 0) { " -TruthGimbalTarget $TruthGimbalTarget" } else { '' })
+  reproduce = ".\scripts\bench-windows-autoaim-e2e.ps1 -WarmupSeconds $WarmupSeconds -DurationSeconds $DurationSeconds -RangeMotionMode $RangeMotionMode -RangeDirectionDeg $RangeDirectionDeg -RangeLinearSpeedMps $RangeLinearSpeedMps -RangeLinearSpanM $RangeLinearSpanM -RangeSpinDegS $RangeSpinDegS -RangeRadialScale $RangeRadialScale" + $(if ($EnableStage3) { ' -EnableStage3' } else { '' }) + $(if ($SkipSceneControl) { ' -SkipSceneControl' } else { '' }) + $(if ($InitialScene) { " -InitialScene $InitialScene" } else { '' }) + $(if ($TruthGimbalTarget -gt 0) { " -TruthGimbalTarget $TruthGimbalTarget" } else { '' })
   raw_logs = @('frame_events.jsonl','bridge.stdout.log','bridge.stderr.log','scene_control.stdout.log','scene_control.stderr.log','simulator.stdout.log','simulator.stderr.log','analyzer.stdout.log')
   summaries = @('summary.json','PERFORMANCE_REPORT.md')
 } | ConvertTo-Json -Depth 3

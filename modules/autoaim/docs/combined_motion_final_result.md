@@ -151,4 +151,4 @@ D:\仿真\runtime\combined-motion-final-acceptance-test-04-v1
 - `final_test_prediction_truth_overlay_200ms`
 - `final_test_omega_error_ecdf`
 
-开发候选、失败方案与完整分布由 `combined_motion_final_registry.json` 统一登记。后续除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标发生实质变化，不再重复本阶段实验。
+开发候选、失败方案与完整分布由[机器登记](combined_motion_final_registry.json)统一登记。后续除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标发生实质变化，不再重复本阶段实验。

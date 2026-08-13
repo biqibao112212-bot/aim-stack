@@ -5,6 +5,12 @@
 
 本文件由 `aim-stack/main` 跟踪，所有新自瞄、火控和打符分支必须从包含本文件与 `simulator.lock.json` 的 `main` 创建。分支可以不知道模拟器 Rust 实现，但必须按本文理解并使用发布版 SDK、场景和运行模式。
 
+## 当前操作系统支持
+
+当前开发工作区运行在 Linux（Ubuntu 24.04），可用于源码、文档、离线分析和不依赖私有 SDK 的检查。但 `simulator.lock.json` 当前锁定的是 `1.2.1/windows-x86_64`，正式模拟器、SDK、Windows 原生 TensorRT 桥和端到端采集仍以 Windows 为唯一验收平台。
+
+仓库或工作区中残留的更早 Linux Release 不属于当前锁，不能替代 `1.2.1/windows-x86_64`，也不能作为当前兼容性、性能或发布证据。未来只有在模拟器所有者发布同版本 Linux Release/SDK，并由消费者显式更新版本锁后，才能增加正式 Linux 运行命令。在此之前，Linux 安装和可执行范围见[自瞄 B 教程](modules/autoaim/README.md)。
+
 ## 1. 唯一依赖入口
 
 - 模拟器所有者：私有仓库 `biqibao112212-bot/daedalus-simulator`；

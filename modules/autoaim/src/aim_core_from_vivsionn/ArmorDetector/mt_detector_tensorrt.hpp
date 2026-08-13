@@ -131,6 +131,7 @@ private:
     nvinfer1::Dims output_dims_;
     size_t input_size_;
     size_t output_size_;
+    bool input_fp16_ = false;
     std::string input_name_;
     std::string output_name_;
 

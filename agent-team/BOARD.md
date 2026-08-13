@@ -1937,3 +1937,664 @@
   the pinned simulator Release. The simulator is read-only; require an
   approved simulator-side investigation/release before claiming target-track
   or trajectory-acquisition acceptance.
+
+## 2026-08-08 trajectory-data rate audit
+
+- [x] Separated image/consumer throughput from effective trajectory events.
+  The native Windows target-in-view E2E run processes about 140.967 FPS, but
+  its 4,970 Stage3 rows all contain zero armors. The retained
+  `stage3-radius-spin-repeat` sessions contain finite valid armors, but their
+  simulator `main_update_hz`/capture rate is 4 Hz and effective observation
+  rate is only 1.76--2.21 Hz.
+- [x] The radius-spin repeat assets are protected diagnostic evidence only:
+  their session results identify simulator `1.2.0-dev` and the bridge command
+  uses the historical WSL Talos path, so they must not be merged into a
+  formal dataset pinned to the current Windows Release 1.2.1 contract.
+- [ ] Next gate: run a short current-lock native Windows Stage3 smoke that has
+  nonzero finite armor observations, then audit valid-event rate, timestamp
+  intervals, source gaps/replacements, hashes and trainable-window coverage.
+  Do not start new trajectory training or selector tuning before this gate.
+
+## 2026-08-08 native rotating-target collection FPS test
+
+- [x] A 30-second native Windows Release 1.2.1 Shooting Range run configured
+  target 3 with `set_target_3_spin` ACK at 114.592 deg/s. The end-to-end
+  consumer processed 4,301 frames at 143.37 FPS; Stage3 submitted 4,300
+  measurement rows at 143.31 FPS with zero write failures.
+- [x] A separate raw TCP collector on the same rotating-target run received
+  4,706 RGBA32 frames at 156.87 FPS, with all headers valid. The measured
+  producer sequence span was about 193.3 FPS; 1,094 measurement-segment
+  sequence gaps correspond to about 18.87% missing source frames.
+- [ ] The 100 FPS throughput gate passes, but complete long-term frame
+  preservation does not. The loss occurs before the Stage3 writer: the TCP/SDK
+  path is latest-only (single-frame mailbox), while the raw-frame capture and
+  inference queues are separate concerns. A post-`waitForLatest` queue cannot
+  recover already replaced frames.
+- [ ] Current Stage3 rows in this run all had empty armor lists. Treat this
+  run as a collection-throughput and transport diagnostic, not as usable
+  target-observation data. No simulator or Release files were modified.
+- [x] Retention manifest saved at
+  `D:\仿真\runtime\autoaim-b-collection-evidence-20260808.json`. It pins the
+  simulator lock and binary hashes, consumer commit, engine hash, both
+  evidence roots, reproduction commands, timing-order checks and selected raw
+  artifact SHA-256 values. The run roots are protected; image payloads were
+  not saved by the header-only TCP benchmark.
+
+## 2026-08-08 native nonempty observations and physical grouping gate
+
+- [x] The native Windows detector zero-output was traced to a consumer-side
+  input dtype mismatch: the deployed TensorRT engine declares FP32 input while
+  the CUDA preprocessing path always wrote FP16. The consumer now dispatches
+  FP32 or FP16 preprocessing from the engine input dtype. No simulator source,
+  SDK, or Release file was changed.
+- [x] With the rebuilt consumer and locked Windows Release 1.2.1 Shooting
+  Range target 3, the same run produced 1,743 Stage3 rows and 1,020 nonempty
+  armor items at 134.5 processed FPS. Frame sequence and timestamps remained
+  strictly increasing; source gaps are retained as explicit transport evidence.
+  Evidence: `D:\仿真\runtime\windows-autoaim-e2e-stage3-20260808T154514Z`.
+- [x] The Windows bridge now has an opt-in truth sidecar using the public SDK
+  `readGroundTruthForFrame(frame_seq)`, and a diagnostic run joined all 1,553
+  observation rows to truth rows by producer epoch, frame sequence, and
+  timestamp. This proves the sidecar keying path, not four-plate availability.
+- [ ] The locked 1.2.1 distribution Release returns `target_count=0` for every
+  exact truth row: simulator `distribution-release` intentionally publishes an
+  empty GroundTruthBatch. Therefore current Release observations have no
+  physical plate identity/slot labels; detector number or observation order
+  must not be promoted to a physical plate ID. Evidence:
+  `D:\仿真\runtime\windows-autoaim-e2e-stage3-truth-20260808T161000Z`.
+- [ ] Step 2 (four physical plates plus timestamp alignment) is blocked until
+  the user chooses an approved truth-capable simulator/dev collection path or
+  explicitly approves a simulator Release/interface change. Do not start the
+  fixed-radius/distance four-plate plots or trajectory fitting from the current
+  Release observations alone.
+
+## 2026-08-09 truth-capable trajectory grid
+
+- [x] User-authorized development-simulator path is working without simulator
+  source edits or Release changes. The dev binary reports
+  `distribution_locked=false`, publishes nonempty four-armor truth, and the
+  current Windows bridge joins observations by producer epoch, frame sequence,
+  and exposure timestamp.
+- [x] Retained grid:
+  `D:\仿真\runtime\autoaim-b-trajectory-grid-dev-20260809T003000Z`. It contains
+  36 completed runs: radial scales `0.75/1.00/1.25` × requested distances
+  `1.5/2.2/3.5/5.0 m` × 3 repeats, with 3 s warmup and 8 s measurement per run.
+  Total size is about 0.65 GB; no run root was overwritten.
+- [x] Analysis retained under the grid's `analysis` directory. It contains
+  104,336 physical-slot truth points, 25,893 exact observation joins, and
+  26,542 observation-to-slot assignments. Truth/observation frame sequence and
+  timestamp regressions are zero; duplicate exposure keys are zero. Source
+  sequence gaps remain recorded and allowed.
+- [x] Physical grouping rule is durable: select the complete label-3 target
+  farthest from the camera in each run/frame; identify plates only by
+  `relative_slot=0..3`; never use target_id across runs or detector_number as
+  a physical identity.
+- [ ] The plots show repeatable four-slot loops, but the within-condition
+  spread is condition-dependent (especially close range and scale 0.75). The
+  next review must separate camera/gimbal observation noise from intrinsic
+  target geometry before promoting a learned predictor.
+- [ ] Historical-repeat and causal constant-velocity metrics are diagnostic
+  baselines, not deployment acceptance. A final future-prediction claim still
+  needs a held-out-run protocol using the actual consumer observation stream.
+
+## 2026-08-09 observation-only held-out prediction
+
+- [x] The final diagnostic now splits by physical `relative_slot`: one
+  standardized linear model is trained independently for each condition,
+  plate slot, and horizon using two repeats; the third repeat is held out.
+  The model features are only historical observed camera angles and local
+  finite-difference velocities. Truth is used for training labels and final
+  error scoring, not as a runtime feature.
+- [x] The held-out result contains 144 condition/slot/horizon rows and
+  8,565--8,683 test examples per horizon. Pooled learned P95 angular error is
+  0.650 deg at 50 ms, 0.826 deg at 100 ms, and 1.281 deg at 200 ms; the
+  matching constant-velocity baseline is 1.313, 1.596, and 2.654 deg.
+- [x] Pooled learned P95 by slot (50/100/200 ms) is: slot 0 =
+  0.734/0.917/1.351 deg; slot 1 = 0.439/0.609/1.086 deg; slot 2 =
+  0.483/0.690/1.224 deg; slot 3 = 0.906/1.052/1.370 deg. These are
+  research metrics over the retained grid, not a fire-control acceptance
+  threshold.
+- [x] New retained outputs are `analysis/observation_prediction_summary.json`,
+  `analysis/observation_only_slot_summary.csv`,
+  `analysis/observation_only_prediction_error.png`, and the root
+  `analysis_manifest.json`; the manifest binds analysis-script and result
+  hashes to the existing collection manifest.
+- [ ] The identity-association boundary remains open: slots are assigned
+  offline from simulator truth for this evaluation. A deployment claim still
+  requires a detector-only association/replay test with no truth labels.
+
+## 2026-08-09 merged five-repeat grid and association boundary
+
+- [x] The same-scene grid was extended from 36 to 61 run directories: 60 have
+  valid Stage3 observation evidence, and one run is explicitly retained as a
+  collection failure (`scale=1.25`, `distance=2.2 m`, repeat 5: processed
+  frames existed but `stage3_observation_lines=0`). The valid runs provide
+  five repeats for every nominal condition; the `1.25/2.2 m` condition also
+  has a valid repeat 6 replacement.
+- [x] The merged analysis uses the four-field key
+  `session_id + producer_epoch + frame_seq + timestamp_ns`. It contains
+  182,608 truth slot points, 45,482 observed assignments, 44,328 exact joins,
+  zero sequence/timestamp regressions, and zero duplicate keys.
+- [x] With the numerically highest valid repeat held out per condition, pooled
+  observation-only learned P95 error is 0.667/0.843/1.314 deg at 50/100/200 ms;
+  the causal velocity baseline is 1.297/1.591/2.666 deg. Per-slot learned
+  P95 is slot 0 = 0.720/0.885/1.312, slot 1 = 0.454/0.628/1.161, slot 2 =
+  0.575/0.791/1.376, and slot 3 = 0.911/1.023/1.340 deg.
+- [x] The detector-only association replay is now measured separately. The
+  best fixed position-plus-time constant-velocity baseline (15 degree gate)
+  reaches mean global track-to-slot accuracy 36.1% over 60 valid runs; adding
+  the uncalibrated `yaw_absolute_rad` cue reduces it. The result is a failed
+  baseline, not an impossibility proof, but it prevents promoting offline
+  truth-slot prediction numbers to deployable four-plate tracking accuracy.
+- [x] Visibility is strongly distance dependent: mean valid detections per
+  observation frame are about 1.47/1.34/0.93/0.40 at 1.5/2.2/3.5/5.0 m; the
+  5 m condition has roughly 60.5% empty observation frames. Missing intervals
+  are retained as part of the data-quality boundary.
+- [x] The merged root and its hash-bound analysis manifest are retained under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z`.
+
+## 2026-08-09 descriptive geometric trajectory regularity (current stage)
+
+- [x] The active question is descriptive only: whether the four physical
+  armor slots form repeatable camera-plane trajectories under each fixed
+  radius-distance condition. Future prediction, forecast horizons and runtime
+  identity association are explicitly out of scope.
+- [x] The merged grid remains the evidence source: 12 conditions, five valid
+  repeats per condition, 182,608 truth slot points and 45,482 observed points.
+  The one failed collection is retained but excluded from valid point counts.
+- [x] A phase audit found that `yaw - first_yaw` normalizes temporal phase but
+  does not guarantee a common camera-plane starting point across runs. Phase
+  fitting is therefore auxiliary; it must not be used as the primary overlap
+  test.
+- [x] The primary geometric fit uses the camera azimuth/elevation point-cloud
+  median center and a circular polar-bin median radius. Truth merged-locus P95
+  residual is about 0.18--0.34 deg, and repeat-locus P95 difference is about
+  0.018--0.057 deg across the condition-slot grid.
+- [x] Same-radius distance changes have mean P95 curve difference about 2.26
+  deg (maximum 4.35 deg), while same-distance radius changes have mean P95
+  difference about 0.26 deg (maximum 0.55 deg). Distance is the dominant
+  condition variable in the current grid; radius has a weaker but nonzero
+  effect.
+- [x] Observed coverage is a bounded secondary result: observed geometric
+  residual P95 median is about 1.21 deg and polar-bin coverage averages about
+  0.315. Truth is the primary regularity evidence; observed gaps must not be
+  interpreted as absence of a physical trajectory.
+- [x] Retained report and hash-bound artifacts are under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/geometric`.
+- [x] Completed both truth and observed detailed grids for every physical slot:
+  raw point cloud, each repeat locus, merged hexbin density and merged center
+  curve are preserved. The metrics now include P50/P90/P95 trajectory width,
+  outlier rate, polar coverage, repeat overlap, position delta, centered shape
+  delta, span changes, curve-length changes and adjacent-condition continuity.
+- [x] Truth distance-size continuity is monotone non-increasing for azimuth
+  span, elevation span and curve length in all 36 adjacent comparisons; the
+  observed ratios are 36/36, 28/36 and 35/36 respectively under its sparse
+  coverage boundary.
+- [ ] Any future collection should target observed coverage gaps only. Future
+  prediction and deployment association remain outside this descriptive stage.
+
+## 2026-08-09 observed open-arc and PnP outlier correction (current stage)
+
+- [x] Audited all 48 observed condition-slot panels. The old circular-polar
+  fit necessarily joined disconnected support: 1.5/2.2 m consistently show a
+  dominant arc plus left/right point families, 3.5 m is mostly a single arc or
+  weak branches, and all 12 cells at 5 m are too fragmented for a single
+  curve. The observed part of the prior closed-locus result is superseded;
+  the separate truth-locus result is not changed by this correction.
+- [x] Rebuilt offline physical-slot labels from exact joined truth using the
+  truth-facing candidate set and full OpenCV-camera PnP `tvec` distance. Of
+  45,361 comparable observations, 38,262 (84.35%) change slot relative to the
+  legacy azimuth/elevation-only nearest-neighbor assignment. Legacy observed
+  per-slot curves and held-out per-slot prediction metrics are retained only
+  as reproducibility artifacts, not physical-slot evidence.
+- [x] Added an open-arc fitter that never closes across empty support, marks
+  endpoints, reports P90 bands only for accepted points, and writes every
+  `O-L/O-R` or fragmented rejection to a frame-auditable JSONL. Under corrected
+  physical labels, the number of 12 cells supporting one arc is 3/8/11/0 at
+  1.5/2.2/3.5/5 m; near-range physical observations are genuinely multimodal.
+- [x] PnP回溯 finds a systematic grazing-angle component rather than random
+  isolated failures. Accepted versus rejected points have truth-facing-score
+  medians 0.948 versus 0.765 and PnP depth-error medians 0.076 versus 0.104 m.
+  Exact four-field joins have no ordering regressions or duplicates.
+- [x] A separate one-run `r=1,d=1.5 m` diagnostic recapture enabled the existing
+  constrained-PnP reprojection fields without changing the simulator. Against
+  the retained five-repeat main arcs, accepted/rejected points have reprojection
+  RMS medians 14.488 versus 16.178 px and facing medians 0.956 versus 0.692.
+  This confirms an oblique-view PnP/corner-fit degradation, but the current
+  capture still lacks raw corners and IPPE candidate identities, so a specific
+  candidate-index flip is not claimed.
+- [x] Retained report, metrics, all eight corrected/legacy per-slot panels,
+  37,436 rejected-point records and the 764-point targeted diagnostic under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/open-arc-audit`.
+  The independent diagnostic capture is retained under
+  `runtime/autoaim-b-trajectory-pnpdiag-20260809T120000Z`.
+- [ ] If exact PnP subcause is required next, extend the consumer Stage3 audit
+  schema to retain raw corners, base-IPPE candidate count/index, candidate
+  reprojection gap and selected `rvec/tvec`, then recapture only the bounded
+  1.5 m diagnostic condition. Do not recollect the full radius-distance grid
+  and do not edit the simulator without the separate approval gate.
+
+## 2026-08-09 arc-orientation and truth-camera-basis correction (current stage)
+
+- [x] Reproduced the reported `r=0.75, d=2.2 m, slot=0` panel. Its old black
+  `U` curve was a fourth-degree global-polynomial artifact: the curve changed
+  second-derivative sign and upturned at sparse endpoints, while all five raw
+  repeats were nearly flat and the matched truth arc was a stable cap.
+- [x] Found and fixed a separate analysis-coordinate defect. Simulator camera
+  local Y is left, not right, so truth must use OpenCV camera coordinates
+  `[-local_y, -local_z, local_x]`. In a full-pipeline diagnostic recapture, the
+  corrected truth-to-detector pixel error is 0.978 px median and 1.607 px P90;
+  the old horizontally mirrored convention is 91.733 px median. PnP tvec
+  projects back to the detector center with 0.747 px median error.
+- [x] Recomputed the complete 61-run grid without overwriting historical
+  outputs. The corrected PnP3D-facing stream has 45,373 observations. It now
+  differs from the corrected angular assignment on only 380 rows (0.84%);
+  the prior 84.35% slot-change claim was caused by the truth horizontal sign
+  error and is superseded.
+- [x] Replaced global-polynomial fitting with per-repeat target-yaw phase bins,
+  cross-repeat robust centers, a contiguous visibility segment, and no
+  extrapolation. Every panel now overlays its truth reference and records
+  observed/truth curvature orientation. The reported panel keeps 970/1,331
+  points and is cap/cap with curvature amplitudes -0.0691/-0.0698 deg.
+- [x] All 36 physical-slot cells at 1.5/2.2/3.5 m pass the repeated-support and
+  orientation gate as cap/cap. All 12 cells at 5 m refuse a center curve:
+  two are orientation-ambiguous because truth is effectively flat and ten are
+  fragmented. Raw points remain visible and retained.
+- [x] The bounded full-pipeline recapture retained raw four-corner pixels and
+  both IPPE candidates for 31 truth-matched target observations. Every selected
+  candidate has solver solution index 0 and there are zero sequential index
+  switches. Candidate tvec separation is 0.0030 m median / 0.0112 m maximum,
+  so candidate-branch switching cannot explain the apparent arc flip.
+- [x] Retained final aggregate analysis under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/open-arc-audit-phase-v3`
+  and the raw/candidate diagnostic plus hash-bound report under
+  `runtime/autoaim-b-arcflip-diag-20260809T013519Z`.
+- [ ] Residual PnP depth bias remains correlated with oblique views and corner
+  conditioning. It is not an observed candidate-index flip and is not changed
+  in this task; any next fix should begin with detector-corner geometry against
+  the retained diagnostic, not with simulator or IPPE branch modifications.
+
+## 2026-08-09 5 m detector-admission audit (current gate)
+
+- [x] Reinterpreted the 5 m loss as a frame-level pipeline funnel rather than
+  an offline-fit failure. Across 15 retained 5 m runs, 4,471/11,201 Stage3
+  frames contain a solved armor (39.92%); 4,448/4,471 solved frames enter the
+  PnP3D-facing association (99.49%). All relevant Stage3 sinks report zero
+  failures and healthy output. The main loss is before solved armor admission.
+- [x] Captured same-chain 5 m, radius 1.0 diagnostics at 30 and 114.59156
+  deg/s. Raw detector / solved coverage is 247/549 (44.99%) and 175/410
+  (42.68%); every raw candidate is solved and PnP rejection is zero.
+  Therefore spin speed, PnP rejection, the Stage3 queue and offline distance
+  gates are not the primary explanation.
+- [x] Confirmed a second loss mechanism: at 5 m the retained solved labels are
+  3=2,814, 8=669, 1=412, 5=326, 2=243 and 4=7. The physical-slot fitter no
+  longer discards a truth-associated plate merely because the digit classifier
+  is wrong; it records label agreement as diagnostic evidence instead.
+- [x] Made spin rate, detector score threshold, bridge binary, scene-control
+  binary, engine path and full-pipeline diagnostics explicit collector
+  parameters and manifest fields. The detector threshold remains 0.5 by
+  default and is now overrideable through
+  AIM_SIM_DETECTOR_SCORE_THRESHOLD.
+- [x] A bounded threshold-0.25 full-pipeline run raises nonempty raw/solved
+  coverage to 178/203 (87.68%) with zero PnP rejects. Candidate depth is
+  4.951 m median, 88.65% lies in 4--6 m and every solved center is within
+  150 px of the truth-locked image center. This establishes that most recovered
+  candidates are the intended 5 m target rather than background false positives.
+- [x] Re-ran the old grid after retaining wrong digit labels. All 12 old 5 m
+  cells remain fragmented, so the historical capture is not silently promoted
+  into a fitted 5 m arc. Authority:
+  runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/open-arc-audit-phase-v4-no-label-filter.
+- [ ] Fresh exact-truth 5 m recollection is the active gate before combined
+  motion. It must run when the discrete GPU is idle. During the latest checks,
+  nightreign.exe occupied the GPU; nvidia-smi reported 77% utilization,
+  85 C and 6,520 MiB used. Simulator capture in-flight grew from the accepted
+  grid's maximum 3 to 365, throughput fell to about 30--40 processed FPS and
+  new truth lookups were non-exact. Do not treat those GPU-contented runs as
+  formal trajectory data, do not terminate the user's process, and do not
+  change the simulator to compensate.
+- [ ] When the GPU is idle, run a short 5 m acceptance pair at thresholds
+  0.50 and 0.25 (30 deg/s, no full-pipeline JSON), require exact timestamp
+  joins, finite PnP and materially improved nonempty coverage, then collect
+  the 5 m radius grid. Only after that gate passes may combined-motion
+  trajectory collection resume.
+
+## 2026-08-09 idle-GPU 5 m formal recapture and observed-arc gate
+
+- [x] Completed the idle-GPU threshold gate at 5 m, radius 1.0 and 30 deg/s.
+  Threshold 0.50 produced 708/1,564 exact-joined nonempty frames (45.27%) at
+  118.3 FPS. Threshold 0.25 produced 1,304/1,509 nonempty Stage3 frames
+  (86.41%) at 118.5 FPS; all 1,352 solved items were finite and 1,321
+  (97.71%) received a physical PnP3D-facing assignment. Production default
+  remains 0.50; 0.25 is explicit in this research collection's manifest.
+- [x] Collected the formal 5 m grid at three radial scales (0.75/1.0/1.25),
+  five repeats each, 30 deg/s, 3 s warmup and 12 s measurement. All 15 runs
+  completed at 111.58--126.0 FPS (119.35 FPS mean). The Stage3 sinks report
+  `failed=0 healthy=true` in all runs. Evidence root:
+  `runtime/autoaim-b-5m-radius-grid-th025-idle-20260809T070000Z`.
+- [x] Time/data integrity passed: 26,737 exact-joined observation rows,
+  0 truth/observation sequence regressions, 0 timestamp regressions and
+  0 duplicate keys. There are 22,827 nonempty frames (85.38%), 23,784 finite
+  solved items and 23,242 physical assignments (97.72% of solved items).
+- [x] Corrected the offline report generator so a single-distance dataset no
+  longer assumes 1.5/2.2/3.5/5 m are all present. Separated descriptive
+  observation fit acceptance from truth-orientation consistency: a stable
+  observed arc is retained and drawn even when it exposes a systematic PnP/
+  corner bias relative to truth.
+- [x] Added a geometric discontinuity gate after phase binning. It splits
+  phase-adjacent centers at unsupported image-space jumps and retains the
+  longest continuous segment, preventing slot-2-style black chords across
+  empty regions. Rejected points remain in `trajectory_outliers.jsonl`.
+- [x] The corrected 5 m audit fits all 12 radius-slot cells with all five
+  repeats represented. Mean retained ratios are 86.83%, 86.83% and 86.97%
+  for scales 0.75, 1.0 and 1.25; mean accepted P90 widths are 0.1157, 0.1149
+  and 0.1141 deg. This is strong evidence of a repeatable observed trajectory
+  at 5 m, not evidence that PnP matches the physical truth arc.
+- [x] Regression-ran the geometric splitter on the 61-run historical grid.
+  It preserves 12/12 fits at each of 1.5, 2.2 and 3.5 m; the old sparse 5 m
+  capture supports only 7/12 after separating fit validity from truth mismatch.
+  The fresh exact-time 12/12 dataset therefore remains the 5 m authority.
+- [x] Ran a separate candidate-level 5 m diagnostic with 767 truth-matched
+  label-3 observations. Selected IPPE solver index is always 0 with zero
+  sequential switches. Candidate tvec separation is 0.00310 m median, while
+  selected tvec truth error is 0.417 m median; branch switching is rejected.
+  Low-score observations are worse (0.496 m median tvec error below 0.5 vs
+  0.391 m at/above 0.5), but the high-score group still has systematic bias.
+  Authority: `runtime/autoaim-b-5m-pnp-candidate-diag-th025-idle-20260809T072000Z`.
+- [x] Retained all raw captures (about 0.516 GiB), gate captures, candidate
+  diagnostics, prior failed/diagnostic analyses and hash manifests. No raw
+  data, protected model, simulator source, SDK or Release was deleted or
+  modified.
+- [x] Selected the repeatable observed arc, including systematic detector/PnP
+  bias, as the bounded learnable object for this method-selection study. The
+  later truth-gated combined-motion matrix and Decision 215 complete this gate;
+  truth-corrected physical reconstruction remains a separate future problem.
+
+## 2026-08-09 physical-slot and motion-control supersession
+
+- [x] Corrected the recorded spin-speed provenance for both idle-GPU 5 m
+  threshold gates and the 15-run radius grid. Their manifests requested
+  30 deg/s, but the benchmark invoked scene control without motion arguments;
+  scene acknowledgement and truth report 114.59156 deg/s. The captures remain
+  valid 5 m/radius descriptive evidence, but are not 30-deg/s evidence.
+- [x] Audited the PnP3D-facing association. It selected the top `N` truth-facing
+  slots for `N` detections, so the usual one-detection frame was hard-assigned
+  to the top-facing plate. Against unrestricted PnP3D, 5,208/23,242 common
+  rows (22.41%) change slot and median PnP position error improves from 0.460
+  to 0.390 m, confirming that this ranking is not a safe identity rule at 5 m.
+- [x] Replaced final physical identity with a one-to-one, truth-front-facing
+  image-ray assignment gated at 0.75 deg. The 5 m grid yields 23,397 matches:
+  angular error is 0.088 deg median / 0.363 deg P95; the second-choice margin
+  is 2.881 deg median / 2.450 deg P10 and no row is below 0.2 deg. PnP `u/v`
+  remains the fitted observation, so this fixes identity without hiding the
+  PnP depth/arc bias.
+- [x] Re-ran the gap-aware fit under the angular-facing identity. All 12
+  radius-slot cells fit with five repeats each and 91.58% median acceptance.
+  Slots 0--2 remain mostly observed `cup` arcs while truth is `cap`; slot 3 is
+  nearly flat/cap. This is stable systematic observation bias, not IPPE branch
+  switching. Final authority:
+  `runtime/autoaim-b-5m-radius-grid-th025-idle-20260809T070000Z/analysis/regularity/open-arc-audit-v6-angular-facing-final`.
+- [x] Extended the collector and benchmark with explicit motion mode,
+  direction, linear speed/span and spin rate, then required scene
+  acknowledgement plus truth-motion checks. The first nominal combined run is
+  retained but marked invalid because it actually executed spin-only at
+  114.59156 deg/s:
+  `runtime/autoaim-b-combined-baseline-d5-r1-th025-idle-20260809T080000Z`.
+- [x] A fixed control smoke test reports 1.998 m truth Y span and 30.00001
+  deg/s at 135.5 FPS. Two formal matched five-repeat datasets then passed:
+  spin-only at 129.08--136.33 FPS with zero truth translation, and combined
+  lateral-plus-spin at 125.08--130.75 FPS with 1.998--1.999 m truth Y span and
+  30.000 deg/s spin. Both have exact joins, no timestamp/sequence regression,
+  no duplicate keys and healthy sinks.
+- [x] The 5 m, radius-1.0 matched comparison fits 4/4 physical plates in both
+  conditions. Combined motion remains an arc-like repeatable observation, but
+  its per-phase P90 band is 1.41--1.56x wider. Per-slot observed center shift
+  P50 is 0.140--0.245 deg; the median fit-residual P90 ratio is 1.470. Slot 1
+  changes fitted curvature sign (`cup` to `cap`), slots 0/2 retain `cup`, and
+  slot 3 changes from effectively flat to a weak `cap`.
+- [x] Retained the matched source datasets and the direct observed/truth
+  comparison under
+  `runtime/autoaim-b-spin30-control-fixed-d5-r1-th025-idle-20260809T083000Z`,
+  `runtime/autoaim-b-combined-baseline-fixed-d5-r1-th025-idle-20260809T082000Z`
+  and `runtime/autoaim-b-motion-comparison-fixed-d5-r1-20260809T084000Z`.
+  The comparison is descriptive only; no predictor was created or evaluated.
+- [x] Completed the matched spin-only versus combined-motion expansion across
+  three actual radii and four distances using the truth-gated motion contract.
+  Invalid nominal-combined and 114.59156-deg/s captures remain excluded from
+  the accepted 30-deg/s matrix.
+
+## 2026-08-09 truth-gated radius-control and method-selection matrix
+
+- [x] Audited truth geometry rather than trusting requested labels. Every
+  earlier nominal 0.75/1.0/1.25 collection actually used the same stock
+  physical radii (about 0.21132/0.21177 m for the even/odd plates). Therefore
+  every earlier radius-effect, radius-continuity and three-radius claim is
+  superseded. The raw runs remain useful as repeat evidence at one radius and
+  are retained; they are not radius evidence.
+- [x] Located the cause in the consumer collection path. Scene reset restores
+  stock target geometry, while the consumer scene-control CLI and benchmark
+  never called the already-public `set_range_target_geometry` operation. No
+  simulator source, SDK or Release change was needed or made.
+- [x] Updated the consumer control sequence to set scene, stop the target, set
+  explicit radial geometry, then apply requested motion. Added a per-run truth
+  audit that checks target selection, even/odd physical radii, spin, linear
+  speed and translation span before a run manifest is accepted.
+- [x] Geometry smoke captures prove actual control: scale 0.75 measures
+  0.15849/0.15883 m and scale 1.25 measures 0.26415/0.26471 m, both at
+  30.000 deg/s. The 0.75 smoke sustained 111 FPS.
+- [x] Formal spin-only matrix completed and was accepted under
+  `runtime/autoaim-b-method-selection-spin30-truth-gated-20260809T104000Z`:
+  3 actual radii x 4 requested distances x 5 independent 12-s repeats. Each
+  accepted run passed truth motion audit before analysis.
+- [x] Collected the matched lateral-plus-spin matrix (1 m/s, 2 m span,
+  30 deg/s), then completed angular-facing truth/observation analysis,
+  descriptive regularity fits, open-arc/outlier audit, error-structure
+  analysis, observation-only association and grouped method comparison.
+- [x] Added explicit method-selection boundaries. Current physical-slot
+  histories are an oracle-identity upper bound because truth organizes tracks;
+  deployment claims require a separate observation-only association score.
+  Truth phase is allowed only for descriptive fitting/oracle analysis, never
+  as a processing-method input.
+- [x] Added linear/CV/CA/Kalman/Ridge/MLP baselines, a same-state coordinated-
+  turn EKF/UKF mechanism check, and a same-state observation-phase Fourier
+  EKF/UKF evaluator. The latter uses only timestamps, observed angles and PnP
+  yaw at inference, applies grouped run holdouts and reports covariance
+  coverage. Single-condition smoke results are diagnostic only; final method
+  selection waits for the full radius-distance-motion matrix.
+
+## 2026-08-09 accepted matrix and processing-method selection
+
+- [x] Completed the truth-gated spin-only and lateral-plus-spin matrices. The
+  accepted merged authority contains 3 actual radial scales x 4 distances x 5
+  repeats x 2 motions = 120 runs and 96 motion-radius-distance-plate cells.
+  Two combined-motion runs have zero observations; they remain explicit
+  availability failures, leaving 118 histories eligible for method scoring.
+- [x] Replaced the misleading centroid/polar geometric curves with absolute-
+  truth-phase, phase-binned open arcs split at unsupported phase and image-space
+  jumps. All 96/96 cells have five-repeat center fits. Median accepted P90 width
+  is 0.082 deg for spin and 0.300 deg for combined motion. Every rejected point
+  remains recorded in `trajectory_outliers.jsonl`.
+- [x] Quantified observation error and continuity. Angular observation error is
+  0.070/0.205 deg P50/P95 for spin and 0.154/0.335 deg for combined motion;
+  median lag-1 error autocorrelation is 0.831/0.741. Adjacent radius and distance
+  conditions move the fitted centers continuously, with distance generally the
+  larger effect. Combined motion needs translation state in addition to yaw
+  phase because yaw alone cannot identify lateral position.
+- [x] Scored observation-only identity separately. The best bounded simple
+  four-track mapping reaches only 0.535 mean accuracy, so all physical-slot
+  processing results remain an oracle-identity upper bound and are not a
+  deployment claim.
+- [x] Completed a strictly paired comparison over 14 complete-run grouped
+  holdouts (repeat, distance, radius and motion transfer), 50/100/200 ms
+  horizons, stable sample hashes and hierarchical condition/run bootstrap.
+  Constant velocity plus a causal u/v Ridge residual is the selected baseline.
+  It beats the simple CV Kalman baseline by about 12.7%--26.2% across the
+  reported grouped tests and does not show the current small MLP's transfer
+  degradation. Fourier periodic EKF/UKF trail Ridge substantially.
+- [x] PnP yaw is excluded from the first selected baseline: its Ridge gain is
+  marginal while it materially harms the current observation-only association.
+  Keep simple Kalman/hold as a missing-history fallback; revisit neural models
+  only after independent speed/span/spin/phase data and deployable association.
+- [x] Final evidence, source hashes, plots and retention classification are at
+  `runtime/autoaim-b-method-selection-accepted-radii-20260809T080000Z/method-analysis/final-evidence-v1`.
+  Raw captures, protected models, invalid diagnostics and simulator Release/SDK
+  are retained; simulator source and Release remain unchanged.
+- [x] Added an offline/replay u/v-only CV + Ridge
+  processor with gap-aware Kalman/hold fallback and confidence from history
+  span, maximum gap, detector coverage and residual scale. Then evaluate the
+  complete association + processing path, reacquisition, long gaps, per-slot
+  worst cases and P99 latency before any online claim. Earlier unchecked items
+  above are retained historical snapshots and are superseded unless explicitly
+  re-authorized after Decision 215.
+
+## 2026-08-09 offline processor and association boundary
+
+- [x] Implemented a JSON-serializable causal processor whose runtime contract
+  is timestamp plus observed u/v only. Five repeat-held-out models and one
+  all-data offline artifact are retained under `method-analysis/cv-ridge-replay-v2-hold-safe`.
+  Truth labels residual targets during training but is explicitly absent from
+  the runtime contract.
+- [x] Replayed 120 collection runs, preserving the two zero-observation runs
+  in availability accounting. On identity-correct predictions the hold-safe
+  processor has 0.310 deg P95 / 0.717 deg P99 angular error; offline Python
+  processor latency is 273 us P99. Short-history Kalman was rejected as the
+  automatic fallback because its 50/100/200 ms conditional P95 was
+  2.63/3.81/8.18 deg versus hold's 0.48/0.52/0.83 deg. Kalman remains an
+  explicit diagnostic switch only.
+- [x] Confirmed the existing hard association is the dominant system error:
+  mean mapping accuracy is 0.535 and the hold-safe end-to-end P95 is 14.50 deg,
+  despite the identity-correct processor tail remaining below one degree.
+- [x] Trained a runtime-only logistic same-armor pair cost with complete-repeat
+  holdouts. It was rejected: the initial variants reached high purity only by
+  dropping most detections, and a 12-setting acceptance sweep peaked at 0.462
+  accuracy, below the 0.535 baseline.
+- [x] Added a causal cyclic-segment associator: local CV handles short
+  continuity and unmatched segment births advance a modulo-four identity.
+  Nested-repeat parameter selection raises mean mapping accuracy to 0.683 from
+  0.535 with near-equal acceptance. Condition/run bootstrap gives +0.148
+  accuracy, 95% CI [+0.108,+0.191].
+- [x] Rejected direct deployment of the single cyclic hard identity. Its
+  end-to-end median improves to 0.156 deg, but residual identity shifts produce
+  19.62 deg P95. Even confidence >=0.95 retains 46.6% of 100 ms predictions
+  with only 69.2% identity correctness and 10.29 deg P95. Confidence rejection
+  cannot repair the hard-ID tail.
+- [x] Final processor/association evidence and retention hashes are under
+  `runtime/autoaim-b-method-selection-accepted-radii-20260809T080000Z/method-analysis/processor-association-decision-v1`.
+  Raw data, failed candidates, the pair model, fold models and caches remain
+  protected and retained. No simulator source, SDK or Release was changed.
+- [ ] **Paused by user:** do not implement the multi-hypothesis C4 identity
+  belief tracker or continue predictor work until it is explicitly resumed.
+
+## 2026-08-09 evidence-chain reconstruction (active)
+
+- [x] Freeze predictor/tracker implementation and begin at the detector-corner
+  observation boundary.
+- [x] Trace canonical raw corner order, frame-local observation identity,
+  subpixel/PCA refinement, movement gates, IPPE candidate selection and Stage3
+  serialization in source.
+- [x] Confirm the formal Stage3 v2 boundary: PnP position/yaw/residuals are
+  retained, but raw/refined corners and corner covariance are absent.
+- [x] Extend and rerun the retained arc-flip diagnostic so each truth-matched
+  observation records raw/refined corners and their movement. The hash-bound v3
+  report has 31 samples; mean corner movement is 1.072/2.327/2.453 px at
+  P50/P90/max and covariance remains unavailable.
+- [x] Record accepted evidence, superseded interpretations, non-claims and
+  optimization space in `modules/autoaim/docs/trajectory_evidence_chain.md`.
+- [x] Stage 2 accepted for reconstruction: PnP tvec, candidate selection,
+  camera/gimbal/tracker coordinates and the whole post-PnP observation
+  trajectory are now inventoried. Predictor work remains paused.
+### 2026-08-10 corner evidence distribution correction
+
+- [x] Correct the earlier stage-1 evidence boundary: the 120-run Stage3 v2
+  matrix has no corners, but the dedicated Stage3 observation v3 independent
+  capture retains a 4,280-row raw/refined/truth corner atlas.
+- [x] Export all 17,120 per-corner refinement samples and 34,240 raw/refined
+  truth-residual samples, plus exact sorted empirical distributions with sample
+  key, rank, CDF and survival. Summary statistics are navigation only.
+- [x] Preserve four-corner asymmetry explicitly. Mean raw-to-refined shift norm
+  is 0.753/1.057/1.078/0.891 px for bl/tl/tr/br, with different signed dx/dy
+  biases and different tails.
+- [x] Inventory accepted, rejected, superseded and failed corner evidence: 74
+  top-level assets, 423 runtime files, 431 existing linked source files and 19
+  missing path references. Keep the direct-corner window/switch experiments
+  distinct from the online PCA/cornerSubPix refiner.
+- [x] Record the reproducibility gaps instead of hiding them: 10 historical
+  analysis/spec files and 9 July joint-PnP raw/intermediate streams are absent.
+- [x] User accepted stage 1 and requested the PnP/whole-trajectory evidence
+  stage next.
+
+### 2026-08-10 PnP evidence and whole-trajectory reconstruction
+
+- [x] Trace the production PnP contract from refined/fallback corners through
+  IPPE candidate ranking, selected tvec, exposure-aware fixed-tilt yaw and the
+  camera -> gimbal -> tracker SE(3). Record the Stage3 residual-field semantic
+  caveat separately from candidate-level free-IPPE RMS.
+- [x] Reconcile July yaw/joint-PnP, PnP-history adapters, frozen-F/domain-shift
+  tests, August coordinate provenance, current-frame correction, geometry,
+  candidate, distortion and trajectory audits without promoting diagnostic
+  experiments into the production solver.
+- [x] Preserve the 56-session point-level PnP trajectory distribution and the
+  120-run truth-gated whole-observation matrix. Record repeatability,
+  heavy-tailed depth error, temporal correlation, missing streaks and the
+  separation between image angular accuracy and tracker-frame 3D error.
+- [x] Retain negative evidence: wrong truth basis, invalid nominal-radius runs,
+  global polynomial artifacts, physical-ID misuse, lower-residual fallacy and
+  the rejected IPPE branch-switch explanation.
+- [x] Generate a hash-bound file catalog covering 421 selected top-level
+  assets, 11,015 runtime files (23,124,946,682 bytes), 542 linked existing
+  sources and all 60 missing historical references. Accepted, rejected,
+  superseded, invalid and failed assets remain represented.
+- [x] Record the stage in `trajectory_evidence_chain.md` and the machine-readable
+  `pnp_evidence_registry.json`. No production PnP, predictor, tracker, simulator
+  source, SDK or Release is changed.
+- [x] User requested continuation into stage 3: exact-exposure time joins,
+  observed u/v, missing/adjacency semantics and offline-identity versus
+  deployable association boundaries. Predictor remains paused.
+
+### 2026-08-10 post-PnP causal time-series evidence reconstruction
+
+- [x] Trace the online observation boundary before `trackerUpdate()` and the
+  exact offline join key: session, producer epoch, frame sequence and timestamp.
+- [x] Freeze observed `u/v` as calibrated camera-ray angles from PnP tvec and
+  keep them distinct from detector pixels, tracker coordinates and truth.
+- [x] Export the complete accepted 120-run distribution: 189,158 frame rows,
+  250,449 detections, 184,761 candidate-set transitions, 2,974 missing streaks
+  and 554,138 exact empirical-distribution rows.
+- [x] Preserve irregular event time, empty-frame semantics, left-padding masks,
+  causal qualification gates and the superseded fixed-5-ms v2 contract.
+- [x] Record candidate-count changes, frame-local signature changes, sequence
+  gaps and the 18 observed frames with more than four candidates.
+- [x] Separate offline oracle truth-slot labels from deployable association;
+  retain rejected hard/learned identities and the cyclic topology diagnostic.
+- [x] Generate the hash-bound time-series catalog: 434 selected assets, 10,453
+  files and 17 explicit missing historical references.
+- [x] Validate registry JSON, both inventory/export scripts, every final output
+  hash, all 480 protected raw source hashes and exact output row counts.
+- [x] User accepted continuation into stage 4: specify observer inputs, state,
+  uncertainty, gating, timeout, reacquisition and acceptance tests without
+  resuming predictor or multi-hypothesis tracker implementation.
+
+### 2026-08-10 evidence-supported observer specification
+
+- [x] Audit the current 11-dimensional YpdAngleTracker, frame-count state
+  machine, dt substitution, Q/R, NIS, physical gates and covariance as a
+  retained production baseline rather than presumed calibrated evidence.
+- [x] Limit the initial observer state to anonymous camera-frame
+  `[u,v,du/dt,dv/dt]`; retain depth, PnP yaw and quality features separately.
+- [x] Define required frame/candidate inputs, prohibited truth/future fields,
+  full candidate-set preservation and camera/world transform boundaries.
+- [x] Define `NO_DATA/ACQUIRING/OBSERVED_ANONYMOUS/AMBIGUOUS_SET/STALE/
+  REACQUIRING/INVALID_STREAM` with fail-closed transition reasons.
+- [x] Inherit 8 events/0.2 s and 50 ms freshness as the initial qualification
+  boundary. Revoke qualified output after 50 ms and reacquire with new
+  ephemeral handles; do not accept a longer coast timeout without new evidence.
+- [x] Split uncertainty into angular, depth, freshness, availability, set
+  ambiguity, association, transform and applicability. Leave covariance
+  invalid until repeat-held condition-wise nominal coverage passes.
+- [x] Define 34 A--F acceptance IDs covering causality, permutation/identity,
+  all 2,974 missing streaks, two zero-observation runs, complete distributions,
+  coverage, deterministic replay, failure injection and protected boundaries.
+- [x] Validate the machine registry, all evidence authority/source hashes and
+  current production-baseline facts against the repository.
+- [ ] Await user review before stage 5. If approved, implement only an offline
+  truth-stripped reference observer and deterministic acceptance harness; no
+  online RobotEstimator, predictor, physical-identity tracker or fire control.

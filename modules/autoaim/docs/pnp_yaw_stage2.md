@@ -76,7 +76,7 @@ vision 为 1655/1475/1723。`tcp_bind_failed`、queue drop 和 GPU map error
 3 m 曲线最清晰，5 m 保留可辨识的连续旋转趋势，7 m 噪声和间断明显增加；
 这一距离退化符合角点分辨率的物理限制，并未破坏修复后的坐标语义。
 
-绘图可由仓库脚本 `scripts/plot-pnp-chassis-yaw.py` 从三个
+绘图可由仓库[绘图脚本](../../../scripts/plot-pnp-chassis-yaw.py)从三个
 `observations.cyclic.jsonl` 文件重建。
 
 ## 保留与边界

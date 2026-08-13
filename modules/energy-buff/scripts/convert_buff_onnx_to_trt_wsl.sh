@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TRTEXEC="${AIM_SIM_TRTEXEC:-/usr/src/tensorrt/bin/trtexec}"
+DEFAULT_TRTEXEC="$(command -v trtexec 2>/dev/null || true)"
+DEFAULT_TRTEXEC="${DEFAULT_TRTEXEC:-/usr/src/tensorrt/bin/trtexec}"
+TRTEXEC="${AIM_SIM_TRTEXEC:-${DEFAULT_TRTEXEC}}"
 ONNX_PATH="${AIM_SIM_BUFF_ONNX:-${ROOT_DIR}/../agent-team/models/energy_buff_yolo_pose_v4/yolov8n_pose_640_e20_v4/weights/best.onnx}"
 ENGINE_PATH="${AIM_SIM_BUFF_ENGINE:-${ROOT_DIR}/models/buff.engine}"
 LOG_PATH="${AIM_SIM_TRT_LOG:-${ROOT_DIR}/build/buff_yolov8n_pose_v4_fp16_trtexec.log}"

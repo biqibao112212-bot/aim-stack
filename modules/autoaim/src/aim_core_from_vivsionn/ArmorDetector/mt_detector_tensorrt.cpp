@@ -86,6 +86,21 @@ int detectorActiveSlots()
   return parsed;
 }
 
+double detectorScoreThreshold()
+{
+  const char* value = std::getenv("AIM_SIM_DETECTOR_SCORE_THRESHOLD");
+  if (value == nullptr) return 0.5;
+
+  char* end = nullptr;
+  const double parsed = std::strtod(value, &end);
+  if (value[0] == '\0' || end == value || *end != '\0' ||
+      !std::isfinite(parsed) || parsed < 0.01 || parsed > 0.99) {
+    throw std::runtime_error(
+        "AIM_SIM_DETECTOR_SCORE_THRESHOLD must be finite and in [0.01, 0.99]");
+  }
+  return parsed;
+}
+
 std::uint64_t elapsedNs(
     std::chrono::steady_clock::time_point begin,
     std::chrono::steady_clock::time_point end)
@@ -163,9 +178,11 @@ MultiThreadDetectorTRT::MultiThreadDetectorTRT(const std::string& config_path, b
         throw std::runtime_error(oss.str());
     }
     
-    min_confidence_ = 0.5;
-    score_threshold_ = 0.5;
+    score_threshold_ = detectorScoreThreshold();
+    min_confidence_ = score_threshold_;
     nms_threshold_ = 0.45;
+    std::cout << "[TRT INFO] detector_score_threshold=" << score_threshold_
+              << std::endl;
     
     roi_ = cv::Rect(0, 0, 1440, 1080);
     offset_ = cv::Point2f(roi_.x, roi_.y);
@@ -190,6 +207,12 @@ MultiThreadDetectorTRT::MultiThreadDetectorTRT(const std::string& config_path, b
     
     auto input_type = engine_->getTensorDataType(input_name_.c_str());
     auto output_type = engine_->getTensorDataType(output_name_.c_str());
+    if (input_type != nvinfer1::DataType::kFLOAT &&
+        input_type != nvinfer1::DataType::kHALF) {
+        throw std::runtime_error(
+            "Unsupported TensorRT detector input dtype; expected FP32 or FP16");
+    }
+    input_fp16_ = input_type == nvinfer1::DataType::kHALF;
 
     // 鎵撳嵃璋冭瘯淇℃伅锛屽府鍔╁畾浣嶉棶棰?
     std::cout << "=== Model Info ===" << std::endl;
@@ -440,7 +463,9 @@ void MultiThreadDetectorTRT::launcher_loop()
             (Npp8u*)d_bufs.d_letterbox_img, 640 * 3, dst_sz, dst_rc, NPPI_INTER_LINEAR, npp_stream_ctx_);
 
         // 杩欓噷鐨勫己鍒惰浆鎹㈤渶瑕佹牸澶栧皬蹇冿紝濡傛灉 kernel 鍜?engine 绫诲瀷涓嶄竴鑷达紝鍙兘鍑洪敊
-        launch_preprocess_kernel((const uint8_t*)d_bufs.d_letterbox_img, (uint16_t*)d_bufs.d_tensor_in, 640, 640, stream);
+        launch_preprocess_kernel(
+            static_cast<const uint8_t*>(d_bufs.d_letterbox_img),
+            d_bufs.d_tensor_in, 640, 640, input_fp16_, stream);
         if (profile_sampled) {
             cudaEventRecord(timing_events_[slot_idx].preprocess_done, stream);
         }
@@ -692,17 +717,18 @@ std::vector<rm::ArmorForDetect> MultiThreadDetectorTRT::postprocess(
     std::vector<float> confidences;
     std::vector<cv::Rect> boxes;
     std::vector<std::vector<cv::Point2f>> kps_list;
+    const float objectness_logit_threshold = static_cast<float>(
+        std::log(score_threshold_ / (1.0 - score_threshold_)));
 
     for (int r = 0; r < output.rows; r++) {
         float* row = output.ptr<float>(r);
         
         // 璁块棶瓒婄晫楂樺嵄鍖猴細纭繚 output.cols 瓒冲澶?
-        // sigmoid(x) < 0.5 iff x < 0 for finite x. Preserve the original
-        // sigmoid path for accepted rows, non-finite values, and any future
-        // threshold other than the exact production value.
+        // Compare in logit space first. Running sigmoid for all 25,200 rows
+        // made low-threshold captures slow enough for exact truth to age out.
         const float objectness_logit = row[8];
-        if (score_threshold_ == 0.5f && std::isfinite(objectness_logit) &&
-            objectness_logit < 0.0f) {
+        if (std::isfinite(objectness_logit) &&
+            objectness_logit < objectness_logit_threshold) {
             continue;
         }
         float score = (float)sigmoid((double)objectness_logit);

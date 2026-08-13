@@ -3271,3 +3271,685 @@ Windows 原生桥、localhost TCP RGBA32 1440×1080 与 Windows TensorRT 资产�
   checkpoint, validation access, future-position fine-tuning or plot exists at
   this handoff. The next conversation must discuss and reseal the detailed
   learned experiment before execution.
+
+## 2026-08-08 decision 199: throughput is not effective trajectory sampling
+
+- A native Windows E2E target-in-view run at about 140.967 FPS proves only
+  image/consumer throughput. Its 4,970 Stage3 rows have `armors=[]`, so it is
+  not a trajectory-training capture.
+- The 2026-08-08 `stage3-radius-spin-repeat` captures are useful and must be
+  retained, but they are not high-rate captures: the retained simulator stats
+  report `main_update_hz=4`, `capture_copy_submit_hz=4`, and the observation
+  streams measure 1.76--2.21 Hz with roughly 0.45--0.56 s timestamp spacing.
+  Their session result reports simulator `1.2.0-dev` and their bridge command
+  uses the historical WSL path, so they are diagnostic/provenance-separated
+  from the current Windows Release 1.2.1 contract.
+- Historical low-rate raw observations are preserved. For training, a frame
+  is eligible only after finite valid armor/event checks and causal-window
+  coverage; low-rate samples may remain useful for replay, labels and
+  observation-quality diagnostics, but cannot be treated as equivalent to a
+  high-rate motion history.
+- The next authorized experiment is a current-lock native Windows smoke with
+  nonzero valid armor rows and explicit valid-event/timestamp/queue/hash
+  gates. Only after that gate passes may a new train-session split be sealed.
+  The learned local-precision experiment remains the first model gate with
+  Mapper/S/H/V14 frozen; old anonymous-F, selector, router and mapper-only
+  sweeps remain closed.
+
+## 2026-08-08 decision 200: native collection throughput passes, lossless capture does not
+
+- The current Release 1.2.1 native Shooting Range test configured target 3
+  rotation successfully (`set_target_3_spin`, 114.592 deg/s). End-to-end
+  consumer throughput was 143.37 FPS for 30 seconds; Stage3 wrote 4,300
+  measurement rows at 143.31 FPS with zero sink failures.
+- A raw TCP collector on the same run read 4,706 valid 1440x1080 RGBA32
+  frames, 156.87 FPS. Header sequence analysis gives approximately 193.3 FPS
+  at the producer and 1,094 missing sequence numbers in the 30-second
+  measurement segment (18.87%); this is a latest-only mailbox replacement
+  problem, not a Stage3 JSONL writer backlog.
+- The user-required >=100 FPS collection threshold is accepted for throughput
+  only. Long-term retention must remain blocked until raw-frame sequence gaps
+  are zero or explicitly accounted for. Adding a queue after the SDK or
+  consumer `waitForLatest` cannot restore frames already replaced upstream.
+- The raw Stage3 observation rows in this run all had empty armor lists, so the
+  run is transport/throughput evidence only. The next implementation proposal
+  must separate a lossless raw-frame recorder from the latest-only inference
+  path and include producer/consumer/drop/high-watermark counters. Any change
+  to the simulator SDK or Release remains behind
+  `SIMULATOR_CHANGE_APPROVAL_REQUIRED`.
+- Retention is sealed by
+  `D:\仿真\runtime\autoaim-b-collection-evidence-20260808.json`, which binds
+  both run roots to simulator Release 1.2.1, the lock/binary/engine hashes and
+  consumer commit `8dae8e4`. Across the preserved logs there were no timestamp
+  regressions, duplicates or sequence regressions; source gaps are explicitly
+  recorded. The TCP benchmark retained headers/timing, not raw image payloads.
+
+## 2026-08-08 decision 201: native detector recovered, current Release truth is intentionally empty
+
+- The current Windows consumer had a real FP32/FP16 preprocessing contract bug.
+  TensorRT reported `images` as `FLOAT (FP32)`, while the CUDA preprocessing
+  kernel wrote half values through a `uint16_t*`. The consumer fix is dtype
+  dispatched and was rebuilt without touching the simulator.
+- A rebuilt native Release 1.2.1 run now emits nonempty observations at 134.5
+  FPS (1,020 armor items in 1,743 Stage3 rows). All retained observation rows
+  have monotonic frame sequence and exposure timestamps; source gaps remain
+  allowed/recorded under the user's latest collection rule.
+- A Windows-side opt-in truth sidecar joined every observation row to an exact
+  SDK metadata row, but every exact row has `ground_truth.target_count=0`.
+  This is explained by simulator `src/talos/ground_truth.rs`: when the
+  `distribution-release` feature is locked, it intentionally publishes an
+  empty batch while retaining exposure pose as a synchronization channel.
+- Consequently the current locked Release can validate detector throughput,
+  observation timestamps, and camera-frame trajectories, but cannot validate
+  four physical plate grouping. Observation order, detector number, and any
+  heuristic cyclic ID remain non-ground-truth. The fixed-radius/distance pilot
+  and four independent physical-plate plots are not authorized from this
+  Release stream until a truth-capable collection path is explicitly chosen.
+
+## 2026-08-09 decision 202: development truth path is the current research source
+
+- The user authorized a separate development-simulator collection path for
+  trajectory research. The simulator source, SDK, and formal Release remain
+  unchanged. The locked Release's intentionally empty truth batch remains
+  unsuitable for physical four-plate grouping.
+- The retained grid is diagnostic/research evidence, pinned by per-run hashes
+  for the dev simulator binary, bridge, engine, benchmark script, collector
+  script, and consumer commit. Its frame rate is about 65--73 FPS while writing
+  full truth; timestamp order is the acceptance signal because source frame
+  loss is explicitly allowed.
+
+## 2026-08-09 decision 203: identity and coordinate contract for four plates
+
+- Cross-run physical identity is `relative_slot` within the selected complete
+  target. `target_id` is scoped to a simulator run and detector_number is only
+  a detector output label. The selected target is the farthest complete
+  label-3 target from the exposure camera, which excludes the controlled robot
+  also published as label 3.
+- Truth camera coordinates are converted from the simulator local basis
+  `(+X forward,+Y right,+Z opposite OpenCV vertical)` to OpenCV
+  `[right,down,forward]` before matching Stage3 `camera_tvec_m` detections.
+
+## 2026-08-09 decision 204: preliminary predictability result is bounded
+
+- The four-slot truth plots show closed, repeatable phase trajectories across
+  the radius/distance grid. A two-repeat phase-template predicting the held-out
+  third repeat has mean errors roughly 0.39--3.06 degrees by condition and
+  P95 errors roughly 0.63--5.12 degrees in the current diagnostic metric.
+- A causal constant-velocity baseline on truth angular history gives aggregate
+  P95 error about 0.06 degrees at 50 ms, 0.16 degrees at 100 ms, and 0.47
+  degrees at 200 ms (condition-slot P95 values vary). This supports local
+  short-horizon predictability of the simulated motion, but it is an oracle
+  truth baseline and must not be presented as detector/deployment accuracy.
+
+## 2026-08-09 decision 205: observation-only held-out result is the current evidence boundary
+
+- The relevant test is now a real consumer-observation held-out evaluation:
+  historical observed camera angles and finite-difference velocities are the
+  only model features; simulator truth is used offline for supervised labels
+  and final scoring. Two repeats train and the third repeat is held out for
+  every radius/distance/slot/horizon cell.
+- A slot-specific standardized linear predictor improves pooled held-out P95
+  angular error over the causal constant-velocity baseline from 1.313 to
+  0.650 deg at 50 ms, 1.596 to 0.826 deg at 100 ms, and 2.654 to 1.281 deg at
+  200 ms. Per-slot results are retained in
+  `D:\仿真\runtime\autoaim-b-trajectory-grid-dev-20260809T003000Z\analysis\observation_only_slot_summary.csv`.
+- Therefore the current answer to “can historical data fit future trajectory?”
+  is “yes, in this simulated grid and for short horizons, with measurable
+  held-out improvement.” This does not yet answer whether a deployed autoaim
+  system can maintain physical plate identity: relative slots were assigned
+  offline from truth, and source-frame loss was allowed by the collection
+  contract.
+- The grid is already sufficiently large for this stage (36 runs, 12
+  conditions, 3 repeats, over 100k truth slot points, and over 25k exact
+  observation joins). Do not re-collect the old low-rate sessions for this
+  gate; preserve them as provenance/replay assets. New collection should be
+  reserved for the two explicit open boundaries: detector-only identity
+  association and robustness outside the current radius/distance grid.
+
+## 2026-08-09 decision 206: merged grid confirms prediction, not deployment identity
+
+- The same-scene collection was extended to 60 valid observation runs across
+  the 12 radius/distance conditions, plus one preserved failed run and one
+  valid replacement repeat. The merged evidence is bound to the three input
+  collection manifests and uses `session_id + producer_epoch + frame_seq +
+  timestamp_ns` for joins.
+- The five-repeat held-out observation test remains positive: historical
+  observation features improve pooled P95 from 1.297/1.591/2.666 degrees to
+  0.667/0.843/1.314 degrees at 50/100/200 ms. This is the current quantitative
+  answer that learning historical data can fit short-horizon future angular
+  trajectory within the tested simulated grid.
+- A causal detector-only four-track association baseline was evaluated on the
+  same raw stream. Its best position/time variant has only 36.1% mean global
+  track-to-slot accuracy over 60 valid runs; the raw yaw field is not a safe
+  identity cue. Therefore the positive prediction result is conditional on
+  offline physical-slot labels and cannot be called a deployable four-plate
+  tracker result.
+- Keep the old low-rate captures and the one failed high-rate run as retained
+  provenance; do not mix them into valid observation training counts. The next
+  justified experiment is a stronger observation-domain association/anonymous
+  track formulation or a simulator-side per-armor truth interface proposal,
+  not more repetitions of the already-covered grid.
+
+## 2026-08-09 decision 207: geometric locus is the current descriptive target
+
+- Decision 206's prediction result is not the active objective for this stage.
+  The current task is only to determine whether repeated observations of each
+  physical armor slot cluster around a stable trajectory under each radius and
+  distance condition.
+- A per-run `yaw - first_yaw` phase normalization is insufficient for this
+  question: different initial yaw states can produce different camera-plane
+  starting points even when the geometric closed locus is the same. Phase
+  plots remain audit evidence, not the primary overlap criterion.
+- The accepted descriptive representation is a camera azimuth/elevation
+  geometric locus: robust point-cloud center, circular polar-angle bins and
+  median radius per bin, with empirical residual bands and repeat-locus
+  distances. This representation is invariant to the arbitrary starting point
+  of a rotation for the present descriptive test.
+- Current truth evidence is strongly regular within a condition: merged P95
+  residual is approximately 0.18--0.34 degrees and repeat-locus P95 difference
+  is approximately 0.018--0.057 degrees. Across conditions, distance changes
+  are materially larger than radius changes (mean P95 about 2.26 versus 0.26
+  degrees in the current grid).
+- Observed points are secondary evidence because their geometric polar coverage
+  averages only about 0.315 and worsens in sparse conditions. No conclusion
+  about physical irregularity may be drawn from those missing observed bins.
+- The report, outputs and hashes are retained under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/geometric`.
+  No simulator source, SDK, Release or protected model asset was changed.
+- Both truth and observed streams now have per-slot detailed figures containing
+  raw point clouds, every repeat locus, merged hexbin density and the merged
+  center curve. The condition-effect table also separates full-curve position,
+  centered shape, azimuth/elevation span and curve-length changes.
+- Truth azimuth/elevation spans and curve length are non-increasing across all
+  36 adjacent distance comparisons in this grid. This supports continuity
+  inside the tested grid, but does not authorize extrapolation outside it.
+
+## 2026-08-09 decision 208: observed closed loci and angular slot labels are superseded
+
+- Decision 207 remains valid for simulator truth loci only. Its observed
+  circular-polar fit is superseded because periodic interpolation connected
+  disconnected point families across empty camera-plane support. Observed
+  trajectories must use an open, gap-aware representation; fragmented cells
+  produce no center curve.
+- The original observation assignment used only camera azimuth/elevation
+  against all four projected truth slots. Opposite/front-back plates can share
+  almost the same camera ray, so this was not a physical identity rule. The
+  replacement offline audit first restricts candidates to truth-facing slots
+  and then uses Euclidean distance between full PnP `camera_tvec_m` and truth
+  camera xyz. It retains the legacy slot on every row for provenance.
+- The correction changes 38,262 of 45,361 comparable labels (84.35%). Therefore
+  Decisions 205 and 206 remain historical reproducibility records but their
+  observed per-slot held-out numbers are not evidence for four independent
+  physical plates. No prediction experiment is active in this stage.
+- Under corrected physical labels, one open arc is supported in only 3/12,
+  8/12, 11/12 and 0/12 cells at 1.5, 2.2, 3.5 and 5 m respectively. The legacy
+  visual statement “main arc plus two side families” is accurate at 1.5/2.2 m,
+  but deleting the two side families before identity correction would remove
+  many correctly labelled plate observations.
+- Remaining off-arc physical observations are systematic and skew toward
+  oblique views: accepted/rejected facing-score medians are 0.948/0.765 and
+  depth-error medians are 0.076/0.104 m. A separate diagnostic recapture with
+  constrained-PnP diagnostics gives accepted/rejected reprojection RMS medians
+  14.488/16.178 px and facing medians 0.956/0.692. This supports grazing-angle
+  PnP/corner-fit degradation as the source of the point families.
+- The evidence does not distinguish corner-localization bias from a specific
+  IPPE candidate switch because the retained grid has null reprojection fields
+  and neither grid nor targeted diagnostic records raw corners, candidate
+  indices or candidate error gaps. Any exact solver-branch claim requires a
+  bounded consumer-side diagnostic recapture. Time mismatch, duplicate joins,
+  greedy-versus-global angular assignment and wrong rotating-target selection
+  are not supported causes.
+- The retained source of truth is
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/open-arc-audit`.
+  Raw captures and protected assets are preserved; no simulator source, SDK,
+  formal Release or protected model was modified.
+
+## 2026-08-09 decision 209: camera-basis correction supersedes observed parts of decision 208
+
+- Decision 208 remains a historical record of the failed analysis, but its
+  84.35% slot-change rate, 3/8/11/0 open-arc counts and inability to inspect
+  IPPE candidates are superseded. The truth camera transform had the lateral
+  sign reversed. The validated transform is OpenCV `[right, down, forward] =
+  [-simulator_local_y, -simulator_local_z, simulator_local_x]`.
+- The transform is established by exposure-matched pixel evidence, not by a
+  curve-shape assumption: corrected truth has 0.978 px median detector-center
+  error versus 91.733 px for the mirrored convention, while the selected PnP
+  tvec reprojects with 0.747 px median error.
+- Observed open arcs must be represented parametrically by measured target
+  phase. Each repeat contributes one robust center per phase bin before
+  repeats are merged. Global high-degree polynomial extrapolation is forbidden
+  because it manufactured endpoint upturns and an apparent `U/cup` in the
+  user's reported panel.
+- Under the corrected transform and phase-binned fit, the reported
+  `r=0.75, d=2.2 m, slot=0` observation is a cap matching truth, not a random
+  orientation flip. All 36 cells at 1.5--3.5 m are cap/cap; 5 m produces no
+  accepted center curve because truth orientation is flat/ambiguous or support
+  is fragmented.
+- A dedicated full-pipeline capture now records raw corners and both planar
+  PnP candidates. Across 31 truth-matched target observations, selected solver
+  index is always 0 with zero sequential switches; candidate translations are
+  separated by only 3.0 mm median and 11.2 mm maximum. Therefore IPPE branch
+  switching is rejected as the cause of the reported flip for this bounded
+  condition.
+- The remaining point families are retained, not deleted. Most exclusions are
+  explicitly classified as oblique visibility boundary, wrong detector label,
+  unsupported phase segment or geometric residual. Residual depth error is a
+  detector-corner/planar-conditioning investigation boundary, not authority to
+  edit the simulator or change PnP branch selection.
+- Final authority is the v3 phase audit and candidate report under
+  `runtime/autoaim-b-trajectory-grid-dev-merged-20260809T020000Z/analysis/regularity/open-arc-audit-phase-v3`
+  and `runtime/autoaim-b-arcflip-diag-20260809T013519Z/arc-flip-analysis-v2`.
+  Raw captures, old derived analyses, simulator Release/SDK and protected
+  models are retained unchanged.
+
+## 2026-08-09 decision 210: 5 m loss is detector admission, not PnP or fitting
+
+- A Stage3 empty row means no solved armor, not an offline trajectory reject.
+  The retained 5 m funnel is 11,201 Stage3 frames -> 4,471 nonempty solved
+  frames -> 4,448 PnP3D-facing associated frames. Queue failure is zero.
+- Full-pipeline A/B at 30 and 114.59156 deg/s shows raw detector count equals
+  solved count on every nonempty frame, with zero PnP rejection. Their
+  nonempty rates, 44.99% and 42.68%, reject target spin speed as the primary
+  cause. The current 0.5 objectness admission threshold and rendering/model
+  domain are the remaining front-end boundary.
+- Detector digit classification is not physical identity. Once a candidate is
+  matched in 3D to a truth-facing target-3 armor slot, a non-3 digit is retained
+  for trajectory fitting and separately marked as a classification error.
+  This supersedes Decision 209's statement that wrong detector label is an
+  automatic geometric-fit exclusion.
+- The detector score threshold is an explicit, fail-validated runtime
+  parameter with default 0.5. Threshold 0.25 is accepted as a bounded research
+  diagnostic: it recovers 87.68% raw/solved coverage, all candidates pass PnP,
+  and recovered geometry remains centered near 5 m. It is not yet the formal
+  collection default because its throughput and exact-truth join must be
+  revalidated on an idle GPU.
+- The latest low-throughput and non-exact-truth runs are invalid as formal
+  trajectory evidence because an unrelated game was actively saturating the
+  discrete GPU (77%, 85 C, 6,520 MiB). The process is user-owned and was not
+  stopped. Formal 5 m recollection is gated on an idle GPU, exact timestamp
+  joins and finite PnP; simulator source, SDK, Release and protected models
+  remain unchanged.
+
+## 2026-08-09 decision 211: 5 m observed arcs are stable; truth mismatch is a separate PnP/corner boundary
+
+- Decision 210's idle-GPU gate is satisfied. Threshold 0.25 is authorized for
+  this manifest-bound research dataset because it doubles exact-joined
+  nonempty coverage from 45.27% to 86.41% while retaining finite PnP and
+  97.71% physical association. The production detector default remains 0.50.
+- The formal 15-run 5 m radius grid is accepted as durable trajectory
+  evidence: mean throughput is 119.35 FPS, all sinks are healthy, and exact
+  joins have no regressions or duplicates. Source-frame gaps remain allowed;
+  exact frame keys and timestamps, not contiguity, are the integrity contract.
+- Observation-fit validity and truth consistency are orthogonal outputs. A
+  center curve is accepted from repeated observation support, local residual
+  width and geometric continuity. Truth curvature orientation is reported as
+  `match/mismatch/ambiguous` but does not erase an otherwise repeatable
+  observed locus. This supersedes the part of Decision 209 that refused every
+  5 m center curve solely because of fragmentation/orientation gating.
+- Phase continuity alone is insufficient for drawing. Center trajectories
+  must also split at large image-space jumps; no line or probability band may
+  bridge an unsupported gap. The final 5 m authority is
+  `runtime/autoaim-b-5m-radius-grid-th025-idle-20260809T070000Z/analysis/regularity/open-arc-audit-v3-geometric-segments`.
+- All 12 radius-slot cells pass repeated-support fitting, with five repeats
+  each and roughly 79%--94% retained observations. Eleven of twelve have a
+  truth-orientation mismatch. This supports a learnable systematic observation
+  pattern at 5 m, but does not establish geometrically accurate PnP.
+- Reanalysis of the historical 61-run grid preserves 12/12 supported fits at
+  1.5, 2.2 and 3.5 m but only 7/12 in its sparse 5 m subset. This regression
+  check rejects a general near-range breakage from the new geometric splitter
+  and keeps the fresh 5 m recapture as the authority.
+- Candidate-level evidence rejects IPPE branch switching for the apparent
+  flip: 767/767 selected solver index 0 and there are zero sequential index
+  switches. Candidate translations differ by only 3.1 mm median versus
+  0.417 m median selected-pose truth error. The remaining fault boundary is
+  detector-center/corner localization, subpixel refinement and planar depth
+  conditioning. Lower-confidence admissions worsen it but do not create it.
+- Combined-motion work may proceed only as descriptive observed-trajectory
+  collection unless detector/PnP truth correction is explicitly chosen as a
+  preceding research task. No future predictor is authorized by this decision.
+
+## 2026-08-09 decision 212: angular-facing identity and actual scene motion supersede parts of decision 211
+
+- Decision 211 remains valid for 5 m detector coverage, exact-time integrity,
+  gap-aware observed fitting and rejection of IPPE branch switching. Its
+  physical-slot association and stated 30-deg/s collection speed are
+  superseded.
+- The PnP3D-facing rule hard-truncated truth candidates to the top `N` facing
+  plates for `N` detections. With one detection this encodes the answer before
+  evaluating PnP distance. At 5 m, 22.41% of its common assignments differ
+  from unrestricted all-slot PnP3D, and its median position error is worse
+  (0.460 versus 0.390 m). PnP depth error is large enough that neither rule is
+  accepted as final physical identity.
+- Final offline identity is a one-to-one angular assignment over every
+  truth-front-facing plate with a 0.75-deg gate. It has 23,397 5 m matches,
+  0.088/0.363-deg median/P95 ray error, and a 2.881-deg median second-choice
+  margin with no margin below 0.2 deg. The fitted coordinates remain observed
+  PnP `u/v`; truth is used only for descriptive physical-slot labeling and
+  audit overlays.
+- The final 5 m result is 12/12 fitted radius-slot cells with five-repeat
+  support and 91.58% median acceptance. The observed/truth curvature mismatch
+  persists, so it is measurement-bias evidence rather than a physical arc
+  claim. Authority is `open-arc-audit-v6-angular-facing-final` beneath the
+  retained 5 m radius-grid root.
+- Scene-control acknowledgement proves that the threshold gates and formal
+  radius grid actually ran at 114.59156 deg/s, despite collection manifests
+  requesting 30 deg/s. They remain valid for the stated 5 m/radius regularity
+  question but cannot serve as a 30-deg/s control. Provenance is corrected in
+  place without deleting or rewriting raw captures.
+
+## 2026-08-09 decision 213: combined motion is repeatable but broadens and reshapes the observed arc
+
+- The consumer benchmark previously invoked scene control with only a session
+  argument, allowing the CLI's 114.59156-deg/s spin default to override the
+  collector's requested motion. The benchmark and collector now pass and
+  validate motion mode, direction, linear speed/span and spin rate explicitly.
+  Acceptance depends on scene acknowledgement and measured truth motion, not
+  manifest intent alone.
+- `autoaim-b-combined-baseline-d5-r1-th025-idle-20260809T080000Z` is retained as
+  an invalid/mislabeled diagnostic because it actually contains spin-only
+  motion. It is forbidden from combined-motion conclusions.
+- The accepted A/B consists of two five-repeat, 12-s, 5 m, radius-1.0,
+  30-deg/s datasets. Spin-only has zero truth translation and 129.08--136.33
+  FPS. Combined motion has 1 m/s lateral motion across a 2 m span, measured
+  truth span 1.998--1.999 m, and 125.08--130.75 FPS. Both pass exact-time,
+  no-duplicate, no-regression and healthy-sink gates.
+- All four physical plates fit a repeatable open center trajectory in both
+  conditions. Combined-motion per-slot observed center displacement is
+  0.140--0.245 deg at P50, while its phase-bin P90 band is 1.41--1.56x the
+  spin-only width and its median fit-residual P90 ratio is 1.470. The median
+  observed center shift across slots is 0.208 deg; the corresponding median
+  truth shift is 0.128 deg. Observation-to-truth P50 bias rises from 0.064 to
+  0.078 deg across slots.
+- Shape is not invariant to combined motion: slots 0 and 2 remain `cup`, slot
+  1 changes from `cup` to `cap`, and slot 3 changes from flat to weak `cap`.
+  This is descriptive evidence that translation and spin interact in camera/
+  gimbal observation space; it is not a predictor and does not yet establish
+  continuity across radii, speeds or distances.
+- Source authority is the fixed spin and combined roots plus
+  `runtime/autoaim-b-motion-comparison-fixed-d5-r1-20260809T084000Z`, whose
+  manifest hash-binds the inputs and comparison script. No simulator source,
+  SDK, Release or protected model was modified or deleted.
+
+## 2026-08-09 decision 214: actual truth radius supersedes every prior nominal-radius conclusion
+
+- The radial-scale label in a collection command or directory name is not
+  evidence of physical geometry. Truth audit shows that all earlier nominal
+  0.75/1.0/1.25 grids used the same stock radii, approximately 0.21132 m for
+  even plates and 0.21177 m for odd plates. Decisions 211--213 remain valid
+  only for detector coverage, timing, physical identity, single-stock-radius
+  repeatability and the fixed 5 m spin/combined A/B. Their radius-effect and
+  radius-continuity interpretations are superseded.
+- The defect was consumer-side orchestration, not a simulator defect. Scene
+  reset restores stock geometry; the collector changed an environment label
+  but did not invoke the public Scene Control v2 range-target geometry call.
+  The corrected consumer sequence is scene reset -> stationary target ->
+  explicit geometry -> requested motion. The simulator repository, SDK and
+  Release remain read-only and unchanged.
+- Every newly accepted run is gated by measured truth: selected-target
+  coverage, even/odd radii against requested scale within 2 mm, spin within
+  0.15 deg/s, linear speed within 0.05 m/s and requested translation span.
+  Requested distance remains the experimental setting; actual target-camera
+  and target-gimbal distances are persisted as separate physical covariates.
+- Smoke truth establishes real radius actuation: scale 0.75 gives
+  0.15849/0.15883 m and scale 1.25 gives 0.26415/0.26471 m at 30.000 deg/s.
+  Only a full truth-gated matrix may answer whether trajectory shape varies
+  continuously with radius and distance.
+- Method selection has two explicitly separate evidence levels. A history
+  grouped by truth physical slot is an oracle-identity upper bound even when
+  no truth field enters the feature vector. A deployable conclusion additionally
+  requires association performed on raw detections without truth, followed by
+  truth-only scoring. No oracle result may be relabelled as deployment evidence.
+- Preliminary stock-radius smoke evidence shows temporally correlated
+  observation error (lag-1 about 0.74--0.81) and a learnable simple residual,
+  but it does not select a final method. EKF, UKF, linear residual and neural
+  residual candidates must be compared with complete-run grouped holdouts
+  across actual radii, distances and both motion types. Truth phase is an
+  oracle/descriptive variable and is forbidden as a processor input.
+
+## 2026-08-09 decision 215: open-arc evidence selects causal CV plus u/v Ridge residual
+
+- Decision 214's full truth-gated evidence gate is satisfied. The accepted
+  matrix contains 120 runs over three measured radial scales, four distances,
+  five repeats and spin/combined motion. Two combined runs with no observations
+  remain availability failures; 118/120 histories enter the fair comparison.
+- The prior centroid/polar geometric diagnostic is deprecated as trajectory
+  authority because an open, non-star-shaped locus can create unsupported
+  chords and absorb disconnected outliers. The authoritative fit uses absolute
+  truth phase only for descriptive grouping, bins repeated observations, splits
+  unsupported phase/image gaps and retains all exclusions in an outlier ledger.
+  This produces five-repeat center fits for all 96/96 condition-plate cells.
+- The trajectories are stable enough to learn but are observation trajectories,
+  not exact physical arcs. Median accepted P90 width is 0.082 deg for spin and
+  0.300 deg for combined motion. Observation angular error is temporally
+  correlated (median lag-1 0.831/0.741), and adjacent radius/distance effects
+  are continuous. Combined motion is broader at close range because yaw phase
+  does not identify lateral translation state.
+- The fair processor comparison uses stable run/slot/timestamp/horizon hashes,
+  identical samples within each input tier, 14 complete-run grouped holdouts,
+  50/100/200 ms horizons and hierarchical condition-then-run bootstrap. It
+  selects constant-velocity extrapolation plus a causal u/v-only Ridge residual
+  as the next baseline. Relative to CV Kalman, Ridge improves grouped error by
+  about 12.7%--26.2%; the current small MLP is not consistently better and
+  degrades more on distance/motion transfer. The current Fourier periodic
+  EKF/UKF mechanisms trail Ridge and are not selected.
+- PnP yaw is excluded from the first baseline. It adds little to Ridge and
+  substantially harms the bounded observation-only identity heuristic. The
+  best such heuristic reaches only 0.535 mean mapping accuracy, so physical-slot
+  results remain an oracle upper bound. A simple Kalman/hold path is retained
+  solely for missing/rejected histories.
+- Neural modeling is deferred, not rejected permanently. Reconsider it only
+  after collecting independent linear speeds, spans, spin rates and phase
+  offsets and after defining deployable association/reacquisition. The next
+  authorized work is an offline/replay CV+Ridge implementation with gap-aware
+  fallback, confidence and end-to-end association/latency evaluation.
+- Final authority is
+  `runtime/autoaim-b-method-selection-accepted-radii-20260809T080000Z/method-analysis/final-evidence-v1`,
+  with the strict fair-comparison source under `method-analysis/fair-core-final`.
+  Source hashes and retention manifests bind the accepted inputs and outputs.
+  Raw data, rejected points, failed runs, protected models and simulator assets
+  are retained; no simulator source, SDK or Release change was made.
+
+## 2026-08-09 decision 216: accept the offline u/v CV+Ridge processor with hold-safe fallback
+
+- A reusable JSON processor now implements the Decision-215 feature contract:
+  runtime input is only timestamped observed u/v. Truth labels CV residuals
+  during fitting and scores replay output, but is explicitly excluded from the
+  serialized runtime input contract. Five repeat-held-out models prevent run
+  leakage; an all-accepted-run model is retained for later offline integration.
+- All 120 accepted runs remain in availability accounting; 118 have usable
+  observations and predictions. Conditional on correct identity, aggregate
+  angular error is 0.310 deg P95 and 0.717 deg P99. Offline Python prediction
+  latency is 273 us P99; this is not a production C++ latency claim.
+- Startup/reacquisition uses hold by default. The initial short-history Kalman
+  fallback amplified association/velocity noise: conditional P95 was
+  2.63/3.81/8.18 deg at 50/100/200 ms, versus 0.48/0.52/0.83 deg for hold.
+  Kalman remains available only behind an explicit diagnostic configuration.
+- The processor is accepted as an offline component, not as an online system.
+  With the old observation-only hard association, mean identity accuracy is
+  0.535 and end-to-end P95 is 14.50 deg. This separates a sub-degree processing
+  layer from a still-unresolved identity layer.
+- Authority is `method-analysis/cv-ridge-replay-v2-hold-safe` under the accepted
+  matrix root. Models, raw predictions, run availability, gap/slot/condition
+  metrics and latency samples are hash-bound protected evidence.
+
+## 2026-08-09 decision 217: cyclic topology is necessary but a single hard identity is unsafe
+
+- A learned independent same-armor logistic pair cost is rejected. Complete-
+  repeat holdouts and a separate acceptance sweep show that its high-purity
+  result comes from rejecting detections; forced-accept variants peak at 0.462
+  mean mapping accuracy, below the 0.535 hand-written CV baseline.
+- A causal cyclic segment rule adds the missing global structure: short gaps
+  use local CV continuity and unmatched births advance a modulo-four identity.
+  With nested-repeat parameter selection it reaches 0.683 mean accuracy and
+  0.773 track purity at 0.974 acceptance. The baseline is 0.535/0.632/0.977.
+  Hierarchical condition-then-run bootstrap estimates a +0.148 accuracy gain,
+  95% CI [+0.108,+0.191].
+- Cyclic topology is therefore accepted as the next association foundation,
+  but its single hard assignment is rejected for deployment. When connected to
+  hold-safe CV+Ridge, median error improves to 0.156 deg and identity-correct
+  P95 is 0.287 deg, yet hard cyclic slips raise overall P95 to 19.62 deg.
+- Local continuity confidence is not a calibrated identity probability. At
+  confidence >=0.95, 46.6% of 100 ms predictions remain, but identity accuracy
+  is only 0.692 and end-to-end P95 is still 10.29 deg. Threshold tuning cannot
+  make this single-hypothesis tracker safe.
+- The next authorized component is a multi-hypothesis C4 belief tracker over
+  cyclic permutations/phase. It must emit top-k/permutation probabilities and
+  propagate a position mixture or withhold unresolved output. Acceptance must
+  include top-k coverage, NLL/Brier calibration, mixture angular error,
+  reacquisition, per-condition tails and P99 latency before online integration.
+- Final authority is `method-analysis/processor-association-decision-v1`; nested
+  cyclic, learned-pair, replay-cache and fold-model sources are hash-bound and
+  retained. No raw or protected asset was deleted and the simulator boundary
+  remains unchanged.
+
+## 2026-08-09 decision 218: freeze predictor work and audit the corner-observation boundary first
+
+- Predictor and multi-hypothesis tracker work is paused by the user. The active
+  task is evidence preservation and reconstruction of the existing processing
+  chain from detector corners forward; no new training or online integration is
+  authorized by this decision.
+- Detector output is canonical `bl,tl,tr,br`. Production PnP consumes the
+  refined/fallback version of those four points; detector center remains the
+  network center and is not recomputed after refinement. `observation_id` is
+  frame-local only.
+- `stage3-observation-v2` stores PnP-derived position/yaw/residual fields but not
+  raw corners, refined corners, corner movement or corner covariance. The 120-run
+  accepted matrix therefore proves the post-PnP observation process, not a
+  per-sample corner model. Corner claims are limited to retained full-pipeline
+  diagnostics.
+- A new hash-bound rerun over the retained 2.2 m full-pipeline diagnostic records
+  31 truth-matched target observations. Raw-to-PnP mean corner movement is
+  1.072/2.327/2.453 px at P50/P90/max; per-observation maximum corner movement is
+  3.464/4.324/4.760 px. Both raw and refined corner covariance remain unavailable.
+- The same bounded diagnostic preserves the corrected/mirrored truth projection
+  split (0.978 versus 91.733 px median), zero IPPE index switches and 3.012 mm
+  median candidate-tvec separation. It rejects branch switching for this capture
+  but does not prove that the current subpixel refiner is optimal.
+- Durable documentation is `modules/autoaim/docs/trajectory_evidence_chain.md`.
+  Derived authority is
+  `runtime/autoaim-b-arcflip-diag-20260809T013519Z/arc-flip-analysis-v3-corner-audit`;
+  its retention manifest binds protected inputs, current analysis source and
+  outputs. The historical v2 output remains retained and superseded for corner
+  fields.
+## 2026-08-10 decision 219: full per-corner distributions and negative evidence are the stage-1 authority
+
+- Decision 218's 31-match full-pipeline set remains a bounded implementation
+  cross-check, but it is not the only retained corner evidence. The dedicated
+  Stage3 observation v3 independent source has a hash-bound 4,280-row atlas
+  across 3,149 unique exposure frames, two sessions and twelve motion segments.
+- Stage-1 evidence must retain every sample for bl/tl/tr/br separately. The
+  lossless export contains 17,120 raw-to-refined corner records, 34,240
+  raw/refined-to-truth residual records, and exact sorted empirical values with
+  sample key, rank, CDF and survival. Mean/median/quantiles are indexes only.
+- The four corners are not exchangeable. Raw-to-refined signed dx/dy biases and
+  magnitude tails differ by corner; truth-residual P95 worsens after refinement
+  for all four corners in this atlas. Therefore the inherited PCA/cornerSubPix
+  path is retained as the current production heuristic but is not declared
+  optimal or uniformly beneficial.
+- Historical fixed-tilt, joint-PnP, rigid-corner window, canonical-order,
+  winding, likelihood, switch, event-local-edge and continuous-polish attempts
+  remain protected even when rejected, superseded or supported by too few
+  windows. Direct-corner temporal experiments are not the same algorithm as
+  online subpixel keypoint refinement.
+- `runtime/autoaim-b-corner-evidence-catalog-20260810` is the file-level
+  retention authority. It records 19 missing references: ten historical
+  analysis/spec files and nine July joint-PnP raw/intermediate streams. Those
+  experiments must not be described as fully reproducible from current Git.
+- Predictor work remains paused. Stage 2 does not begin until the user accepts
+  this corrected corner-observation evidence boundary.
+
+## 2026-08-10 decision 220: PnP is a structured observation manifold, not truth plus small noise
+
+- Stage 2 preserves the complete PnP evidence chain without changing the
+  production solver. Production translation is selected free-IPPE tvec from
+  refined-or-fallback corners; ordinary-armor yaw follows the exposure-aware
+  tracker/chassis fixed-tilt path; tracker position uses the calibrated
+  camera -> gimbal -> tracker SE(3).
+- Coordinate provenance over 15,676 rows and exact-corner closure reduce the
+  contract residual to numerical scale. Historical large errors caused by a
+  missing truth-frame rotation are superseded and must not be attributed to
+  the current PnP implementation.
+- Corner patterns are amplified by planar depth conditioning. Actual refined
+  corners slightly improve central 3D error while worsening the tail, and
+  fixed-tilt constraints improve only part of the workspace. Candidate
+  separation is much smaller than truth error in the bounded 2.2 m and 5 m
+  audits, with zero selected-index switches; branch switching is rejected as
+  the explanation for those observed-trajectory anomalies.
+- The 56-session point-level distribution and 120-run accepted matrix establish
+  repeatable but nonlinear, heavy-tailed, temporally correlated observation
+  trajectories with substantial depth error and missing streaks. Good angular
+  or hit-area error does not imply good 3D position, and a repeatable fitted arc
+  does not imply physical-trajectory correctness.
+- Low-order correction and richer current-frame features show learnable
+  structure, but strict session transfer retains large tails or exposes split
+  confounding. No correction model, fixed-tilt replacement or covariance model
+  is accepted for deployment. Real-PnP adapters, dual-domain F and CV+Ridge are
+  downstream diagnostics/components, not PnP solver fixes.
+- `D:\仿真\runtime\autoaim-b-pnp-evidence-catalog-20260810` is the file-level
+  retention authority. It inventories 11,015 runtime files and 542 linked
+  existing sources and records 60 missing references (31 historical analysis
+  sources/specs and 29 runtime/intermediate files). Missing artifacts remain
+  explicit reproducibility gaps.
+- Predictor and multi-hypothesis tracker work remains paused. The next evidence
+  stage, if accepted by the user, is the causal time-series boundary after PnP:
+  exact-exposure joins, u/v definitions, missing/adjacency semantics and the
+  separation between oracle physical identity and deployable association.
+
+## 2026-08-10 decision 221: post-PnP observations are irregular unordered events, not an identity-bearing fixed-rate track
+
+- The causal online boundary is the complete solved-armor set captured after
+  PnP and before tracker update. Offline truth may be attached only through the
+  exact `(session_id, producer_epoch, frame_seq, timestamp_ns)` key; nearest
+  frame matching and interpolation are forbidden for evidence qualification.
+- `u/v` are calibrated camera-ray angles from PnP tvec. They are observation
+  features, not pixels, physical truth, tracker-frame coordinates or proof of
+  a world-frame transform. The retained 120-run contract reports every sample
+  and exact empirical distributions; navigation quantiles are not the evidence
+  boundary.
+- A valid event requires at least one finite camera tvec. Empty frames do not
+  consume an event slot, but their elapsed time remains in the next event
+  interval. Stage3 v3 uses true timestamps and masks; the fixed 5 ms v2 grid is
+  superseded and preserved only as negative evidence.
+- Observation index, detector number and quantized signature are frame-local.
+  Truth `relative_slot` is an offline oracle label after exact joining and must
+  not enter a deployable associator. Angular-only and PnP-depth-only identity
+  assignment are both rejected by the retained geometry and depth-tail
+  evidence.
+- The accepted 120-run export has 184,879 exact observation joins but only
+  184,763 usable exact-truth joins. This distinction is retained explicitly;
+  exposure-matched gimbal pose is supported while the tracker-world transform
+  exposure flag is false throughout this export, so the camera-ray evidence
+  cannot certify an exact world-frame observation history.
+- Hard association, learned pair-cost association and single cyclic identity
+  are not accepted deployment interfaces. Multi-hypothesis tracking and
+  predictor work remain paused. The next permitted stage is observer contract
+  design and acceptance criteria using the now-fixed causal evidence boundary.
+
+## 2026-08-10 decision 222: start with a fail-closed anonymous camera-ray observer, not a physical vehicle-state claim
+
+- The evidence-supported first observer state is `[u,v,du/dt,dv/dt]` in the
+  camera frame over anonymous ephemeral handles. Complete candidate sets,
+  actual timestamps and missing reasons are native inputs. Depth, PnP yaw and
+  quality fields remain separate because depth is heavy-tailed and physical
+  identity is unresolved.
+- The existing YpdAngleTracker remains a protected production baseline, not an
+  accepted statistical contract. Its 11-dimensional physical state, hard
+  primary identity, frame-count timeout, 6 ms dt substitution after gaps over
+  100 ms, heuristic Q/R and covariance require separate calibration before any
+  part is promoted into the new observer interface.
+- Initial qualification inherits Stage3 v3: at least 8 valid events in 0.2 s
+  and latest age no more than 50 ms. Qualified output is revoked immediately
+  after 50 ms; a subsequent event starts reacquisition with a new ephemeral
+  handle and must satisfy the history gate again. Current evidence does not
+  authorize a longer coast timeout.
+- `>4` candidates, close/crossing assignments and unresolved set changes retain
+  the complete set and report ambiguity. They never become a truncated four
+  slot state or a forced hard physical ID.
+- Uncertainty is a structured contract across angular, depth, freshness,
+  availability, set ambiguity, association, transform and applicability.
+  `covariance_valid` defaults false; only condition-wise repeat-held nominal
+  coverage can promote it.
+- The 34 A--F acceptance IDs are the implementation gate. Stage 4 makes no
+  deployability, physical identity, world-state, native latency, prediction or
+  fire-control claim. Any stage 5 work requires explicit continuation and is
+  restricted to an offline truth-stripped reference observer and replay tests.

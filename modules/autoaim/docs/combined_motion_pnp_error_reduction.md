@@ -345,7 +345,7 @@ D:\仿真\runtime\combined-pnp-nested-postprocess-144-v1-r2
 D:\仿真\runtime\combined-pnp-yz-prediction-probe-144-v1
 ```
 
-正式合同、路径、哈希和无效 v1 的原因见 `combined_motion_pnp_error_reduction_registry.json`。
+正式合同、路径、哈希和无效 v1 的原因见[机器登记](combined_motion_pnp_error_reduction_registry.json)。
 
 ## 15. 当前决策
 

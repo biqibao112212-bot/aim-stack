@@ -2,12 +2,12 @@
 
 Keep reusable code in:
 
-- `src/aim_core_from_vivsionn`
-- `src/aim_core_bridge/vivsionn_pipeline.cpp`
+- [`src/aim_core_from_vivsionn`](../src/aim_core_from_vivsionn)
+- [`vivsionn_pipeline.cpp`](../src/aim_core_bridge/vivsionn_pipeline.cpp)
 
 Keep simulator-only code out of Jetson builds:
 
-- `src/sim_adapter`
+- [`src/sim_adapter`](../src/sim_adapter)
 - ROS2 topic names
 - `sim_pitch_neutral_deg`
 - Daedalus-specific launch scripts

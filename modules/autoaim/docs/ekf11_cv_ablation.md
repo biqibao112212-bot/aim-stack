@@ -175,4 +175,4 @@ D:\仿真\runtime\rmvision-ekf11-ablation-v1-full
 4. 为 combined 引入新的因子化、周期、IMM 或多假设运动模型；
 5. 补充高角速、长时域或当前覆盖不足的数据。
 
-在这些条件未发生前，以本文、`corner_pnp_state_estimation_research_narrative.md`、两个 evidence registry 和 runtime manifest 为项目事实源，不再从聊天记录重新推导。
+在这些条件未发生前，以本文、[角点—PnP—状态估计研究叙事](corner_pnp_state_estimation_research_narrative.md)、两个 evidence registry 和 runtime manifest 为项目事实源，不再从聊天记录重新推导。

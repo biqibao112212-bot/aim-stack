@@ -9,11 +9,13 @@
 #include <opencv2/imgproc.hpp>
 
 #include <chrono>
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <string>
 #include <thread>
 
 namespace {
@@ -33,6 +35,15 @@ int integer(int argc, char** argv, const char* key, int fallback) {
   try { return fallback; }
   catch (...) { return fallback; }
 }
+
+void writeFloatArray(std::ostream& out, const float* values, std::size_t count) {
+  out << '[';
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i != 0) out << ',';
+    out << std::setprecision(17) << values[i];
+  }
+  out << ']';
+}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -48,6 +59,114 @@ int main(int argc, char** argv) {
     frame_log.open(frame_log_path, std::ios::out | std::ios::trunc);
     if (!frame_log) { std::cerr << "frame log open failed: " << frame_log_path << '\n'; return 5; }
   }
+
+  std::ofstream truth_log;
+  const char* truth_path_env = std::getenv("AIM_SIM_STAGE3_TRUTH");
+  const std::string truth_session =
+      std::getenv("AIM_SIM_STAGE3_SESSION_ID") == nullptr
+          ? std::string()
+          : std::string(std::getenv("AIM_SIM_STAGE3_SESSION_ID"));
+  if (truth_path_env != nullptr && truth_path_env[0] != '\0') {
+    truth_log.open(truth_path_env, std::ios::out | std::ios::trunc);
+    if (!truth_log) {
+      std::cerr << "truth log open failed: " << truth_path_env << '\n';
+      return 6;
+    }
+  }
+
+  const auto write_truth = [&](const auto& snapshot, bool exact,
+                               std::uint64_t producer_epoch,
+                               std::uint64_t frame_seq,
+                               std::uint64_t timestamp_ns) {
+    if (!truth_log) return;
+    truth_log << std::setprecision(17)
+              << "{\"schema_version\":\"stage3-truth-v1\",\"session_id\":\""
+              << truth_session << "\",\"producer_epoch\":" << producer_epoch
+              << ",\"frame_seq\":" << frame_seq
+              << ",\"timestamp_ns\":" << timestamp_ns
+              << ",\"has_exact_exposure_truth\":" << (exact ? "true" : "false")
+              << ",\"truth_commit_seq\":" << (exact ? snapshot.publication : 0)
+              << ",\"truth_slot_index\":0"
+              << ",\"exposure_state_flags\":"
+              << (exact ? snapshot.exposure_state.state_flags : 0)
+              << ",\"exposure_state\":";
+    if (!exact) {
+      truth_log << "null,\"ground_truth\":null}\n";
+      return;
+    }
+    const auto& exposure = snapshot.exposure_state;
+    truth_log << "{\"chassis_position_world_m\":";
+    writeFloatArray(truth_log, exposure.chassis_position_world, 3);
+    truth_log << ",\"chassis_quaternion_world_wxyz\":";
+    writeFloatArray(truth_log, exposure.chassis_quaternion_world_wxyz, 4);
+    truth_log << ",\"chassis_rpy_world_rad\":";
+    writeFloatArray(truth_log, exposure.chassis_rpy_world, 3);
+    truth_log << ",\"gimbal_position_world_m\":";
+    writeFloatArray(truth_log, exposure.gimbal_position_world, 3);
+    truth_log << ",\"gimbal_quaternion_world_wxyz\":";
+    writeFloatArray(truth_log, exposure.gimbal_quaternion_world_wxyz, 4);
+    truth_log << ",\"camera_position_world_m\":";
+    writeFloatArray(truth_log, exposure.camera_position_world, 3);
+    truth_log << ",\"camera_quaternion_world_wxyz\":";
+    writeFloatArray(truth_log, exposure.camera_quaternion_world_wxyz, 4);
+    truth_log << ",\"world_frame\":" << static_cast<unsigned>(exposure.world_frame)
+              << "},\"ground_truth\":{\"frame_seq\":"
+              << snapshot.ground_truth.frame_seq
+              << ",\"timestamp_ns\":" << snapshot.ground_truth.timestamp_ns
+              << ",\"target_count\":" << snapshot.ground_truth.target_count
+              << ",\"rune_count\":" << snapshot.ground_truth.rune_count
+              << ",\"targets\":[";
+    const auto target_count = std::min<std::uint32_t>(
+        snapshot.ground_truth.target_count,
+        static_cast<std::uint32_t>(kGroundTruthMaxTargets));
+    for (std::uint32_t i = 0; i < target_count; ++i) {
+      if (i != 0) truth_log << ',';
+      const auto& target = snapshot.ground_truth.targets[i];
+      truth_log << "{\"frame_seq\":" << target.frame_seq
+                << ",\"timestamp_ns\":" << target.timestamp_ns
+                << ",\"target_id\":" << target.target_id
+                << ",\"target_id_scope\":\"simulator_run\",\"team\":"
+                << static_cast<unsigned>(target.team)
+                << ",\"armor_label\":" << static_cast<unsigned>(target.armor_label)
+                << ",\"is_outpost\":" << (target.is_outpost != 0 ? "true" : "false")
+                << ",\"armor_count\":" << static_cast<unsigned>(target.armor_count)
+                << ",\"state_flags\":" << target.state_flags
+                << ",\"world_state_frame_code\":"
+                << static_cast<unsigned>(target.world_state_frame)
+                << ",\"armor_geometry_frame_code\":"
+                << static_cast<unsigned>(target.armor_geometry_frame)
+                << ",\"world_position_m\":";
+      writeFloatArray(truth_log, target.position, 3);
+      truth_log << ",\"world_velocity_mps\":";
+      writeFloatArray(truth_log, target.velocity, 3);
+      truth_log << ",\"world_quaternion_wxyz\":";
+      writeFloatArray(truth_log, target.world_quaternion_wxyz, 4);
+      truth_log << ",\"vyaw_rad_s\":" << target.vyaw
+                << ",\"yaw_rad\":" << target.yaw
+                << ",\"radius_even_m\":" << target.radius_even
+                << ",\"radius_odd_m\":" << target.radius_odd
+                << ",\"armor_height_m\":" << target.armor_height
+                << ",\"armors\":[";
+      const auto armor_count = std::min<std::uint32_t>(
+          target.armor_count,
+          static_cast<std::uint32_t>(kGroundTruthMaxArmorsPerTarget));
+      for (std::uint32_t j = 0; j < armor_count; ++j) {
+        if (j != 0) truth_log << ',';
+        const auto& armor = target.armors[j];
+        truth_log << "{\"relative_slot\":"
+                  << static_cast<unsigned>(armor.relative_slot)
+                  << ",\"visibility_code\":"
+                  << static_cast<unsigned>(armor.visibility)
+                  << ",\"relative_position_m\":";
+        writeFloatArray(truth_log, armor.relative_position, 3);
+        truth_log << ",\"outward_normal\":";
+        writeFloatArray(truth_log, armor.outward_normal, 3);
+        truth_log << ",\"relative_yaw_rad\":" << armor.relative_yaw << '}';
+      }
+      truth_log << "]}";
+    }
+    truth_log << "]}}\n";
+  };
 
   aim_sim_bridge::AimBridgeConfig config;
   config.armor_detector_config = engine;
@@ -107,6 +226,24 @@ int main(int argc, char** argv) {
       frame.gimbal_yaw_deg = gimbal.value->yaw_deg;
       frame.gimbal_pitch_deg = gimbal.value->pitch_deg;
       frame.gimbal_yaw_speed_deg_s = gimbal.value->yaw_velocity_deg_s;
+    }
+    if (truth_log) {
+      const auto truth = reader_result.value->readGroundTruthForFrame(sequence);
+      const bool exact = truth.ok() &&
+          truth.value->ground_truth.frame_seq == sequence &&
+          truth.value->ground_truth.timestamp_ns ==
+              image.value->header.capture_timestamp_ns &&
+          truth.value->exposure_state.frame_seq == sequence &&
+          truth.value->exposure_state.timestamp_ns ==
+              image.value->header.capture_timestamp_ns;
+      if (truth.ok()) {
+        write_truth(*truth.value, exact, image.value->header.producer_epoch,
+                    sequence, image.value->header.capture_timestamp_ns);
+      } else {
+        write_truth(daedalus::sim::sdk::v1::GroundTruthExposureSnapshot{}, false,
+                    image.value->header.producer_epoch, sequence,
+                    image.value->header.capture_timestamp_ns);
+      }
     }
     if (camera) {
       frame.has_camera_matrix_override = true;

@@ -6,8 +6,8 @@
 - 工作目录：`D:\仿真\repos\aim-stack`
 - 当前主模块：`modules/autoaim`
 - 暂停模块：`modules/energy-buff`
-- 模拟器锁：`Daedalus Simulator 1.0.1 / DaedalusSimSdk 1.0.0 / SHM v7 ABI r1 / 1440×1080 / Scene Control v1`
-- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.0.1`
+- 模拟器锁：`Daedalus Simulator 1.2.1 / DaedalusSimSdk 1.2.0 / SHM v7 ABI r2 / 1440×1080 / Scene Control v2`
+- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64`
 - 模拟器消费者统一入口：`SIMULATOR_CONSUMER_GUIDE.md`（v1）与 `simulator.lock.json`
 
 本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
@@ -21,6 +21,8 @@
 阶段一是固定模拟器/曝光契约；阶段二是在 tracker 前通过动态渲染 G2 修复 PnP yaw；阶段三仅在 G2 通过后进行有限、无泄漏数据采集，并训练固定的 TCN + 任意时间解码器。候选选择、云台、MPC 和火控保持冻结；模型必须提供不确定性/OOD 与安全回退。
 
 当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三正式 360-session 采集已完成；旧 `H=0.07 m` 已被经 exact-exposure 真值验证的 camera→gimbal R/T 取代。当前正式离线合同为最近最多 200 个真实观测事件及其真实时间戳的 `stage3-dataset-v3`，全量 111,527-train/36,297-validation 单 seed 训练、完整 validation 双物理基线评估和动态 ONNX parity 均已完成且未访问 test。该结果证明完整离线流程可行并在整体 validation 上超过刚体 baseline，但不构成多 seed/线上指标验收；test、TensorRT、tracker/MPC/火控和实弹接入仍冻结。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
+
+当前执行状态（2026-08-10）：用户已暂停预测器和多假设身份跟踪器工作，转入证据链重建。逐阶段权威文档为 `modules/autoaim/docs/trajectory_evidence_chain.md`。阶段 1 已从 detector 四角点复核到 PnP 输入：正式 Stage3 v2 的 120 轮矩阵仍不含角点，但专门的 Stage3 observation v3 independent 采集保留了 4,280 行 raw/refined/truth 角点 atlas。`runtime/autoaim-b-corner-evidence-complete-20260810` 已导出逐样本和精确经验分布；`runtime/autoaim-b-corner-evidence-catalog-20260810` 已索引全部现存历史角点资产、负证据和缺失引用。31 条 full-pipeline 诊断只作为当前实现的有界交叉检查，不再误写成唯一角点级证据。
 
 ## 2026-07-19 PnP joint-pose A/B checkpoint
 
@@ -312,3 +314,88 @@ the status of these replay files.
   The next legitimate work is a new untouched acceptance split, formalized
   upstream provenance and an accepted unordered-PnP interface, not tuning the
   completed dual-domain runs.
+
+## 2026-08-10 PnP evidence-chain reconstruction
+
+- The user accepted the transition from stage 1 corner evidence to stage 2
+  PnP evidence reconstruction. Predictor and multi-hypothesis tracker work
+  remain paused; this stage changes no PnP solver or simulator asset.
+- The current production contract is now explicit: refined-or-fallback
+  `bl,tl,tr,br` corners feed free IPPE, ranked candidate zero supplies tvec,
+  ordinary-armor yaw uses the exposure-aware tracker/chassis fixed-tilt path,
+  and position crosses the calibrated camera -> gimbal -> tracker SE(3).
+- Coordinate-provenance and exact-corner checks close numerically. The retained
+  evidence instead attributes the large, structured tails mainly to planar
+  depth conditioning of corner patterns. Bounded 2.2 m and 5 m diagnostics do
+  not support IPPE branch switching as the observed-arc failure mechanism.
+- Fifty-six-session point-level trajectory evidence and the 120-run accepted
+  matrix show a repeatable but nonlinear, heavy-tailed, temporally correlated
+  PnP observation manifold with long missing streaks. Stable observation arcs
+  are not equivalent to geometrically correct physical arcs.
+- Fixed-tilt, low-order correction and rich-feature probes retain diagnostic
+  value, but no deployable PnP correction is selected. Downstream real-PnP
+  adapters and dual-domain predictors remain separate historical diagnostics.
+- Durable documentation and registry are
+  `modules/autoaim/docs/trajectory_evidence_chain.md` and
+  `modules/autoaim/docs/pnp_evidence_registry.json`. The file-level protected
+  authority is `D:\仿真\runtime\autoaim-b-pnp-evidence-catalog-20260810`:
+  421 selected top-level assets, 11,015 runtime files, 542 existing linked
+  source files and 60 explicit missing historical references.
+
+## 2026-08-10 post-PnP causal time-series evidence reconstruction
+
+- Stage 3 now fixes the causal observation boundary after PnP without changing
+  the production PnP solver, tracker or predictor. Online capture is the full
+  unordered solved-armor set before `trackerUpdate()`; offline truth is joined
+  only by the exact session, producer epoch, sequence and timestamp key.
+- Observed `u/v` are camera-ray angles derived from calibrated PnP tvec
+  (`atan2(right, forward)`, `atan2(down, forward)`), not detector centers or
+  pixels. The accepted 120-run export retains every frame, valid observation,
+  interval, candidate-set transition and missing streak, plus exact sorted
+  empirical distributions rather than only summary quantiles.
+- The retained evidence contains 189,158 truth frames, 184,879 exact
+  observation joins, 184,763 usable exact-truth joins, 177,483 valid events
+  and 250,449 detections. Timing is irregular and missingness is material;
+  frame-local indices/signatures cannot be promoted to persistent identity.
+- The formal 360-session Stage3 v3 dataset preserves true event timestamps,
+  left-padding masks and explicit causal qualification gates. The superseded
+  v2 5 ms resampling contract remains retained as negative evidence.
+- Oracle truth-slot labeling is allowed only after an exact offline join for
+  analysis and scoring. Observation-only hard association and learned pair
+  models are not accepted as deployable identity; the cyclic topology probe is
+  retained only as diagnostic evidence. Multi-hypothesis tracking and
+  predictor work remain paused.
+- Durable documentation and registry are
+  `modules/autoaim/docs/trajectory_evidence_chain.md` and
+  `modules/autoaim/docs/timeseries_evidence_registry.json`. The lossless export
+  authority is
+  `D:\仿真\runtime\autoaim-b-timeseries-evidence-complete-20260810`; the
+  file-level catalog is
+  `D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810`, covering
+  434 selected assets and 10,453 files while preserving 17 missing references.
+
+## 2026-08-10 evidence-supported observer specification
+
+- Stage 4 converts the corner, PnP and causal time-series evidence into a
+  design and acceptance contract only. It does not implement or deploy a new
+  observer and does not modify the production RobotEstimator.
+- The supported first boundary is an anonymous camera-ray current-state
+  observer over `[u,v,du/dt,dv/dt]`, complete unordered candidate sets, true
+  timestamps and explicit missingness. Depth, yaw and quality remain separate
+  side information; physical identity and world-frame state remain unresolved.
+- The initial temporal qualification inherits the accepted Stage3 v3 gate:
+  at least 8 valid events in 0.2 s and latest age no more than 50 ms. After
+  50 ms, qualified output is revoked and reacquisition creates new ephemeral
+  handles. No longer coast duration is accepted by current evidence.
+- The existing 11-dimensional YpdAngleTracker remains the production baseline,
+  but its hard identity, frame-count loss timeout, 6 ms substitution for gaps
+  above 100 ms, heuristic Q/R and covariance are not treated as calibrated.
+- Uncertainty is split into angular, depth, freshness, availability, set
+  ambiguity, association, transform and applicability components. Covariance
+  remains invalid until repeat-held condition-wise coverage passes.
+- `modules/autoaim/docs/observer_specification.md` and
+  `modules/autoaim/docs/observer_acceptance_registry.json` define 34 A--F test
+  IDs covering causality, set/identity invariance, all retained missingness,
+  complete distributions, uncertainty calibration, failure injection and
+  repository boundaries. Predictor, identity tracker and fire control remain
+  paused.

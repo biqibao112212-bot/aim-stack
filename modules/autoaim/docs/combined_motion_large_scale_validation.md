@@ -250,7 +250,7 @@ D:\仿真\runtime\combined-motion-large-scale-144-v2
 - `analysis/combined_motion_conditions_and_coverage.{png,pdf}`：条件和覆盖率图；
 - `analysis/analysis_summary.json`：机器可读结论。
 
-评测协议见 `combined_motion_large_scale_validation_contract.json`，证据哈希和关键结果见 `combined_motion_large_scale_validation_registry.json`。
+评测协议见[机器合同](combined_motion_large_scale_validation_contract.json)，证据哈希和关键结果见[机器登记](combined_motion_large_scale_validation_registry.json)。
 
 ## 14. 后续 PnP 压误差与分层消融
 
@@ -266,6 +266,6 @@ D:\仿真\runtime\combined-motion-large-scale-144-v2
 
 完整协议、全分布和角点上游连接见：
 
-- `combined_motion_pnp_error_reduction.md`；
-- `combined_motion_pnp_error_reduction_contract.json`；
-- `combined_motion_pnp_error_reduction_registry.json`。
+- [组合运动 PnP 误差缩减](combined_motion_pnp_error_reduction.md)；
+- [机器合同](combined_motion_pnp_error_reduction_contract.json)；
+- [机器登记](combined_motion_pnp_error_reduction_registry.json)。

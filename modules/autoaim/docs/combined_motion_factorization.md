@@ -241,6 +241,6 @@ D:\仿真\runtime\combined-motion-factorization-v1-full
 
 完整结果、失败方案、限制和证据锁见：
 
-- `combined_motion_final_result.md`
-- `combined_motion_final_registry.json`
-- `combined_motion_final_selection_contract.json`
+- [最终结果](combined_motion_final_result.md)
+- [机器登记](combined_motion_final_registry.json)
+- [选择合同](combined_motion_final_selection_contract.json)

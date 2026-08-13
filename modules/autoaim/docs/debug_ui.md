@@ -6,34 +6,42 @@ order.
 
 ## Start
 
-From WSL:
+From the repository root on Linux:
 
 ```bash
-cd /mnt/d/仿真/aim_sim_bridge
-python3 scripts/serve_debug_ui.py --host 0.0.0.0 --port 8765
+python3 ./modules/autoaim/scripts/serve_debug_ui.py \
+  --bridge-json <evidence-root>/bridge.json \
+  --pipeline-json <evidence-root>/pipeline.json
 ```
 
-Open:
+On Windows:
+
+```powershell
+python .\modules\autoaim\scripts\serve_debug_ui.py `
+  --bridge-json <evidence-root>\bridge.json `
+  --pipeline-json <evidence-root>\pipeline.json
+```
+
+Then open [http://127.0.0.1:8765/](http://127.0.0.1:8765/). This address is
+available only while the local debug server is running.
+
+The normal project launchers write telemetry to the selected evidence root:
 
 ```text
-http://127.0.0.1:8765/
+<evidence-root>/bridge.json
+<evidence-root>/pipeline.json
 ```
 
-The integrated bridge writes telemetry here by default:
-
-```text
-build/debug/aim_bridge.json
-build/debug/aim_pipeline.json
-```
+On Linux, the server can inspect retained or copied telemetry. Live telemetry
+still comes from the currently locked Windows runtime until a matching Linux
+Release and SDK are published.
 
 ## Normal Integrated Run
 
 1. Start the debug UI.
-2. Start `Daedalus Integrated AutoAim.lnk`.
-3. Press `F5` in the simulator.
-4. Keep a visible armor target in the first-person view.
-5. Hold `Space`.
-6. Read the UI before changing code.
+2. For live telemetry, start the current auto-aim launcher on the Windows host.
+3. Keep a visible armor target in the first-person view.
+4. Read the UI before changing code.
 
 ## First Checks
 

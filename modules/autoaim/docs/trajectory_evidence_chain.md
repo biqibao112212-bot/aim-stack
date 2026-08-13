@@ -6,7 +6,7 @@
 - 研究状态：生产预测器暂停；阶段 5 只增加离线真值替换和 simple-CV 基线，不授权预测器训练、在线接入或火控放行。
 - 数据保留：原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`，均按受保护资产处理；Git 保存处理代码、字段契约、证据登记和哈希，不复制大体积数据。
 
-本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 `modules/autoaim/docs/corner_evidence_registry.json`、`modules/autoaim/docs/pnp_evidence_registry.json`、`modules/autoaim/docs/timeseries_evidence_registry.json`、`modules/autoaim/docs/observer_acceptance_registry.json` 和 `modules/autoaim/docs/hit_oriented_ablation_registry.json`。阶段 4 的完整设计合同见 `modules/autoaim/docs/observer_specification.md`；阶段 1--5 的连续研究叙事、径向/横向口径和真值替换结论见 `modules/autoaim/docs/corner_pnp_state_estimation_research_narrative.md`。
+本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 [corner registry](corner_evidence_registry.json)、[PnP registry](pnp_evidence_registry.json)、[time-series registry](timeseries_evidence_registry.json)、[observer acceptance registry](observer_acceptance_registry.json) 和 [hit-oriented ablation registry](hit_oriented_ablation_registry.json)。阶段 4 的完整设计合同见[观测器规格](observer_specification.md)；阶段 1--5 的连续研究叙事、径向/横向口径和真值替换结论见[角点—PnP—状态估计研究叙事](corner_pnp_state_estimation_research_narrative.md)。
 
 ## 阶段 1：四角点观测到 PnP 输入
 
@@ -23,11 +23,11 @@
 
 对应实现：
 
-- detector 解码和规范顺序：`ArmorDetector/mt_detector_tensorrt.cpp`
-- 精修和回退：`AngleSolver/AngleSolver.cpp::refineKeypoints`
-- PnP 候选与选择：`AngleSolver/AngleSolver.cpp::solvePlanarPnPCandidates`
-- full-pipeline 诊断字段：`aim_core_bridge/vivsionn_pipeline.cpp`
-- Stage3 观测字段：`aim_core_bridge/stage3_capture.cpp`
+- detector 解码和规范顺序：[mt_detector_tensorrt.cpp](../src/aim_core_from_vivsionn/ArmorDetector/mt_detector_tensorrt.cpp)
+- 精修和回退：[AngleSolver.cpp](../src/aim_core_from_vivsionn/AngleSolver/AngleSolver.cpp) 中的 `refineKeypoints`
+- PnP 候选与选择：[AngleSolver.cpp](../src/aim_core_from_vivsionn/AngleSolver/AngleSolver.cpp) 中的 `solvePlanarPnPCandidates`
+- full-pipeline 诊断字段：[vivsionn_pipeline.cpp](../src/aim_core_bridge/vivsionn_pipeline.cpp)
+- Stage3 观测字段：[stage3_capture.cpp](../src/aim_core_bridge/stage3_capture.cpp)
 
 当前模拟器消费者配置启用精修：
 
@@ -169,7 +169,7 @@ D:\仿真\runtime\autoaim-b-arcflip-diag-20260809T013519Z\arc-flip-analysis-v3-c
 文件目录明确发现 19 个缺失引用，不能声称所有历史试验都已完全复现：
 
 1. 2026-08-05 分析链的 9 个 Python 脚本和 1 个 source spec 已不在当前仓库，包括 atlas、relationship、corner-to-pose、fixed-tilt propagation 和 descriptive 的生成/汇总脚本。现存 manifest 保存了当时脚本路径、大小和 SHA-256，输入与输出也仍在，但不能从当前 Git 直接重新运行原程序。
-2. 2026-07-19 的 3/5/7 m joint-PnP 每个距离都缺少 `observations.jsonl`、`observations.cyclic.jsonl` 和 `pipeline.jsonl`，共 9 个原始/处理中间流；目前只能保留汇总 JSON、图、少量 run metadata 和现存 `scripts/analyze-pnp-joint-ab.py`。
+2. 2026-07-19 的 3/5/7 m joint-PnP 每个距离都缺少 `observations.jsonl`、`observations.cyclic.jsonl` 和 `pipeline.jsonl`，共 9 个原始/处理中间流；目前只能保留汇总 JSON、图、少量 run metadata 和现存的[分析脚本](../../../scripts/analyze-pnp-joint-ab.py)。
 3. 逐角点协方差从未保存，不能从现有坐标样本反推出当时 detector 的校准概率。
 
 本轮新写的无损导出脚本不伪装成缺失旧脚本的复刻；它只读取已保留、哈希固定的 atlas `rows.csv`，把其中已有字段重新整理为逐角点长表和精确经验分布。
@@ -220,11 +220,11 @@ D:\仿真\runtime\autoaim-b-arcflip-diag-20260809T013519Z\arc-flip-analysis-v3-c
 
 对应实现：
 
-- IPPE 枚举、过滤、排序和选择：`AngleSolver.cpp::solvePlanarPnPCandidates`
-- tvec 到 tracker 位置：`AngleSolver.cpp::cameraPointToTracker`
-- exposure-aware yaw：`AngleSolver.cpp::optimizeYaw` 调用链
-- Stage3 字段：`aim_core_bridge/stage3_capture.cpp`
-- 帧和坐标契约：`AngleSolver/COORDINATE_CONTRACT.md`
+- IPPE 枚举、过滤、排序和选择：[AngleSolver.cpp](../src/aim_core_from_vivsionn/AngleSolver/AngleSolver.cpp) 中的 `solvePlanarPnPCandidates`
+- tvec 到 tracker 位置：[AngleSolver.cpp](../src/aim_core_from_vivsionn/AngleSolver/AngleSolver.cpp) 中的 `cameraPointToTracker`
+- exposure-aware yaw：[AngleSolver.cpp](../src/aim_core_from_vivsionn/AngleSolver/AngleSolver.cpp) 中的 `optimizeYaw` 调用链
+- Stage3 字段：[stage3_capture.cpp](../src/aim_core_bridge/stage3_capture.cpp)
+- 帧和坐标契约：[COORDINATE_CONTRACT.md](../src/aim_core_from_vivsionn/AngleSolver/COORDINATE_CONTRACT.md)
 
 一个容易混淆的字段语义是：Stage3 的位置来自 selected free-IPPE tvec；`reprojection_rms_px` 在 parallel joint diagnostic 可用时优先保存 exposure-constrained yaw+tvec 诊断残差，否则回退 legacy constrained residual。它不应被无条件解释成 selected free-IPPE candidate 自己的 RMS。需要候选级 RMS 时必须使用保留 `pnp_candidates[]` 的 full-pipeline/v3 诊断流。
 
@@ -394,8 +394,8 @@ D:\仿真\runtime\autoaim-b-pnp-evidence-catalog-20260810
 
 | 对象 | SHA-256 |
 | --- | --- |
-| `pnp_yaw_stage2.md` | `22141bbfaf4b086081ff851615f2217ff91f328618abae6c7b8b55d2298c5683` |
-| `COORDINATE_CONTRACT.md` | `20524740ba659b5c755806be9f1033cce34156f1a04f022489616de0593eb841` |
+| [pnp_yaw_stage2.md](pnp_yaw_stage2.md) | `22141bbfaf4b086081ff851615f2217ff91f328618abae6c7b8b55d2298c5683` |
+| [COORDINATE_CONTRACT.md](../src/aim_core_from_vivsionn/AngleSolver/COORDINATE_CONTRACT.md) | `20524740ba659b5c755806be9f1033cce34156f1a04f022489616de0593eb841` |
 | `pnp-chassis-pose-summary-20260719.json` | `ee17c0bcb2e27e73fa3a801074f4e89076260454bc9896d01ca2900687f0184a` |
 | `pnp-joint-ab-summary-20260719.json` | `395fbcc9d302a71624eefc91cc8282dd21ed4b5bba132207a47b846fce55b8ab` |
 | PnP coordinate provenance summary | `07f1e11e9ff2c416651d5d3ce886956ff62ad5e1da17805954fff4e7850b77fc` |
@@ -420,10 +420,10 @@ D:\仿真\runtime\autoaim-b-pnp-evidence-catalog-20260810
 
 对应实现：
 
-- observation sink：`modules/autoaim/src/aim_core_bridge/stage3_capture.cpp`
-- 图像头、云台和 truth 读取：`modules/autoaim/src/sim_adapter/windows_talos_bridge_node.cpp`
-- 字段契约：`modules/autoaim/docs/stage3_data_contract.md`
-- 120-run 逐样本导出：`scripts/export-timeseries-evidence-distributions.py`
+- observation sink：[stage3_capture.cpp](../src/aim_core_bridge/stage3_capture.cpp)
+- 图像头、云台和 truth 读取：[windows_talos_bridge_node.cpp](../src/sim_adapter/windows_talos_bridge_node.cpp)
+- 字段契约：[stage3_data_contract.md](stage3_data_contract.md)
+- 120-run 逐样本导出：[export-timeseries-evidence-distributions.py](../../../scripts/export-timeseries-evidence-distributions.py)
 
 正式 120-run 证据有 189,158 个 truth 记录，其中 189,041 个 `has_exact_exposure_truth=true`。184,879 个 observation 记录全部能找到相同四字段键，但只有 184,763 个同时具有可用 exact truth。历史 `analysis_summary.json` 中的 `exact_join_rows` 实际是四字段键相交数，不能自动解释成可用 exact-truth 数；本轮已把两者拆为 `full_key_join_frames` 和 `usable_exact_truth_join_frames`。
 
@@ -613,9 +613,9 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 
 | 对象 | SHA-256 |
 | --- | --- |
-| `stage3_data_contract.md` | `ae06ac53054a1e101eed8952388af2ac84e020637474101163a31e913cf9ae05` |
-| `stage3_capture.cpp` | `0c4f8982792209b80f817ce9807e73df3fc319ae540b983f785207eced7fefec` |
-| `windows_talos_bridge_node.cpp` | `f45055d50832a725953d8d63945a6c7ffec79871d37bd07b87c7598dc9558cbc` |
+| [stage3_data_contract.md](stage3_data_contract.md) | `ae06ac53054a1e101eed8952388af2ac84e020637474101163a31e913cf9ae05` |
+| [stage3_capture.cpp](../src/aim_core_bridge/stage3_capture.cpp) | `0c4f8982792209b80f817ce9807e73df3fc319ae540b983f785207eced7fefec` |
+| [windows_talos_bridge_node.cpp](../src/sim_adapter/windows_talos_bridge_node.cpp) | `f45055d50832a725953d8d63945a6c7ffec79871d37bd07b87c7598dc9558cbc` |
 | `stage3-dataset-v2-20260720-r5/dataset_manifest.json` | `026cbab209884f51150f2650ab25765b095738df3196d4d398bdbc5e54e72a3c` |
 | `stage3-dataset-v3-20260721-r1/dataset_manifest.json` | `8448ebe788b4a4bb5bd3803e4e64841bf39f3867f711d3198de31f1fb283ada0` |
 | v3 `qualification_report.json` | `f839cb42f9e9abbe8f5682b015f1b984cdc418e80deba8205b715e3e46367f18` |
@@ -638,7 +638,7 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 - 输出显式分开 angular、depth、freshness、availability、set ambiguity、association、transform 和 applicability uncertainty。
 - physical identity、world state、future prediction 和 fire-control eligibility 在本阶段固定为 false/unresolved。
 
-完整字段和禁用字段见 `observer_specification.md`。这不是对当前 11 维 `YpdAngleTracker` 的直接修改。
+完整字段和禁用字段见[观测器规格](observer_specification.md)。这不是对当前 11 维 `YpdAngleTracker` 的直接修改。
 
 ### 4.2 当前 tracker 为什么不能直接称为证据接受的观测器
 
@@ -669,7 +669,7 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 
 ### 4.5 验收覆盖
 
-`observer_specification.md` 和 `observer_acceptance_registry.json` 定义 A--F 六组门禁：
+[观测器规格](observer_specification.md)和[验收登记](observer_acceptance_registry.json)定义 A--F 六组门禁：
 
 1. exact-key、truth stripping、future perturbation 和 irregular-time causality；
 2. candidate permutation、zero candidate、`>4` ambiguity 和 hard-identity guard；
@@ -698,7 +698,7 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 4. 用 16 点、真实时间的 simple-CV 基线比较 stationary/translation/rotation/combined 在 0/50/100/200 ms 的当前状态和未来横向误差。
 5. translation 的当前 PnP P95 为 `11.9/15.4/25.2 mm`；rotation 为 `12.5/20.3/37.2 mm`；combined 为 `56.1/110.6/183.8 mm`。combined 在 100/200 ms 即使 exact PnP 仍失败，说明剩余限制属于运动模型/可见弧，而不能由角点优化单独解决。
 
-完整叙事、样本数、55 mm yaw gate、小装甲板宽高代理和边界见 `corner_pnp_state_estimation_research_narrative.md`；204,768 条逐预测样本、180,289 条 PnP 方向样本和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\autoaim-b-hit-oriented-ablation-20260810-r1`，由 `hit_oriented_ablation_registry.json` 和 retention manifest 锁定。
+完整叙事、样本数、55 mm yaw gate、小装甲板宽高代理和边界见[角点—PnP—状态估计研究叙事](corner_pnp_state_estimation_research_narrative.md)；204,768 条逐预测样本、180,289 条 PnP 方向样本和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\autoaim-b-hit-oriented-ablation-20260810-r1`，由 [hit-oriented ablation registry](hit_oriented_ablation_registry.json) 和 retention manifest 锁定。
 
 ## 阶段 6：camera-CV、world-CV 与 11 维车辆中心 EKF
 
@@ -711,7 +711,7 @@ D:\仿真\runtime\autoaim-b-timeseries-evidence-catalog-20260810
 5. 当前 PnP 输入下裸 11 维 EKF 为米级失败，禁止部署。真值历史下它只对 combined 相对 world-CV 改善：`97.9/182.0/344.7 -> 88.6/133.9/215.1 mm`，仍未通过二维 55 mm 诊断线。
 6. 结论支持按运动模式分治：平移保留简单基线；受支持弧内旋转以局部 CV 为更强下界；combined 后续使用专门因子化/IMM/多假设模型，而不是通用裸 EKF。
 
-307,152 条逐预测样本、77,518 条 measured-yaw join、完整分布和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\rmvision-ekf11-ablation-v1-full`，由 `ekf11_cv_ablation.md`、`ekf11_cv_ablation_registry.json` 和目录内 `manifest.json` 锁定。
+307,152 条逐预测样本、77,518 条 measured-yaw join、完整分布和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\rmvision-ekf11-ablation-v1-full`，由 [EKF11/CV 消融说明](ekf11_cv_ablation.md)、[机器登记](ekf11_cv_ablation_registry.json)和目录内 `manifest.json` 锁定。
 
 ## 阶段 7：固定时域与 impact-time 边界，研究冻结
 
@@ -748,7 +748,7 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 
 下一版组合运动方法应是跨窗相位记忆 + `omega` 候选库 + 固定四板几何 + 平移反向模式，而不是再直接套一个单模态 EKF。PnP depth 和 cross-depth 还应使用不同噪声尺度，优先验证 LOS-aware 各向异性稳健拟合。
 
-完整叙事见 `combined_motion_factorization.md`。59,632 条逐预测、23,921 条中心恢复、5,118 条角速度估计、逐条件分层和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-factorization-v1-full`，由 `combined_motion_factorization_registry.json` 和目录内 `manifest.json` 锁定；manifest SHA-256 为 `385f33ece00dbfcc51e2b8d625a4c268f21c8bce52230034ae04b322d7753248`。
+完整叙事见[组合运动因子化](combined_motion_factorization.md)。59,632 条逐预测、23,921 条中心恢复、5,118 条角速度估计、逐条件分层和全部 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-factorization-v1-full`，由[机器登记](combined_motion_factorization_registry.json)和目录内 `manifest.json` 锁定；manifest SHA-256 为 `385f33ece00dbfcc51e2b8d625a4c268f21c8bce52230034ae04b322d7753248`。
 
 ## 阶段 9：组合运动 LOS、跨窗角速度与直接反转相位模型
 
@@ -763,7 +763,7 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 
 最终选择是“400 ms 局部 LOS 因子化专家 + 31 窗口 `omega` 慢状态 + 4 s 直接反转相位专家 + 相位歧义多假设/gate”，不是通用 CV、裸 11 维 EKF 或逐帧求中心。开发集仍有条件级 P95 超过 55 mm，truth slot、在线路径参数辨识和生产切换 gate 也未解决，因此尚不接入在线 fire control。
 
-完整逐预测、逐拟合分布与四组 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-final-acceptance-test-04-v1`。正式事实源为 `combined_motion_final_result.md`、`combined_motion_final_registry.json` 和 `combined_motion_final_selection_contract.json`。除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标实质变化，本阶段不再重复实验。
+完整逐预测、逐拟合分布与四组 PNG/SVG/PDF 位于 `D:\仿真\runtime\combined-motion-final-acceptance-test-04-v1`。正式事实源为[最终结果](combined_motion_final_result.md)、[机器登记](combined_motion_final_registry.json)和[选择合同](combined_motion_final_selection_contract.json)。除非观测分布、身份合同、路径模型、数据覆盖或 fire-control 目标实质变化，本阶段不再重复实验。
 
 ## 阶段 10：组合运动 PnP 下游校正与分层因果定位
 
@@ -778,7 +778,7 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 7. 五折嵌套后处理选择 y/z-only、全强度、不限幅，但未来 probe 在改善中位和 gate 的同时损害 100/200 ms P90/P95，未通过冻结规则；正式保留 full-XYZ yaw harmonic 作为离线候选，不接入生产。
 8. exact-corner 历史消融已证明当前 IPPE/坐标链可在理想角点下闭合；正式 144-session schema 没有角点，不能伪造同帧角点全链消融。两层证据共同指向 tracker-y/hit-plane 方向敏感的角点/PnP 目标。
 
-完整叙事和全分布入口为 `combined_motion_pnp_error_reduction.md` 与 `combined_motion_pnp_error_reduction_registry.json`。正式预测证据位于 `D:\仿真\runtime\combined-pnp-error-reduction-144-v2`，测量筛选位于 `D:\仿真\runtime\combined-pnp-correction-screen-144-v1`。生产 PnP、tracker、predictor、simulator、SDK、Release 和 fire control 均未修改。
+完整叙事和全分布入口为[组合运动 PnP 误差缩减](combined_motion_pnp_error_reduction.md)与[机器登记](combined_motion_pnp_error_reduction_registry.json)。正式预测证据位于 `D:\仿真\runtime\combined-pnp-error-reduction-144-v2`，测量筛选位于 `D:\仿真\runtime\combined-pnp-correction-screen-144-v1`。生产 PnP、tracker、predictor、simulator、SDK、Release 和 fire control 均未修改。
 
 ## 阶段 11：仿真四角点联合残差网络
 
@@ -799,4 +799,4 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 3. exact corners 的 PnP 世界位置 P95 为 `0.0083 mm`，但局部专家仍只达到 `92.2/89.6/87.2%` 的 55 mm 覆盖，剩余长尾集中在高角速/换向配置，属于组合模型和相位覆盖问题。
 4. 该 atlas 每个配置仅约 2.2 s，不能评估冻结的 4 s 反转相位专家；当前数字不是完整 hybrid 的生产性能，也不是实弹命中率。
 
-完整方法、每个分位、四角点分布、held-session 拆分、下游 ECDF 和限制见 `sim_corner_residual_network.md` 与 `sim_corner_residual_network_registry.json`。逐样本角点、PnP 和局部组合预测权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`、`D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。
+完整方法、每个分位、四角点分布、held-session 拆分、下游 ECDF 和限制见[仿真角点残差网络](sim_corner_residual_network.md)与[机器登记](sim_corner_residual_network_registry.json)。逐样本角点、PnP 和局部组合预测权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`、`D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。

@@ -2,7 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TRTEXEC="${AIM_SIM_TRTEXEC:-/usr/src/tensorrt/bin/trtexec}"
+DEFAULT_TRTEXEC="$(command -v trtexec 2>/dev/null || true)"
+DEFAULT_TRTEXEC="${DEFAULT_TRTEXEC:-/usr/src/tensorrt/bin/trtexec}"
+TRTEXEC="${AIM_SIM_TRTEXEC:-${DEFAULT_TRTEXEC}}"
 ONNX_PATH="${AIM_SIM_ARMOR_ONNX:-${ROOT_DIR}/third_party/RobotDetectionModel/Model/0526.onnx}"
 ENGINE_PATH="${AIM_SIM_ARMOR_ENGINE:-${ROOT_DIR}/models/armor.engine}"
 LOG_PATH="${AIM_SIM_TRT_LOG:-${ROOT_DIR}/build/armor_0526_fp16_trtexec.log}"

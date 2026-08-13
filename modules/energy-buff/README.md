@@ -1,161 +1,20 @@
-# aim_sim_bridge
+# Energy Buff（暂停）
 
-Independent simulator adapter for the `vivsionn` C++ auto-aim code.
+Energy Buff（小符/大符）模块已迁入本仓库，但**尚未完成 Daedalus SDK v1 适配，也没有当前版本锁下的可验收运行入口**。请不要把本目录的历史脚本、旧 WSL 路径或示例命令当成可运行教程。
 
-This project does not modify `D:\仿真\upstream\daedalus` and does not modify the clean Gitee snapshot under `third_party/vivsionn_snapshot`.
+## 正确入口
 
-## Layout
+- 当前可用的学习与开发入口是 [自瞄 B 教程](../autoaim/README.md)。
+- 模拟器版本、资产边界和平台限制见[消费者统一指南](../../SIMULATOR_CONSUMER_GUIDE.md)与[版本锁](../../simulator.lock.json)。
+- Energy Buff 的受限实现范围见 [BRANCH_SCOPE.md](BRANCH_SCOPE.md)。
+- 历史导入来源和提交记录见[迁移记录](../../MIGRATION_SOURCES.md)。
 
-- `third_party/vivsionn_snapshot`: clean clone of `https://gitee.com/SEU-3SE/vivsionn.git`.
-- `src/aim_core_from_vivsionn`: copied auto-aim code used as the adaptation base.
-- `src/sim_adapter`: simulator-facing ROS2 adapter.
-- `src/aim_core_bridge`: narrow wrapper between simulator frames and copied vivsionn pipeline.
-- `config`: simulator-specific camera and buff configs.
+## 传统视觉代码来源
 
-## Build On WSL
+本目录的 `src/aim_core_from_vivsionn` 是已导入、随本仓库版本控制的传统视觉基线代码；可直接从[本地源码目录](src/aim_core_from_vivsionn)阅读。过去引用的 Gitee 上游已不提供匿名可复现的克隆入口，因此已移除，不能作为读者的示例仓库或安装依赖。
 
-```bash
-cd /mnt/d/仿真/aim_sim_bridge
-bash scripts/build_wsl.sh
-```
+装甲板模型的历史合同来源为 [RobotDetectionModel](https://github.com/broalantaps/RobotDetectionModel)。模型、TensorRT engine 和训练权重属于受保护资产，不会由文档脚本下载；实际使用时必须以项目所有者提供的版本锁与资产清单为准。
 
-The default build sets `AIM_SIM_WITH_VIVSIONN_TRT=OFF`, so it builds the ROS2 interface and copied MPC smoke target without requiring TensorRT engines. It publishes no-target commands and is meant to validate the simulator bridge.
+## Linux 说明
 
-For Jetson/TensorRT or a WSL machine with TensorRT installed:
-
-```bash
-cd /mnt/d/仿真/aim_sim_bridge
-AIM_SIM_WITH_VIVSIONN_TRT=ON bash scripts/build_wsl.sh
-```
-
-Put model engines outside git, for example:
-
-```text
-models/armor.engine
-models/buff.engine
-```
-
-## Armor Model
-
-The current armor detector model comes from `https://github.com/broalantaps/RobotDetectionModel.git`.
-The checked model is:
-
-```text
-third_party/RobotDetectionModel/Model/0526.onnx
-```
-
-Convert it to the default FP16 TensorRT engine on WSL with:
-
-```bash
-cd /mnt/d/仿真/aim_sim_bridge
-bash scripts/convert_armor_onnx_to_trt_wsl.sh
-```
-
-Default output:
-
-```text
-models/armor.engine
-```
-
-Validated binding contract for `0526.onnx`:
-
-```text
-input:  images 1x3x640x640
-output: output 1x25200x22
-```
-
-The current engine is hardware/TensorRT-version specific. Re-run the conversion script if the target GPU, TensorRT version, or model file changes.
-
-Armor and outpost modes only require `models/armor.engine`. The buff TensorRT engine is loaded lazily and is only required when running `small_buff` or `big_buff`.
-
-The run script passes `models/armor.engine` as `armor_detector_config` by default. Override it with:
-
-```bash
-AIM_SIM_ARMOR_ENGINE=/abs/path/to/armor.engine bash scripts/run_ros2_bridge_wsl.sh armor
-```
-
-## Energy Buff Model
-
-The current simulator-trained energy-mechanism detector is a YOLO pose model exported at:
-
-```text
-../agent-team/models/energy_buff_yolo_pose_v5_neg/yolov8n_pose_640_e12_v5_neg/weights/best.onnx
-```
-
-Convert it to the default FP16 TensorRT engine on WSL with:
-
-```bash
-cd /mnt/d/仿真/aim_sim_bridge
-bash scripts/convert_buff_onnx_to_trt_wsl.sh
-```
-
-Default output:
-
-```text
-models/buff.engine
-```
-
-Validated ONNX contract for the v4 model:
-
-```text
-input:  images 1x3x640x640
-output: output0 1x20x8400
-classes: 6
-keypoints: 5 x (x, y)
-```
-
-## Run
-
-Start Daedalus in ROS2 mode, press `F5` in the simulator to enable external command receive, then run one target mode:
-
-```bash
-cd /mnt/d/仿真/aim_sim_bridge
-bash scripts/run_ros2_bridge_wsl.sh armor
-bash scripts/run_ros2_bridge_wsl.sh outpost
-bash scripts/run_ros2_bridge_wsl.sh small_buff
-bash scripts/run_ros2_bridge_wsl.sh big_buff
-```
-
-The adapter subscribes to `/image_raw`, `/camera_info`, and `/tf`, and publishes `/rm_gimbal/cmd`.
-
-## Integrated Windows Rendering Mode
-
-For normal simulator use, prefer the integrated Talos path instead of the ROS2 node. It keeps Daedalus rendering on Windows and runs the TensorRT auto-aim bridge in WSL behind one launcher.
-
-Desktop shortcut:
-
-```text
-C:\Users\Administrator\Desktop\Daedalus Integrated AutoAim.lnk
-```
-
-Workspace launcher:
-
-```cmd
-D:\仿真\agent-team\launch\Start-Daedalus-AutoAim-Integrated.cmd
-D:\仿真\agent-team\launch\Start-Daedalus-AutoAim-Integrated.cmd outpost
-```
-
-What the launcher does:
-
-- starts the Windows Talos-enabled Daedalus executable from `upstream\daedalus\target-integrated-talos`;
-- sets `TALOS_IPC_DIR` to `D:\仿真\talos-ipc`, shared with WSL as `/mnt/d/仿真/talos-ipc`;
-- lets Daedalus start and stop the hidden WSL `aim_sim_talos_bridge` with `models/armor.engine`;
-- reads Talos images in WSL with ordinary file polling because persistent WSL `mmap` views of Windows-written `/mnt/d` files can stay stale;
-- sends gimbal/fire commands to Daedalus over UDP `5601` and also writes the Talos command slot for compatibility;
-- starts with auto-aim receive off. Press `F5` in the simulator to enable auto-aim mode. When auto-aim mode is off, `Space` manually fires a projectile. When auto-aim mode is on, hold `Space` to authorize auto-aim takeover; Daedalus applies yaw/pitch commands only while `Space` is held, and fires only when the bridge reports a target plus `fire_advice`.
-
-Bridge log:
-
-```text
-D:\仿真\aim_sim_bridge\build\integrated_talos_bridge_armor.log
-```
-
-## Pitch Convention
-
-`vivsionn` control output uses real gimbal-style pitch degrees. Daedalus ROS2 currently expects neutral pitch as `90.0`, so the adapter publishes:
-
-```text
-sim_pitch = vivsionn_pitch + sim_pitch_neutral_deg
-```
-
-The default `sim_pitch_neutral_deg` is `90.0`.
+本仓库可在 Linux 上阅读、修改源码并运行文档检查；当前锁定的正式模拟器 Release 是 Windows 平台，因此不得把 Linux 上的编译或旧 Release 当成完整 Energy Buff 链路已验证。安装 Git 与基础工具的 Linux/Windows 命令见仓库根目录的[获取源码说明](../../README.md#获取源码)。

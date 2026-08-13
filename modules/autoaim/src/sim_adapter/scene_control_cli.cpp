@@ -14,6 +14,7 @@ namespace {
 
 using daedalus::sim::sdk::v1::ClientResult;
 using daedalus::sim::sdk::v1::RangeMotionMode;
+using daedalus::sim::sdk::v1::RangeTargetGeometry;
 using daedalus::sim::sdk::v1::RangeTargetMotion;
 using daedalus::sim::sdk::v1::SceneControlClient;
 using daedalus::sim::sdk::v1::SceneControlOptions;
@@ -96,11 +97,12 @@ bool strictDouble(const std::string &raw, double *value) {
 
 bool parseStage3Args(int argc, char **argv, std::string *host,
                     std::string *session, RangeTargetMotion *motion,
+                    RangeTargetGeometry *geometry,
                     std::string *error) {
   const std::unordered_set<std::string> allowed = {
       "--stage3", "--stage3-update", "--host", "--session", "--target", "--mode",
       "--direction-deg", "--linear-speed-mps", "--linear-span-m",
-      "--spin-deg-s"};
+      "--spin-deg-s", "--radial-scale"};
   const int initialize_count = argumentCount(argc, argv, "--stage3");
   const int update_count = argumentCount(argc, argv, "--stage3-update");
   if (initialize_count + update_count != 1) {
@@ -160,6 +162,12 @@ bool parseStage3Args(int argc, char **argv, std::string *host,
   }
   motion->spin_deg_s = static_cast<float>(value);
   motion->target = 3;
+  if (!strictArgument(argc, argv, "--radial-scale", &raw, error) ||
+      !strictDouble(raw, &value) || value < 0.75 || value > 1.25) {
+    *error = "invalid --radial-scale (expected 0.75..1.25)"; return false;
+  }
+  geometry->target = 3;
+  geometry->radial_scale = static_cast<float>(value);
   const bool has_linear = motion->linear_speed_mps > 0.0F ||
                           motion->linear_span_m > 0.0F;
   const bool has_spin = std::abs(motion->spin_deg_s) > 0.0F;
@@ -220,8 +228,9 @@ int main(int argc, char **argv) {
     std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");
     std::string session = envOr("AIM_SIM_SCENE_CONTROL_SESSION", "stage3");
     RangeTargetMotion motion;
+    RangeTargetGeometry geometry;
     std::string error;
-    if (!parseStage3Args(argc, argv, &host, &session, &motion, &error)) {
+    if (!parseStage3Args(argc, argv, &host, &session, &motion, &geometry, &error)) {
       std::cerr << "scene_control Stage3 argument error: " << error << '\n';
       return 2;
     }
@@ -237,6 +246,21 @@ int main(int argc, char **argv) {
         return 2;
       }
     }
+    RangeTargetMotion stationary = motion;
+    stationary.mode = RangeMotionMode::Stationary;
+    stationary.linear_speed_mps = 0.0F;
+    stationary.linear_span_m = 0.0F;
+    stationary.spin_deg_s = 0.0F;
+    if (!responseOk("set_target_3_stationary_for_geometry",
+                    retryRequest([&control, stationary] {
+                      return control.setRangeTargetMotion(stationary);
+                    })) ||
+        !responseOk("set_target_3_geometry",
+                    retryRequest([&control, geometry] {
+                      return control.setRangeTargetGeometry(geometry);
+                    }))) {
+      return 2;
+    }
     if (!responseOk("set_target_3_motion",
                     retryRequest([&control, motion] {
                       return control.setRangeTargetMotion(motion);
@@ -246,6 +270,10 @@ int main(int argc, char **argv) {
     std::cout << (stage3_initialize ? "scene_control_stage3_ready" :
                                       "scene_control_stage3_updated")
               << " host=" << host << " session=" << session << " target=3\n";
+    std::cout << "scene_control_stage3_parameters radial_scale="
+              << geometry.radial_scale << " spin_deg_s=" << motion.spin_deg_s
+              << " linear_speed_mps=" << motion.linear_speed_mps
+              << " linear_span_m=" << motion.linear_span_m << "\n";
     return 0;
   }
   std::string host = envOr("AIM_SIM_SCENE_CONTROL_HOST", "127.0.0.1");

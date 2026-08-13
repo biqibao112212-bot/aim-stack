@@ -1,7 +1,7 @@
 # Stage 3 future-observation training
 
 > Superseded on 2026-07-21 by the controlled scratch A/B experiment in
-> `stage3_scratch_ab_training.md`.  The r5 residual fine-tune result remains
+> [stage3_scratch_ab_training.md](stage3_scratch_ab_training.md). The r5 residual fine-tune result remains
 > reproducible evidence, but its negative learnability conclusion is no longer
 > accepted: the residual scale and permutation contract were misconfigured.
 

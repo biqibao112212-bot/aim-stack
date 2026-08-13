@@ -4,7 +4,7 @@
 - 当前状态：观测证据、处理链与离线方法消融已经收敛；生产预测器仍暂停
 - 本轮新增：真值角点介入、PnP 残差缩放、径向/横向误差分解、四运动简单滤波基线、观测/预测/真值叠加
 - 权威证据目录：`D:\仿真\runtime\autoaim-b-hit-oriented-ablation-20260810-r1`
-- 机器可读登记：`modules/autoaim/docs/hit_oriented_ablation_registry.json`
+- 机器可读登记：[hit-oriented ablation registry](hit_oriented_ablation_registry.json)
 
 这份文档不再按“做过哪些脚本”罗列，而是按研究问题的因果顺序叙述：我们先看到了什么，为什么继续做下一步，尝试了哪些优化，哪些成立、哪些失败，误差怎样从角点传到 PnP、状态估计和未来瞄点，以及当前证据支持什么方法、不支持什么结论。
 
@@ -307,7 +307,7 @@ representative_prediction_trajectories.csv
 
 因此当前结论不是“换成 11 维 EKF”，而是：平移继续保留简单基线；旋转在受支持可见弧内以局部 CV 为下界；combined 需要专门的中心平移+周期相位/旋转因子化、IMM 或多假设模型，并且必须先解决 PnP depth/yaw 联合校准、物理身份和可见弧/reacquisition。
 
-完整算法条件、四组位置/yaw 真值消融、深度分量、样本数、全部图和 307,152 条逐预测分布见 `ekf11_cv_ablation.md` 与 `ekf11_cv_ablation_registry.json`。正式证据位于：
+完整算法条件、四组位置/yaw 真值消融、深度分量、样本数、全部图和 307,152 条逐预测分布见 [EKF11/CV 消融说明](ekf11_cv_ablation.md)与[机器登记](ekf11_cv_ablation_registry.json)。正式证据位于：
 
 ```text
 D:\仿真\runtime\rmvision-ekf11-ablation-v1-full
@@ -321,4 +321,4 @@ D:\仿真\runtime\rmvision-ekf11-ablation-v1-full
 
 未来若进入真实火控，必须先冻结 `t_impact=t_observation+pipeline_latency+control_latency+projectile_time_of_flight` 合同。飞行时间第一近似才是距离除以弹速；含重力、阻力、姿态和移动目标时应由弹道器与预测器迭代。完成该合同前，本文的 55 mm 只保留为固定时域二维诊断线。
 
-至此，当前数据上的角点、PnP、固定时域 CV 和 11 维 EKF 研究证据完成并冻结。除非观测分布、身份/可见性合同、弹道/延迟合同、combined 模型或数据覆盖发生实质变化，否则不再重复讨论或重跑同一问题；项目事实源为本文、`ekf11_cv_ablation.md`、两个 registry 与 runtime manifest。
+至此，当前数据上的角点、PnP、固定时域 CV 和 11 维 EKF 研究证据完成并冻结。除非观测分布、身份/可见性合同、弹道/延迟合同、combined 模型或数据覆盖发生实质变化，否则不再重复讨论或重跑同一问题；项目事实源为本文、[EKF11/CV 消融说明](ekf11_cv_ablation.md)、两个 registry 与 runtime manifest。

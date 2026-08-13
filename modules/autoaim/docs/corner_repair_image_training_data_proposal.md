@@ -48,7 +48,7 @@
 4. 输出和消费者保存的原图只通过三元曝光身份联结；标签不得反馈到同次 detector/PnP/预测器输入。
 5. `sdk/contract.json` 和 Release 文档增加该离线文件 schema；无需让消费者手写 SHM/TCP 协议。
 
-建议版本：若该 opt-in 离线接口进入正式公共 Release，按新增向后兼容能力发布 `1.3.0`；消费者完成数据采集验证后再单独更新 `simulator.lock.json`。若只允许内部研究构建，则应发布可追溯的独立 research Release，不能用开发目录二进制替代版本锁。
+建议版本：若该 opt-in 离线接口进入正式公共 Release，按新增向后兼容能力发布 `1.3.0`；消费者完成数据采集验证后再单独更新[版本锁](../../../simulator.lock.json)。若只允许内部研究构建，则应发布可追溯的独立 research Release，不能用开发目录二进制替代版本锁。
 
 ## 5. 验收条件
 
