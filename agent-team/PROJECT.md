@@ -3,11 +3,11 @@
 - 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 - 仓库：`aim-stack`
 - 分支：`main`
-- 工作目录：`D:\仿真\repos\aim-stack`
+- 工作目录：`/home/potato/Projects/仿真/repos/aim-stack`
 - 当前主模块：`modules/autoaim`
 - 暂停模块：`modules/energy-buff`
-- 模拟器锁：`Daedalus Simulator 1.2.1 / DaedalusSimSdk 1.2.0 / SHM v7 ABI r2 / 1440×1080 / Scene Control v2`
-- 模拟器发布：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64`
+- 模拟器锁：`Daedalus Simulator 1.3.1 / DaedalusSimSdk 1.3.1 / Linux x86_64 / SHM v7 ABI r2 / 1440×1080 / Scene Control v2`
+- 模拟器发布：`/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64`（source `d7637d00f69f0b6b01814c4fef6087baa92b0607`）
 - 模拟器消费者统一入口：`SIMULATOR_CONSUMER_GUIDE.md`（v1）与 `simulator.lock.json`
 
 本仓库只消费模拟器 Release 与 SDK，不包含模拟器源码。模型资产由 `models/manifest.json` 引用外部受保护目录，Git 不跟踪 engine。
@@ -23,6 +23,18 @@
 当前阶段一的独立仓库和 SDK 边界已经建立；1.0.1 + SDK + TensorRT + shooting_range 动态基线已可重复启动。阶段二已完成并通过 G2：普通装甲板 `+15°` 倾角固定在 tracker/chassis 坐标系，生产 PnP yaw 通过曝光时刻云台姿态投影后进入 tracker；非零姿态合成回归与 3/5/7 m 原生靶场动态回放均已验收。阶段三正式 360-session 采集已完成；旧 `H=0.07 m` 已被经 exact-exposure 真值验证的 camera→gimbal R/T 取代。当前正式离线合同为最近最多 200 个真实观测事件及其真实时间戳的 `stage3-dataset-v3`，全量 111,527-train/36,297-validation 单 seed 训练、完整 validation 双物理基线评估和动态 ONNX parity 均已完成且未访问 test。该结果证明完整离线流程可行并在整体 validation 上超过刚体 baseline，但不构成多 seed/线上指标验收；test、TensorRT、tracker/MPC/火控和实弹接入仍冻结。PnP 观测记录的事实源为每帧完整 `solved_armors` 集合，离线循环 ID 仅为可重放派生字段。
 
 当前执行状态（2026-08-10）：用户已暂停预测器和多假设身份跟踪器工作，转入证据链重建。逐阶段权威文档为 `modules/autoaim/docs/trajectory_evidence_chain.md`。阶段 1 已从 detector 四角点复核到 PnP 输入：正式 Stage3 v2 的 120 轮矩阵仍不含角点，但专门的 Stage3 observation v3 independent 采集保留了 4,280 行 raw/refined/truth 角点 atlas。`runtime/autoaim-b-corner-evidence-complete-20260810` 已导出逐样本和精确经验分布；`runtime/autoaim-b-corner-evidence-catalog-20260810` 已索引全部现存历史角点资产、负证据和缺失引用。31 条 full-pipeline 诊断只作为当前实现的有界交叉检查，不再误写成唯一角点级证据。
+
+当前执行状态（2026-08-13）：用户已授权恢复仅限角点修复的数据采集与训练。消费者锁迁移到 Linux Release 1.3.0；其默认关闭的离线 `exact_corner_labels` sidecar 是唯一新的训练标签来源，按完整 TCP 帧写入后的 `(producer_epoch, frame_seq, timestamp_ns)` 严格联结。它不解锁实时真值，任何标签、未来字段或 physical ID 均不得流入 detector、PnP、observer、predictor 或控制输入。先完成 schema/identity/free-IPPE/motion-uniform 资格验证和完整 session 切分，才允许训练 image-conditioned four-corner repair；预测器、multi-hypothesis identity、RobotEstimator 和 fire control 仍冻结。
+
+当前执行状态（2026-08-14）：Linux SDK consumer build 和两轮 drain-to-EOF 的 Release validator 已通过。临时探索性 PNG 管线在单个 spin 会话的 frame-group holdout 上将坐标 RMS 从 `29.23 px` 降到 `24.48 px`，但该 PNG 管线曾在消费者侧解析 TCP wire，违反模块边界，源码已删除；数据和 checkpoint 仅作为受保护探索证据，不能进入正式结论。用户随后批准模拟器侧公共接口工作；Linux Release 1.3.1（source `d7637d0…`）现在以 `--save-rgba-frames --until-eof` 导出每个 identity 的 hash-verified raw RGBA 与 `capture-manifest.json`，并由 `--require-raw-frames` validator fail closed 验证。消费者仅读取该 Release 账本中的原图，正式多 session 采集与 session-disjoint 训练现已解除接口阻塞；预测器、multi-hypothesis identity、RobotEstimator 和 fire control 仍冻结。
+
+当前执行状态（2026-08-14，session-disjoint smoke）：Release-owned full-frame collector 的 spin
+会话（`2,482` frames）与新 linear+spin 会话（`931` frames，`3,392` labels，`3,060` uniform rows）均已
+通过 raw-frame、complete-Z4、uniform/excluded 和 free-IPPE validator。受保护的 0526 ONNX detector
+在每会话前 300 label-bearing exposures 产生 428/385 条 matched rows；只输入 RGB patch + detector raw
+15-D geometry 的两会话隔离 smoke 在 held-out linear+spin 上 RMS `28.5205 -> 29.0269 px`，未改善。
+该负结果禁止模型选择、部署或在线 PnP 替换，且仍缺 stationary/linear/多距离/正反方向等完整覆盖和
+sealed test；下一步只能扩展独立 session 覆盖、保持完整-session split 并重新评估。
 
 ## 2026-07-19 PnP joint-pose A/B checkpoint
 

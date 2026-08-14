@@ -129,19 +129,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\check-architecture
 python3 -B ./scripts/check-doc-links.py
 ```
 
-基础 CMake 依赖虽然可在 Linux 安装，但当前完整构建还要求与版本锁一致的 Linux `DaedalusSimSdk`，TensorRT 路径还要求匹配本机 CUDA、TensorRT 和模型。当前锁定 Release 只有 `windows-x86_64`；旧版 Linux Release 不能替代它。缺少同版本 Linux SDK 时，不要把配置失败解释为源码错误，也不要绕过 `find_package(DaedalusSimSdk 1 REQUIRED CONFIG)`。
+当前锁定 Release 已提供 Linux `DaedalusSimSdk 1.3.1`。基础构建应显式指定其 SDK，不要从
+模拟器源码 build 目录取依赖：
+
+```bash
+cmake -S modules/autoaim -B /tmp/aim-stack-autoaim-1.3 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64/sdk \
+  -DAIM_SIM_WITH_ROS2=OFF -DAIM_SIM_WITH_VIVSIONN_TRT=OFF
+```
+
+Linux Release 不携带 TensorRT engine；缺少匹配的 Linux detector 运行时/模型时，不要把配置或
+推理失败解释为模拟器或角点标签错误，也不要将 Windows engine 当作 Linux 资产使用。
 
 ## 4. 启动自瞄 B
 
-当前正式入口是 Windows 原生的 Shooting Range 端到端采集。从 Windows 仓库根目录运行：
+当前正式入口是 Linux 1.3.1 的离线 exact-corner/full-frame 采集，而非生产预测器。创建一个
+新的任务目录并使用 Release 的 collector/validator，完整命令与安全边界见[消费者统一指南](../../SIMULATOR_CONSUMER_GUIDE.md)。`--save-rgba-frames --until-eof` 会收集每曝光 raw RGBA、wire identity ledger、capture manifest 与 exact-corner 标签；它不提供 detector 输出或在线真值。
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-autoaim-e2e.ps1 `
-  -WarmupSeconds 5 -DurationSeconds 30 -EnableStage3 `
-  -InitialScene shooting_range -TruthGimbalTarget 3
-```
-
-该 benchmark 是 Windows 项目机验收入口，除了版本锁中的 Release 和模型，还依赖已经构建好的 Windows 原生桥、TensorRT/CUDA/OpenCV 运行库与项目 Python 环境。它不会自动从网络下载这些私有或硬件绑定资产。目前没有与它等价、且满足 `1.2.1` 版本锁的 Linux 启动命令。
+每次正式训练前必须先完成完整 session 的 train/validation/test 切分，并使用模拟器所有者发布、ledger hash 验证过的逐曝光 raw RGBA 在同一批图像上生成 raw detector corners。修复网络只接受图像 patch 与 raw corners；exact corners 只作监督/验收标签，不能作为网络输入、PnP 输入或任何在线状态字段。消费者不得自行解析 TCP 来实现全帧图像导出。
 
 ## 5. 调试界面
 

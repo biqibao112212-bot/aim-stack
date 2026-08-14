@@ -72,14 +72,20 @@ Set-Location .\aim-stack
 
 ### Linux 与正式运行链路的边界
 
-当前版本锁是 `Daedalus Simulator 1.2.1 / windows-x86_64`，正式模拟器、Windows 原生桥和端到端采集脚本仍只能在 Windows 项目机运行。工作区中出现的旧 Linux Release 不满足当前版本锁，不能用于兼容性、性能或发布结论。
+当前版本锁是 `Daedalus Simulator 1.3.1 / linux-x86_64 / DaedalusSimSdk 1.3.1`。Linux 正式支持
+模拟器、SDK、TCP RGBA32 和 default-off 离线 exact-corner 标签采集；详见
+[消费者统一指南](SIMULATOR_CONSUMER_GUIDE.md)。历史 Windows bridge/TensorRT 结果不迁移为
+Linux 性能或兼容性结论。
 
-在正式的同版本 Linux Release 和 Linux SDK 发布并更新版本锁之前，Linux 环境支持的范围是：
+Linux 允许：
 
-- 阅读和维护源码、文档及配置；
-- 运行 `python3 -B scripts/check-doc-links.py`；
-- 运行不依赖私有模型、Windows 二进制和当前 SDK 的离线 Python 分析；
-- 准备 CMake 依赖，但不能声称已经通过完整模拟器或 TensorRT 端到端验收。
+- 使用锁定 Release 和 SDK 进行 CMake 兼容验证；
+- 用 Release collector 的 `--save-rgba-frames --until-eof` 采集受保护的逐曝光 RGBA、identity
+  ledger、capture manifest 与 exact-corner JSONL，并验证其闭合；
+- 在完成 detector 运行时验证及完整 session 切分后训练离线、image-conditioned 四角修复器。
+
+Linux Release 不携带 TensorRT engine，也不通过 SDK 发布 target truth。1.3.1 collector 是模拟器拥有的版本化全帧导出；消费者只读取其 hash-verified raw RGBA 文件，绝不自行实现 TCP 保存全帧。任何在线 detector/PnP/
+observer/predictor/fire-control 集成须通过各自的独立验收，不能从标签导出或历史 Windows 结果推断。
 
 ## 当前模块
 

@@ -7,22 +7,30 @@
 
 ## 当前操作系统支持
 
-当前开发工作区运行在 Linux（Ubuntu 24.04），可用于源码、文档、离线分析和不依赖私有 SDK 的检查。但 `simulator.lock.json` 当前锁定的是 `1.2.1/windows-x86_64`，正式模拟器、SDK、Windows 原生 TensorRT 桥和端到端采集仍以 Windows 为唯一验收平台。
+当前正式开发和角点训练数据采集平台是 Linux（Ubuntu 24.04）。`simulator.lock.json` 锁定
+`1.3.1/linux-x86_64`；正式模拟器、SDK、TCP RGBA32 采集与 default-off 离线
+exact-corner JSONL sidecar 都必须来自该 Release。历史 Windows TensorRT 端到端结果仍可用于
+证据回溯，但不能替代 Linux 1.3.1 的兼容性、采集或性能结论。
 
-仓库或工作区中残留的更早 Linux Release 不属于当前锁，不能替代 `1.2.1/windows-x86_64`，也不能作为当前兼容性、性能或发布证据。未来只有在模拟器所有者发布同版本 Linux Release/SDK，并由消费者显式更新版本锁后，才能增加正式 Linux 运行命令。在此之前，Linux 安装和可执行范围见[自瞄 B 教程](modules/autoaim/README.md)。
+旧 Linux Release、模拟器源码 build 目录、WSL 挂载路径和旧共享内存轮询均不属于当前锁，不能
+替代正式 Release。当前 Release 不携带或管理 TensorRT engine；Linux 角点研究先采集原图和
+严格同曝光标签，随后使用经单独验证的消费者 detector 生成 raw corners，不能把 exact corners
+偷渡为 detector/PnP/在线状态输入。
 
 ## 1. 唯一依赖入口
 
 - 模拟器所有者：私有仓库 `biqibao112212-bot/daedalus-simulator`；
-- 本机只读源码位置：`D:\仿真\repos\daedalus-simulator`；
-- 当前正式 Release：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64`；
+- 本机只读源码位置：`/home/potato/Projects/仿真/repos/daedalus-simulator`；
+- 当前正式 Release：`/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64`；
 - 消费者版本锁：`simulator.lock.json`；
-- SDK 安装目录：`D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64\sdk`；
+- SDK 安装目录：`/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64/sdk`；
 - 正式契约：Release 根目录 `release.json` 与 `docs/sdk-contract.json`；
 - SDK 用法：Release 内 `docs/README.md`；
-- 接口语义：Release 内 `docs/SIMULATOR_INTERFACE.md`；
+- 接口语义：Release 内 `docs/SDK_API_REFERENCE_ZH.md`；
 - 场景控制：Release 内 `docs/SCENARIO_CONTROL.md`；
-- 性能基线：Release 内 `docs/SIMULATOR_PERFORMANCE.md`，以及模拟器仓库当前同名文档与 `benchmarks/`。
+- 性能基线：Release 内 `docs/SIMULATOR_PERFORMANCE.md`；离线标签合同：
+  `docs/OFFLINE_EXACT_CORNER_EXPORT_ZH.md`、`schemas/offline-exact-corners-v1.schema.json` 与
+  `schemas/offline-frame-capture-v1.schema.json`。
 
 消费者不得从模拟器工作区的临时 build 目录取依赖，不得使用旧工作树二进制，不得把模拟器源码或协议头复制进本仓库。
 
@@ -30,7 +38,7 @@
 
 | 项目 | 固定值 |
 | --- | --- |
-| 模拟器 / SDK | Daedalus Simulator 1.2.1 / DaedalusSimSdk 1.2.0 |
+| 模拟器 / SDK | Daedalus Simulator 1.3.1 / DaedalusSimSdk 1.3.1 |
 | IPC | SHM v7，ABI revision 2，元数据 76992 字节 |
 | 图像 | TCP 默认 RGBA32，1440×1080；SHM 兼容 RGB24 |
 | 物理 | 250 Hz，单 substep |
@@ -38,9 +46,12 @@
 | 图像数据面 | TCP 5602，latest-only |
 | 云台/发射命令 | UDP 5601 |
 | 场景控制 | `daedalus.scene-control/2`，UDP 5603 |
-| 运行时 IPC 根 | `D:\仿真\runtime` 下的任务专用目录 |
+| 运行时 IPC 根 | `/home/potato/Projects/仿真/runtime` 下的任务专用目录 |
 
-自瞄 B 的正式采集链路现在完全运行在 Windows：Windows Release 模拟器、Windows 原生 TensorRT 桥和 localhost TCP。禁止把 WSL、`/mnt/d` 路径、文件三缓冲图像或旧共享内存轮询作为新采集、性能结论或默认运行方式；它们只保留为历史迁移/兼容资料。
+当前角点数据采集采用 Linux Release 模拟器和 localhost TCP。`--corner-labels-jsonl` 只能写到
+Release 外的新绝对 `.jsonl` 文件；它不解锁 SDK target truth。必须同时保留 raw frame、TCP identity
+ledger 和标签 JSONL；任一三元键不一致、无完整 TCP 帧或 schema/closure 失败时，样本 fail closed。
+Windows TensorRT bridge、`/mnt/d`、文件三缓冲图像和旧共享内存轮询均仅是历史资料。
 
 ## 3. 三张原生地图与 SDK 场景名
 
@@ -56,23 +67,21 @@
 
 ### 默认高性能模式
 
-```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1
+```bash
+cd /home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64
+./start-simulator.sh --ipc-dir /home/potato/Projects/仿真/runtime/<task>/talos-ipc
 ```
 
-该模式关闭可见预览，但离屏相机仍持续渲染、GPU readback 和采集。隐藏窗口或黑屏不代表没有图像；应检查 `capture_copy_submit_hz`、TCP 发送率和消费者输入计数。自瞄 B 默认使用此模式，启动器会在消费者侧自动启用 TensorRT。
+该模式关闭可见预览，但离屏相机仍持续渲染、GPU readback 和采集。隐藏窗口或黑屏不代表没有图像；应检查 runtime capabilities、TCP 收帧数和 identity ledger。Linux Release 不自动启用或携带 TensorRT。
 
 ### 正常可视渲染/验收模式
 
-```powershell
-Set-Location D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64
-powershell -NoProfile -ExecutionPolicy Bypass -File .\start-simulator.ps1 -Visible
+```bash
+cd /home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64
+./start-simulator.sh --visible --ipc-dir /home/potato/Projects/仿真/runtime/<task>/talos-ipc
 ```
 
-该模式显示最高 60 Hz 的预览，用于人工验收画面、相机和场景；离屏 1440×1080 采集仍独立运行。不得用预览帧率代替采集或自瞄吞吐。
-
-当前 2026-07-18 工作基线：高性能纯模拟器主更新/采集均值 177.199/160.009 Hz；可视复测 158.298/153.015 Hz，预览 60.010 Hz；高性能 + 自瞄 B/TensorRT 完整视觉均值 121.233 Hz，流水线累计均值 6.032 ms，采集丢帧和 GPU map 错误均为 0。数字只适用于性能文档记录的提交、机器和后台负载；未来版本必须读取所有者发布的新基线，不得把旧数字当永久承诺。
+该模式用于人工验收画面、相机和场景；离屏 1440×1080 采集仍独立运行。不得用预览帧率代替 TCP 收帧率、标签覆盖或 detector 吞吐。尚未对 Linux 1.3.1 的完整 detector/repair pipeline 作出性能声明。
 
 ## 5. SDK 构建和链接
 
@@ -85,9 +94,9 @@ target_link_libraries(my_consumer PRIVATE DaedalusSimSdk::DaedalusSimSdk)
 
 配置示例：
 
-```powershell
-cmake -S <consumer> -B <build> -DCMAKE_BUILD_TYPE=Release `
-  -DDaedalusSimSdk_DIR=D:\仿真\releases\daedalus-simulator\1.2.1\windows-x86_64\sdk\lib\cmake\DaedalusSimSdk
+```bash
+cmake -S <consumer> -B <build> -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64/sdk
 ```
 
 可用头文件：
@@ -111,16 +120,35 @@ cmake -S <consumer> -B <build> -DCMAKE_BUILD_TYPE=Release `
 7. 用 `SceneControlClient` 管理地图、靶车和能量机关状态；
 8. 模拟器真值只可用于标签和验收，严禁作为神经预测器输入。
 
-当前自瞄 B 的 Windows 原生采集/性能入口：
+### Linux exact-corner 数据采集
 
-```powershell
-Set-Location D:\仿真\repos\aim-stack
-powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\bench-windows-autoaim-e2e.ps1 `
-  -WarmupSeconds 5 -DurationSeconds 30 -EnableStage3 `
-  -InitialScene shooting_range -TruthGimbalTarget 3
+每次采集新建一个任务专用目录；不得复用或覆盖标签文件。先启动带 labels 的模拟器：
+
+```bash
+task=/home/potato/Projects/仿真/runtime/corner-label-<session>
+mkdir -p "$task"
+cd /home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64
+./start-simulator.sh --ipc-dir "$task/talos-ipc" \
+  --corner-labels-jsonl "$task/exact-corners.jsonl"
 ```
 
-该命令使用正式 Release 1.2.1、Windows 原生 `aim_sim_windows_auto_aim_bridge.exe`、TCP RGBA32 1440×1080 和 Windows TensorRT engine；证据写入 `D:\仿真\runtime\windows-autoaim-e2e-*`。靶场采集应使用 `-InitialScene shooting_range -TruthGimbalTarget 3`，它会持续把云台光轴锁定到 3 号靶车，可允许靶车自转而不让其离开视野。当前已验证的目标在视野内 Stage3 端到端吞吐为 140.967 FPS；区间分布、原始帧和结论边界见 `D:\仿真\runtime\SHOOTING_RANGE_TARGET_IN_VIEW_PERFORMANCE_1.2.1_20260808.md`。
+第二个终端运行 Release 随附的 TCP collector；它会控制 Shooting Range #3，并在明确 opt-in 时
+为每个完整 identity 保存原始 RGBA32 帧、payload hash、raw-file hash 与 capture manifest：
+
+```bash
+python3 ./docs/capture-corner-label-experiment.py --output-dir "$task" \
+  --until-eof --linear-span-m 0.6 --save-rgba-frames
+```
+
+协调关闭模拟器并让 collector drain TCP 到 EOF 后，使用随附 validator 验证标签：
+
+```bash
+python3 ./docs/verify-corner-label-export.py "$task/exact-corners.jsonl" \
+  --tcp-identities "$task/tcp-identities.jsonl" \
+  --require-raw-frames --require-complete-z4 --require-uniform-and-excluded
+```
+
+该步骤资格化 identity—raw-frame—标签连接；它不产生 detector raw corners，也不等于 TensorRT/在线端到端性能验收。1.3.1 的 `--save-rgba-frames` 是唯一正式全帧导出；消费者 detector 只读取其 ledger 中 hash-verified raw RGBA 文件，消费者不得自行解析 TCP。
 
 ## 6. 模拟器修改审批门禁
 

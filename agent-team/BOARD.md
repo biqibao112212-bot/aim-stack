@@ -2,11 +2,58 @@
 
 ## 当前公共模拟器指引
 
-- `SIMULATOR_CONSUMER_GUIDE.md` 和 `modules/autoaim/README.md` 已固定到
-  Daedalus Windows Release 1.2.1 / SDK 1.2.0，并将原生 Windows 桥 + TCP
-  RGBA32 采集链路设为自瞄 B 的唯一正式入口。WSL、`/mnt/d`、文件轮询和旧启动器
-  仅作迁移资料。目标在视野内的 Shooting Range Stage3 参考为 140.967 FPS；指南
-  已记录复现命令与证据路径。
+- `SIMULATOR_CONSUMER_GUIDE.md` 和 `modules/autoaim/README.md` 现锁定
+  Daedalus Linux Release 1.3.1 / SDK 1.3.1（source `d7637d0…`）。Linux
+  TCP RGBA32、default-off exact-corner JSONL sidecar 与 Release-owned
+  `--save-rgba-frames --until-eof` full-frame export 是当前角点修复的正式采集入口；
+  Windows TensorRT Stage3 吞吐只保留为历史证据，不能作为此 Linux 采集的性能或检测质量结论。
+
+## 2026-08-13--14 Linux 1.3.1 exact-corner/full-frame collection and repair training
+
+- [x] User authorized resuming only image-conditioned four-corner repair data
+  collection/training, requested the Linux Release, and later explicitly approved
+  the simulator-owned full-frame export proposal.
+- [x] Verified the protected Linux Release manifest, SDK contract and export
+  schema: Release/SDK `1.3.1`, SHM v7 ABI r2, TCP RGBA32 1440×1080, Scene
+  Control v2, exact-corner schema `daedalus.offline-exact-corners/1`, full-frame
+  schema `daedalus.offline-frame-capture/1`, and source
+  `d7637d00f69f0b6b01814c4fef6087baa92b0607`.
+- [x] Updated consumer documentation and lock; built the autoaim Linux SDK
+  configuration with ROS2/TensorRT options explicitly off, then passed its
+  three CTest targets. The Release validator also passed two exploratory,
+  drain-to-EOF sessions: spin `3,035` frames / `11,096` label rows and
+  stationary `1,696` frames / `6,780` label rows, with no online truth read.
+- [x] Completed a strictly bounded exploratory image+geometry pilot on `925`
+  spin frames / `1,274` detector-matched uniform rows. Its frame-group holdout
+  changed coordinate RMS `29.23 -> 24.48 px`. The checkpoint and rows are
+  protected exploratory assets, not a candidate deployment model or a
+  generalization result.
+- [x] Cleared the formal full-frame interface gate through the approved simulator
+  Release 1.3.1: its package collector saved `2,482` raw RGBA identities and
+  `9,108` exact-label rows in the verified full-frame smoke. `--require-raw-frames`,
+  complete-Z4 and uniform/excluded validation all passed. Consumers never parse
+  the TCP wire; the earlier custom PNG collector stays deleted.
+- [ ] Collect the required independent distance/spin/linear/combined sessions
+  with the 1.3.1 package collector, then run detector matching against ledger-
+  hash-verified raw RGBA.
+- [ ] Train and evaluate only an image-conditioned, same-frame four-corner
+  repairer on complete-session-disjoint data. Exact labels are targets only.
+  Predictor, multi-hypothesis identity, RobotEstimator, online PnP replacement
+  and fire control remain frozen.
+- [x] Collected and package-validated one new independent `linear_and_spin`
+  session: `931` full RGBA identities, `3,392` label rows and `3,060` uniform
+  rows. Its raw-frame, complete-Z4, uniform/excluded and free-IPPE checks all
+  pass; capture-manifest SHA-256 is `564d754c…`.
+- [x] Ran a bounded two-session-disjoint smoke: train on 407 uniform matched
+  spin rows, validate on 336 uniform matched linear+spin rows. Validation
+  coordinate RMS worsened `28.5205 -> 29.0269 px`; retain its checkpoint and
+  metrics as protected negative evidence only. It does not satisfy full motion
+  coverage, independent test, model selection, deployment, PnP replacement or
+  any online integration gate.
+- [ ] Extend official 1.3.1 collection to stationary, linear, both spin signs,
+  multiple distances/directions and radius conditions. Keep complete sessions
+  disjoint for train/validation and preserve a sealed test set before any
+  architecture or hyperparameter decision.
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 

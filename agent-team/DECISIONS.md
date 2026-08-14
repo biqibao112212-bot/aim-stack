@@ -1,11 +1,55 @@
 # Aim Stack 关键决策
 
-## Windows 原生模拟器采集决策（2026-08-08）
+## Windows 原生模拟器采集决策（2026-08-08；被 2026-08-13 Linux 1.3.0 角点采集决策在其范围内取代）
 
 新的自瞄 B 采集和性能结论只能使用 `simulator.lock.json` 指向的 Windows Release、
 Windows 原生桥、localhost TCP RGBA32 1440×1080 与 Windows TensorRT 资产。WSL、
 `/mnt/d` 图像共享、文件三缓冲轮询和旧 WSL 启动器均为历史迁移路径，不得用于新数据
 采集。目标在视野内 Stage3 的当前参考为 140.967 FPS，复现命令由公共消费者指南规定。
+
+## Linux 1.3.0 离线 exact-corner 采集决策（2026-08-13）
+
+用户明确授权将角点修复研究消费者锁升级为 Daedalus Simulator/SDK 1.3.0 的
+`linux-x86_64` Release（source `ee39776de970ba4d01ccdbb5e29e0d3bfa9ecaf4`），并恢复
+角点图像采集和训练。唯一新增标签接口是默认关闭、只写入、在完整 TCP RGBA32 帧发送后才
+追加的 `DAEDALUS_CORNER_LABELS_JSONL`；标签必须以
+`(producer_epoch, frame_seq, timestamp_ns)` 与原图和 detector 输出严格连接。在线 SDK
+继续发布空目标批次，标签不能进入 detector、PnP、observer、predictor 或控制输入。
+
+本授权仅覆盖受保护的离线采集和 image-conditioned same-frame 四角修复训练。每轮先用发布版
+validator 验证 schema、identity、无 future truth、`motion_uniform` 排除及 free-IPPE 闭合；
+训练/验证/测试按完整 session 切分。预测器、多假设身份、RobotEstimator、生产 PnP 替换、
+模拟器改动和 fire control 仍不在授权范围内。
+
+## 全帧图像导出缺口与探索性 pilot 边界（2026-08-14；后续公共接口已解决）
+
+Release 自带 `capture-corner-label-experiment.py` 能严格记录 TCP identity 和 payload hash，但它只
+可选写出 `first-frame.rgba`，不能为每个 identity 导出可训练原图。消费者不得为了填补该缺口
+自行复制或实现 TCP 协议；任何这样产生的 PNG/label 会话和由其训练的 checkpoint 都只能保留为
+受保护探索证据，不能作为正式数据集、模型选择或部署依据。已完成的单 spin frame-group pilot
+验证 RMS `29.23 -> 24.48 px` 只证明局部可学习信号，不能替代 complete-session split。
+
+正式工作需要模拟器仓库拥有并发布一个 versioned、Release 随附的 full-frame export：每个完整
+TCP identity 一张不可覆盖的 RGBA/PNG（或等价内容寻址原图）、payload/image hash、严格
+drain-to-EOF 关闭、以及现有 validator 的一一映射检查。用户随后明确批准该公共接口工作；
+Linux 1.3.1 已由 simulator owner 发布 `--save-rgba-frames --until-eof`，每个 identity 生成
+`frames/*.rgba`、payload/raw SHA-256 与 `capture-manifest.json`，validator 的
+`--require-raw-frames` fail-closed 验证逐项闭合。消费者锁定 source `d7637d0…`，仅读取已验证的
+账本原图；接口缺口解除，但完整 session-disjoint 数据集、训练、测试封存和任何在线集成仍须分别验收。
+
+## Linux 1.3.1 full-frame two-session negative smoke（2026-08-14）
+
+Release-owned spin full-frame session（`2,482` frames）和新建的独立 linear+spin session（`931`
+frames，`3,392` exact labels，`3,060` uniform rows）都以 `--until-eof --save-rgba-frames` 收集，并
+通过 raw-frame、complete-Z4、uniform/excluded 与 free-IPPE validator。消费者 detector 只从 ledger
+hash-verified raw RGBA 推理，再与 exact corners 离线匹配；训练输入严格为 RGB patch 和 detector
+raw 15-D geometry，truth/motion/identity/range/future 均不输入网络。
+
+为避免帧随机切分泄漏，训练会话与验证会话按完整目录隔离。受限前 300 label-bearing exposures 的
+407 train / 336 validation uniform matched rows上，验证 coordinate RMS `28.5205 -> 29.0269 px`，未达
+改善。因此该 checkpoint/metrics 必须作为受保护的负面 smoke 证据；不得进行 model selection、部署、
+在线 PnP 替换或把它解释为 Linux 1.3.1 的 detector 性能结论。后续只能先扩展独立条件覆盖并预留
+sealed test，再决定是否重新训练或改变模型。
 
 上下文版本：`CTX-AIM-STACK-2026.07-v3`
 
