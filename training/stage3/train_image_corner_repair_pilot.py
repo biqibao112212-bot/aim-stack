@@ -87,7 +87,9 @@ def patch(image: np.ndarray, raw: np.ndarray) -> np.ndarray:
         dtype=np.float32,
     )
     transform = cv2.getPerspectiveTransform(source, destination)
-    bgr = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+    # `image` comes from the Release's literal RGBA32 frame export.  It is not
+    # a PNG decoded by OpenCV, so BGRA conversion would swap red and blue.
+    bgr = cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
     warped = cv2.warpPerspective(bgr, transform, (PATCH_WIDTH, PATCH_HEIGHT), flags=cv2.INTER_LINEAR)
     return np.transpose(cv2.cvtColor(warped, cv2.COLOR_BGR2RGB), (2, 0, 1)).astype(np.float32) / 255.0
 

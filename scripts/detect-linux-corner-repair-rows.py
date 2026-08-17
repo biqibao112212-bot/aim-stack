@@ -79,7 +79,10 @@ def sigmoid(value: np.ndarray) -> np.ndarray:
 
 
 def preprocess(rgba: np.ndarray) -> np.ndarray:
-    bgr = cv2.cvtColor(rgba, cv2.COLOR_BGRA2BGR)
+    # Release frames are literal RGBA32 bytes, not OpenCV-decoded PNG BGRA.
+    # Keep this conversion aligned with the public SDK contract and the repair
+    # patch path below; otherwise red and blue are swapped before ONNX input.
+    bgr = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
     resized = cv2.resize(bgr, (640, 480), interpolation=cv2.INTER_LINEAR)
     canvas = np.zeros((640, 640, 3), dtype=np.uint8)
     canvas[:480] = resized
