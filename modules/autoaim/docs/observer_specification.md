@@ -2,7 +2,7 @@
 
 - 规格版本：`autoaim-observer-spec-v1`
 - 日期：2026-08-10
-- 状态：`设计与验收合同；尚未实现、尚未部署`
+- 状态：`设计与验收合同；Python 因果匿名参考实现已落地，尚未部署`
 - 范围：角点、PnP 和 PnP 后因果时序证据收敛为当前状态观测器
 - 暂停项：轨迹预测器、多假设 C4 身份 tracker、火控接入
 
@@ -18,6 +18,8 @@
 4. 对缺失、歧义和过期显式降级；不满足条件时输出“不可用/身份未解析”，而不是生成看似连续的物理轨迹。
 
 这是一份设计和验收合同，不授权修改当前 `RobotEstimator`、恢复预测器训练或接入火控。
+
+Python 参考实现、历史 120-run 结构回放和 Linux 1.3.1 完整 detector/repair/PnP sidecar 结果见 [因果观测器与角点修复部署域复核](causal_observer_and_corner_repair_validation.md)。
 
 ## 2. 证据边界
 

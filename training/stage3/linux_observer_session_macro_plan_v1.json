@@ -1,0 +1,165 @@
+{
+  "schema_version": "aim-stack.corner-repair-formal-plan/1",
+  "release_version": "1.3.1",
+  "release_source_commit": "d7637d00f69f0b6b01814c4fef6087baa92b0607",
+  "detector_model_sha256": "1d9233eb74391347d20352cd6cbcb847976784be0ac609ebec2bee626ac1b303",
+  "repair_checkpoint_sha256": "46068e714899dd612e9de7ca3642db75c4022d15770793325e714bb5eac67f91",
+  "camera_calibration_sha256": "ed1ad5a6c8c32efe6285393e2a982f20bdcf56fe2ff0d7e58d9d680fbb4b65ab",
+  "target_complete_frames_per_session": 360,
+  "purpose": "Fresh Linux 1.3.1 session-macro validation of complete detector sets, frozen reliability corner repair, unchanged IPPE, and the anonymous causal ray observer before any C4 identity or predictor recovery.",
+  "frozen_runtime": {
+    "detector_score_threshold": 0.25,
+    "detector_nms_threshold": 0.45,
+    "repair_application_probability_threshold": 0.5,
+    "repair_context_scale": 1.5,
+    "observer_history_window_s": 0.2,
+    "observer_min_history_events": 8,
+    "observer_freshness_s": 0.05,
+    "observer_continuity_gate_deg": 2.0,
+    "observer_ambiguity_margin_deg": 0.25,
+    "observer_max_candidates": 4
+  },
+  "split_policy": {
+    "unit": "complete simulator session",
+    "development_sessions_may_select_only_harness_implementation": true,
+    "validation_sessions_gate_test_access": true,
+    "test_sealed_during_development_and_validation": true,
+    "validation_gate": {
+      "all_structural_A_B_C_guards_pass": true,
+      "minimum_exact_identity_join_fraction": 0.98,
+      "minimum_repaired_observed_anonymous_fraction_relative_to_raw": -0.01,
+      "maximum_repaired_ambiguity_fraction_increase": 0.01,
+      "maximum_per_mode_angular_error_p95_increase_deg": 0.02,
+      "maximum_per_mode_depth_error_p95_regression_fraction": 0.02,
+      "physical_identity_resolved": false,
+      "prediction_valid": false
+    },
+    "test_gate": {
+      "same_as_validation_gate": true,
+      "report_session_macro_and_worst_session": true,
+      "no_threshold_or_model_selection_after_opening": true
+    }
+  },
+  "sessions": [
+    {
+      "id": "observer-dev-stationary-r098",
+      "split": "train",
+      "mode": "stationary",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": 0.0,
+      "radial_scale": 0.98
+    },
+    {
+      "id": "observer-dev-linear-d075-r110",
+      "split": "train",
+      "mode": "linear",
+      "direction_deg": 75.0,
+      "linear_speed_mps": 1.7,
+      "linear_span_m": 4.5,
+      "spin_deg_s": 0.0,
+      "radial_scale": 1.1
+    },
+    {
+      "id": "observer-dev-spin-m135-r095",
+      "split": "train",
+      "mode": "spin",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": -135.0,
+      "radial_scale": 0.95
+    },
+    {
+      "id": "observer-dev-combined-d240-p165-r105",
+      "split": "train",
+      "mode": "linear_and_spin",
+      "direction_deg": 240.0,
+      "linear_speed_mps": 1.9,
+      "linear_span_m": 5.0,
+      "spin_deg_s": 165.0,
+      "radial_scale": 1.05
+    },
+    {
+      "id": "observer-validation-stationary-r112",
+      "split": "validation",
+      "mode": "stationary",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": 0.0,
+      "radial_scale": 1.12
+    },
+    {
+      "id": "observer-validation-linear-d165-r090",
+      "split": "validation",
+      "mode": "linear",
+      "direction_deg": 165.0,
+      "linear_speed_mps": 2.4,
+      "linear_span_m": 5.0,
+      "spin_deg_s": 0.0,
+      "radial_scale": 0.9
+    },
+    {
+      "id": "observer-validation-spin-p225-r110",
+      "split": "validation",
+      "mode": "spin",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": 225.0,
+      "radial_scale": 1.1
+    },
+    {
+      "id": "observer-validation-combined-d030-m195-r095",
+      "split": "validation",
+      "mode": "linear_and_spin",
+      "direction_deg": 30.0,
+      "linear_speed_mps": 2.1,
+      "linear_span_m": 5.5,
+      "spin_deg_s": -195.0,
+      "radial_scale": 0.95
+    },
+    {
+      "id": "observer-test-stationary-r092",
+      "split": "test",
+      "mode": "stationary",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": 0.0,
+      "radial_scale": 0.92
+    },
+    {
+      "id": "observer-test-linear-d285-r115",
+      "split": "test",
+      "mode": "linear",
+      "direction_deg": 285.0,
+      "linear_speed_mps": 2.0,
+      "linear_span_m": 4.8,
+      "spin_deg_s": 0.0,
+      "radial_scale": 1.15
+    },
+    {
+      "id": "observer-test-spin-m240-r100",
+      "split": "test",
+      "mode": "spin",
+      "direction_deg": 0.0,
+      "linear_speed_mps": 0.0,
+      "linear_span_m": 0.0,
+      "spin_deg_s": -240.0,
+      "radial_scale": 1.0
+    },
+    {
+      "id": "observer-test-combined-d120-p225-r108",
+      "split": "test",
+      "mode": "linear_and_spin",
+      "direction_deg": 120.0,
+      "linear_speed_mps": 2.3,
+      "linear_span_m": 5.5,
+      "spin_deg_s": 225.0,
+      "radial_scale": 1.08
+    }
+  ]
+}

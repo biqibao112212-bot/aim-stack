@@ -1,0 +1,45 @@
+{
+  "schema_version": "autoaim-experiment-plan-v1",
+  "experiment": "causal-ray-observer-contract-v1",
+  "created_at": "2026-08-19",
+  "status": "pre_registered_before_replay",
+  "purpose": "Implement and structurally validate the anonymous, truth-free, causal camera-ray observer required before predictor recovery.",
+  "runtime_inputs": [
+    "session_id",
+    "producer_epoch",
+    "frame_seq",
+    "capture_timestamp_ns",
+    "observation_sink_status",
+    "complete unordered post-PnP candidate set"
+  ],
+  "forbidden_runtime_inputs": [
+    "truth target or slot",
+    "future observation or truth",
+    "simulator motion command",
+    "offline assignment",
+    "frame-local candidate index as identity"
+  ],
+  "frozen_parameters": {
+    "history_window_s": 0.2,
+    "min_history_events": 8,
+    "freshness_s": 0.05,
+    "continuity_gate_deg": 2.0,
+    "ambiguity_margin_deg": 0.25,
+    "max_candidates": 4,
+    "max_history_events": 200
+  },
+  "development_evidence": "Retained Windows/Simulator-1.2.1 120-run captures may be used only for contract development and missing/ambiguity replay, not Linux-1.3.1 deployment acceptance.",
+  "structural_gates": {
+    "candidate_permutation_invariance": true,
+    "truth_stripping_invariance": true,
+    "future_perturbation_causality": true,
+    "real_timestamp_rate": true,
+    "zero_candidate_explicit": true,
+    "more_than_four_candidates_ambiguous": true,
+    "stream_failure_fail_closed": true,
+    "physical_identity_resolved": false,
+    "prediction_valid": false
+  },
+  "accuracy_boundary": "No D02 accuracy or production latency claim is authorized by this plan. Those tolerances require a fresh Linux-1.3.1 held-session plan before collection.",
+  "retention": "Preserve all source captures, failed outputs, and derived observer evidence."
+}

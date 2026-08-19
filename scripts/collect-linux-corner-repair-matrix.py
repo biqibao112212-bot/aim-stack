@@ -277,6 +277,87 @@ def recover_validator_dependency_failure(session_dir: Path, planned: dict[str, o
     return result
 
 
+def recover_interrupted_qualified_pose_session(
+    session_dir: Path,
+    planned: dict[str, object],
+    target_frames: int,
+    release: Path,
+    timeout_s: float,
+) -> dict[str, object] | None:
+    """Close a pose session interrupted after both immutable validators passed.
+
+    The recovery never rewrites capture evidence.  It rechecks the existing
+    create-once ledgers/manifests, reruns the Release label validator into a new
+    log, and only then creates the previously missing session-result record.
+    """
+    required = (
+        session_dir / "capture-manifest.json",
+        session_dir / "tcp-identities.jsonl",
+        session_dir / "exact-corners.jsonl",
+        session_dir / "exposure-states.jsonl",
+        session_dir / "exposure-manifest.json",
+        session_dir / "scene-control.log",
+        session_dir / "validator.log",
+        session_dir / "pose-qualifier.log",
+    )
+    if not all(path.exists() for path in required):
+        return None
+    if "corner_label_export_ok" not in (session_dir / "validator.log").read_text(encoding="utf-8"):
+        return None
+    capture = json.loads((session_dir / "capture-manifest.json").read_text(encoding="utf-8"))
+    exposure = json.loads((session_dir / "exposure-manifest.json").read_text(encoding="utf-8"))
+    if (
+        capture.get("schema_version") != "daedalus.offline-frame-capture/1"
+        or int(capture.get("frame_count", 0)) < target_frames
+        or capture.get("online_truth_read") is not False
+        or capture.get("future_truth_included") is not False
+    ):
+        return None
+    if (
+        exposure.get("schema_version") != "aim-stack.exposure-capture/1"
+        or exposure.get("status") != "complete"
+        or float(exposure.get("coverage_fraction", 0.0)) < 0.98
+        or exposure.get("online_target_truth_read") is not False
+        or exposure.get("future_truth_included") is not False
+        or exposure.get("artifacts", {}).get("tcp_identities", {}).get("sha256")
+        != sha256(session_dir / "tcp-identities.jsonl")
+        or exposure.get("artifacts", {}).get("exposure_states", {}).get("sha256")
+        != sha256(session_dir / "exposure-states.jsonl")
+    ):
+        return None
+    scene_stdout = (session_dir / "scene-control.log").read_text(encoding="utf-8")
+    first_eligible = parse_applied_frame(scene_stdout)
+    verifier = [
+        sys.executable,
+        str(release / "docs/verify-corner-label-export.py"),
+        str(session_dir / "exact-corners.jsonl"),
+        "--tcp-identities",
+        str(session_dir / "tcp-identities.jsonl"),
+        "--require-raw-frames",
+        "--require-complete-z4",
+    ]
+    if planned["mode"] != "stationary":
+        verifier.append("--require-uniform-and-excluded")
+    verified = subprocess.run(
+        verifier, check=False, capture_output=True, text=True, timeout=timeout_s
+    )
+    validator_text = verified.stdout + verified.stderr
+    write_new_text(session_dir / "validator-interrupted-recovery.log", validator_text)
+    if verified.returncode != 0:
+        raise RuntimeError(f"interrupted pose-session validator failed: {verified.returncode}")
+    result = session_result(
+        session_dir, planned, first_eligible, verified.stdout, scene_stdout
+    )
+    result["qualification_recovery"] = {
+        "reason": "orchestrator interrupted after pose and Release validators passed but before session-result creation",
+        "capture_evidence_rewritten": False,
+        "original_validator_log": str(session_dir / "validator.log"),
+        "recovery_validator_log": str(session_dir / "validator-interrupted-recovery.log"),
+    }
+    write_new_json(session_dir / "session-result.json", result)
+    return result
+
+
 def main() -> None:
     args = parse_args()
     plan_path = args.plan.resolve(strict=True)
@@ -327,7 +408,17 @@ def main() -> None:
             results[planned["id"]] = json.loads(result_path.read_text(encoding="utf-8"))
             continue
         if session_dir.exists():
-            recovered = recover_validator_dependency_failure(session_dir, planned, release, args.timeout_s)
+            recovered = recover_interrupted_qualified_pose_session(
+                session_dir,
+                planned,
+                int(plan["target_complete_frames_per_session"]),
+                release,
+                args.timeout_s,
+            )
+            if recovered is None:
+                recovered = recover_validator_dependency_failure(
+                    session_dir, planned, release, args.timeout_s
+                )
             if recovered is None:
                 raise FileExistsError(f"incomplete protected session requires manual audit: {session_dir}")
             results[planned["id"]] = recovered

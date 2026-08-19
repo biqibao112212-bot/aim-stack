@@ -1,5 +1,7 @@
 # Linux 1.3.1 角点可靠性修复与预测器闭环
 
+> 2026-08-19 后续部署域复核：本文的 sealed 图像域角点结论仍作为原始证据保留，但新 Linux 完整 detector/repair/IPPE/observer 会话已证明 v3 在 spin/combined 上过修正，生产 PnP 接入门失败。当前有效授权边界以 [因果观测器与角点修复部署域复核](causal_observer_and_corner_repair_validation.md) 为准。
+
 ## 结论
 
 本轮把“角点像素指标通过”和“预测器部署指标通过”分开验收：

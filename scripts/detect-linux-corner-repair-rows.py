@@ -112,25 +112,82 @@ def ordered_corners(row: np.ndarray) -> np.ndarray:
     return np.asarray([left[1], left[0], right[0], right[1]], dtype=np.float64)
 
 
-def decode(output: np.ndarray, score_threshold: float, nms_threshold: float) -> list[dict[str, object]]:
+def decoded_number(number_index: int) -> int:
+    if number_index == 0:
+        return 7
+    if 1 <= number_index <= 5:
+        return number_index
+    if number_index == 6:
+        return 6
+    if number_index in (7, 8):
+        return 8
+    raise ValueError(f"invalid detector number index: {number_index}")
+
+
+def decode_with_diagnostics(
+    output: np.ndarray, score_threshold: float, nms_threshold: float
+) -> tuple[list[dict[str, object]], dict[str, int]]:
     values = np.asarray(output, dtype=np.float32).reshape(-1, 22)
     scores = sigmoid(values[:, 8])
     candidates: list[dict[str, object]] = []
-    for row, score in zip(values, scores):
-        if not math.isfinite(float(score)) or float(score) < score_threshold:
+    diagnostics = {
+        "raw_output_rows": len(values),
+        "nonfinite_score_rows": 0,
+        "below_score_rows": 0,
+        "nonfinite_corner_rows": 0,
+        "degenerate_box_rows": 0,
+        "pre_nms_candidates": 0,
+        "nms_rejected_candidates": 0,
+        "post_nms_candidates": 0,
+    }
+    for output_row_index, (row, score) in enumerate(zip(values, scores)):
+        if not math.isfinite(float(score)):
+            diagnostics["nonfinite_score_rows"] += 1
+            continue
+        if float(score) < score_threshold:
+            diagnostics["below_score_rows"] += 1
             continue
         corners = ordered_corners(row)
         if not np.isfinite(corners).all():
+            diagnostics["nonfinite_corner_rows"] += 1
             continue
         minimum, maximum = corners.min(axis=0), corners.max(axis=0)
         width, height = maximum - minimum
         if width < 1.0 or height < 1.0:
+            diagnostics["degenerate_box_rows"] += 1
             continue
-        candidates.append({"corners": corners, "score": float(score), "box": [float(minimum[0]), float(minimum[1]), float(width), float(height)]})
+        color_logits = np.asarray(row[9:13], dtype=np.float64)
+        number_logits = np.asarray(row[13:22], dtype=np.float64)
+        color_index = int(np.argmax(color_logits))
+        number_index = int(np.argmax(number_logits))
+        number = decoded_number(number_index)
+        candidates.append(
+            {
+                "output_row_index": output_row_index,
+                "corners": corners,
+                "score": float(score),
+                "objectness_logit": float(row[8]),
+                "box": [float(minimum[0]), float(minimum[1]), float(width), float(height)],
+                "color_index": color_index,
+                "color_logits": color_logits.tolist(),
+                "number_index": number_index,
+                "number": number,
+                "number_logits": number_logits.tolist(),
+                "armor_type": "large" if number == 1 else "small",
+            }
+        )
+    diagnostics["pre_nms_candidates"] = len(candidates)
     if not candidates:
-        return []
+        return [], diagnostics
     indices = cv2.dnn.NMSBoxes([item["box"] for item in candidates], [item["score"] for item in candidates], score_threshold, nms_threshold)
-    return [candidates[int(index)] for index in np.asarray(indices).reshape(-1)]
+    selected = [candidates[int(index)] for index in np.asarray(indices).reshape(-1)]
+    diagnostics["nms_rejected_candidates"] = len(candidates) - len(selected)
+    diagnostics["post_nms_candidates"] = len(selected)
+    return selected, diagnostics
+
+
+def decode(output: np.ndarray, score_threshold: float, nms_threshold: float) -> list[dict[str, object]]:
+    return decode_with_diagnostics(output, score_threshold, nms_threshold)[0]
 
 
 def main() -> None:
