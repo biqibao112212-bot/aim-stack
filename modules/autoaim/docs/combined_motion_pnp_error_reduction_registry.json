@@ -93,7 +93,6 @@
     "refined_corner_pnp_position_p50_p95_p99_mm": [140.776, 500.283, 708.478],
     "refined_corner_pnp_lateral_p50_p95_p99_mm": [6.742, 25.015, 35.000],
     "authorities": [
-      "modules/autoaim/docs/corner_evidence_registry.json",
       "modules/autoaim/docs/hit_oriented_ablation_registry.json"
     ],
     "implication": "future corner/PnP optimization should target tracker-y or truth-depth hit-plane error, not reprojection RMS or undirected 3D error alone"

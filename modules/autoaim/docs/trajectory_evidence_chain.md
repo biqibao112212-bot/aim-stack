@@ -4,9 +4,9 @@
 - 状态：`阶段 1--4 已完成；阶段 5 已完成离线证据收敛，等待阶段验收`
 - 日期：2026-08-10
 - 研究状态：生产预测器暂停；阶段 5 只增加离线真值替换和 simple-CV 基线，不授权预测器训练、在线接入或火控放行。
-- 数据保留：原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`，均按受保护资产处理；Git 保存处理代码、字段契约、证据登记和哈希，不复制大体积数据。
+- 数据保留：仍在使用的原始采集和大体积派生证据位于 `D:\仿真\dataset`、`D:\仿真\runtime`；学习式角点修复资产已按否决决定删除。Git 保存其最终结论，不再承诺该方向可复现。
 
-本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布；被后续证据推翻、未采用或失败的方案不删除，而是保留并标明结论边界。机器可读登记见 [corner registry](corner_evidence_registry.json)、[PnP registry](pnp_evidence_registry.json)、[time-series registry](timeseries_evidence_registry.json)、[observer acceptance registry](observer_acceptance_registry.json) 和 [hit-oriented ablation registry](hit_oriented_ablation_registry.json)。阶段 4 的完整设计合同见[观测器规格](observer_specification.md)；阶段 1--5 的连续研究叙事、径向/横向口径和真值替换结论见[角点—PnP—状态估计研究叙事](corner_pnp_state_estimation_research_narrative.md)。
+本文按数据真正经过的顺序逐阶段收口。均值、中位数和分位数只能用于导航，不能代替完整分布。仍有效的机器可读登记见 [PnP registry](pnp_evidence_registry.json)、[time-series registry](timeseries_evidence_registry.json)、[observer acceptance registry](observer_acceptance_registry.json) 和 [hit-oriented ablation registry](hit_oriented_ablation_registry.json)。学习式角点修复的详细数据与登记已删除，只保留[最终否决记录](corner_repair_rejected.md)。阶段 4 的完整设计合同见[观测器规格](observer_specification.md)；阶段 1--5 的连续研究叙事、径向/横向口径和真值替换结论见[角点—PnP—状态估计研究叙事](corner_pnp_state_estimation_research_narrative.md)。
 
 ## 阶段 1：四角点观测到 PnP 输入
 
@@ -67,19 +67,11 @@ D:\仿真\dataset\autoaim-stage3-v1\stage3-observation-v3-independent-20260803-r
 D:\仿真\dataset\autoaim-stage3-v1\stage3-observation-v3-independent-20260803-r1-combined-00\run-20260803T063155798Z\truth.jsonl
 ```
 
-atlas 权威输出是：
-
-```text
-D:\仿真\runtime\stage3-corner-observation-atlas-v1-observational-20260805-r3\rows.csv
-```
+历史 atlas 原始资产已随学习式角点修复方向于 2026-08-19 删除；下列样本数和统计只作为结论记录，不再声明可回读逐行数据。
 
 `rows.csv` 有 4,280 个观测、3,149 个唯一 exposure frame、2 个 session、12 个运动段。每行保留 truth/raw/refined 四角点坐标、raw/refined 相对 truth 的 `dx/dy/norm`、raw 到 refined 的每角点 `dx/dy/norm`，以及距离、投影尺寸、入射角和关联上下文。行键是 `session_id/producer_epoch/frame_seq/timestamp_ns/armor_index`。
 
-为避免再次把完整分布压缩成少量统计量，2026-08-10 又从 atlas 无损导出：
-
-```text
-D:\仿真\runtime\autoaim-b-corner-evidence-complete-20260810
-```
+2026-08-10 曾从 atlas 无损导出以下文件；这些文件已于 2026-08-19 删除：
 
 - `corner_refinement_samples.csv`：17,120 条逐观测、逐角点 raw/refined 坐标和 `dx/dy/norm`。
 - `corner_refinement_empirical_distribution.csv`：51,360 个按角点和指标精确排序的值，含样本键、rank、经验 CDF 和 survival。
@@ -113,7 +105,7 @@ D:\仿真\runtime\autoaim-b-corner-evidence-complete-20260810
 
 ### 1.4 角点误差如何传到 PnP
 
-现存 `stage3-corner-to-pose-propagation-findings-independent-20260805-r1` 给出以下机制证据：
+已删除的历史 `stage3-corner-to-pose-propagation-findings-independent-20260805-r1` 曾给出以下机制证据；这里只保留结论：
 
 - ideal corners 的位置误差最大仅约 `0.020 mm`，说明几何定义、坐标接口和评估投影可以闭合。
 - 实际 raw corners 的三维误差 P50/P95/P99 为 `0.143/0.458/0.605 m`；refined 为 `0.141/0.500/0.708 m`。
@@ -126,13 +118,7 @@ D:\仿真\runtime\autoaim-b-corner-evidence-complete-20260810
 
 ### 1.5 历史角点方案和负证据保留
 
-完整文件级目录位于：
-
-```text
-D:\仿真\runtime\autoaim-b-corner-evidence-catalog-20260810
-```
-
-目录索引了 74 个顶层资产、423 个 runtime 文件（2,612,677,720 bytes），并追踪 431 个当前仍存在的外部源文件（4,621,119,722 bytes）。`file_inventory.csv` 保存现存文件逐一 SHA-256；`absolute_path_references.csv` 同时保留存在和缺失的引用。
+历史文件目录曾索引 74 个顶层资产和 423 个 runtime 文件；该目录与学习式修复数据已于 2026-08-19 删除。下表只保留防止重复探索所需的结论。
 
 | 方案/时间 | 做了什么 | 当前判定 | 为什么保留 |
 | --- | --- | --- | --- |
@@ -780,23 +766,6 @@ p_j(t) = c_0 + v t + R(omega t) R(theta_0) q_j
 
 完整叙事和全分布入口为[组合运动 PnP 误差缩减](combined_motion_pnp_error_reduction.md)与[机器登记](combined_motion_pnp_error_reduction_registry.json)。正式预测证据位于 `D:\仿真\runtime\combined-pnp-error-reduction-144-v2`，测量筛选位于 `D:\仿真\runtime\combined-pnp-correction-screen-144-v1`。生产 PnP、tracker、predictor、simulator、SDK、Release 和 fire control 均未修改。
 
-## 阶段 11：仿真四角点联合残差网络
+## 阶段 11：学习式角点修复（已否决）
 
-阶段 10 的组合运动模型和预测结果保持冻结；本阶段回到角点上游，只研究“联合修复四个 raw detector 角点能否改善未改动 free-IPPE”。
-
-1. 使用 4,280 个检测、2 个 session、12 个完整 segment 的 frozen atlas。15 维输入只来自 raw 四边形中心、尺度、形状和方向；禁止输入 truth、range、斜视角、运动模式、session、身份、PnP 或未来量。
-2. 低容量 `15-64-64-8` MLP 联合输出四点 `(dx,dy)`；三 seed ensemble。主验证为 12 折完整 segment 外留，压力验证为 2 折完整 session 外留，内验证也使用完整 segment，不随机拆帧。
-3. 主折角点 RMS P25/P50/P75/P90/P95/P99 从 raw `0.679/0.962/1.324/1.779/2.139/2.891 px` 降到 `0.424/0.586/0.857/1.205/1.446/2.144 px`。四个角点分别改善，当前 inherited refinement 在该 atlas 上反而更差。
-4. 训练完成后独立运行原 free-IPPE。4,280 条 raw 重算与历史 production-matched 证据的最大位置差 `<1.1e-12 mm`。网络将 3D P50/P90/P95 从 `142.9/369.5/458.3 mm` 降至 `59.9/203.3/277.9 mm`，camera 横向从 `7.90/17.55/21.28 mm` 降至 `3.45/11.05/14.59 mm`。
-5. 改善不是逐帧保证：主折 3D/横向仍有 `25.35%/22.92%` 样本变差。跨 session 合并后仍改善，但 held-combined 的角点 P50/P95 从 raw `0.969/2.186 px` 恶化到网络 `1.177/2.317 px`；held-spin 则显著改善到 `0.635/1.343 px`。总体分布不能掩盖这个方向不对称。
-6. exact corners 的 3D P95 为 `0.0089 mm`，说明 solver/坐标链数值闭合；主误差来自角点模式经平面 PnP 放大。三 seed spread 尚不能可靠识别负迁移，不能当 calibrated covariance 或在线 gate。
-7. 当前结论只授权下一轮仿真图像 patch/heatmap 采集和 image-conditioned 联合修复实验，不授权生产 detector/PnP/tracker/fire control，也不支持 sim-to-real 声明。
-
-补充的组合运动下游闭环保持阶段 9 的 400 ms 局部 LOS 专家冻结。角点网络仍是逐帧 15 维几何输入，运动模式和时序不进入模型；segment/session 只用于防止相邻帧泄漏和检查观测域迁移。在 6 个独立短 combined 配置上：
-
-1. 同域 segment OOF 网络相对 current refined，在 50/100/200 ms 的 tracker-y/z 合误差 55 mm 覆盖从 `80.4/77.1/55.3%` 提高到 `86.3/85.4/70.2%`，平均误差减少 `1.6/4.4/8.9 mm`。
-2. 整个 combined session 外留、只用 spin 训练时，50/100 ms 覆盖反而降到 `74.5/70.8%`，平均误差增加 `9.6/6.8 mm`；这证明运动分组是必要的泛化审计，不是网络按运动模式训练。
-3. exact corners 的 PnP 世界位置 P95 为 `0.0083 mm`，但局部专家仍只达到 `92.2/89.6/87.2%` 的 55 mm 覆盖，剩余长尾集中在高角速/换向配置，属于组合模型和相位覆盖问题。
-4. 该 atlas 每个配置仅约 2.2 s，不能评估冻结的 4 s 反转相位专家；当前数字不是完整 hybrid 的生产性能，也不是实弹命中率。
-
-完整方法、每个分位、四角点分布、held-session 拆分、下游 ECDF 和限制见[仿真角点残差网络](sim_corner_residual_network.md)与[机器登记](sim_corner_residual_network_registry.json)。逐样本角点、PnP 和局部组合预测权威位于 `D:\仿真\runtime\corner-residual-network-sim-20260811-r3`、`D:\仿真\runtime\corner-residual-network-pnp-evidence-20260811-r4`、`D:\仿真\runtime\corner-repair-combined-prediction-20260811-r2`；42 个 checkpoint 位于受保护目录 `D:\仿真\models\engines\stage3-training\corner-residual-network-sim-20260811-r3`。
+该方向在 Linux 1.3.1 的独立会话和部署域复核中未达到预声明收益门，并在 spin/combined 尾部出现明显负迁移。2026-08-19 已停止训练并删除数据、checkpoint 与实验实现；生产链保持原 detector/legacy refinement/PnP。结论和重启门禁见[角点修复网络方向否决记录](corner_repair_rejected.md)。

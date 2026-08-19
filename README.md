@@ -73,20 +73,18 @@ Set-Location .\aim-stack
 ### Linux 与正式运行链路的边界
 
 当前版本锁是 `Daedalus Simulator 1.3.1 / linux-x86_64 / DaedalusSimSdk 1.3.1`。Linux 正式支持
-模拟器、SDK、TCP RGBA32 和 default-off 离线 exact-corner 标签采集；详见
-[消费者统一指南](SIMULATOR_CONSUMER_GUIDE.md)。历史 Windows bridge/TensorRT 结果不迁移为
-Linux 性能或兼容性结论。
+模拟器、SDK 和 TCP RGBA32；详见[消费者统一指南](SIMULATOR_CONSUMER_GUIDE.md)。历史 Windows
+bridge/TensorRT 结果不迁移为 Linux 性能或兼容性结论。
 
 Linux 允许：
 
 - 使用锁定 Release 和 SDK 进行 CMake 兼容验证；
-- 用 Release collector 的 `--save-rgba-frames --until-eof` 采集受保护的逐曝光 RGBA、identity
-  ledger、capture manifest 与 exact-corner JSONL，并验证其闭合；
-- 在完成 detector 运行时验证及完整 session 切分后训练离线、image-conditioned 四角修复器。
-- 对需要完整 PnP 坐标链的离线研究，用 SDK-only 单客户端同时保存 RGBA 和 `readExposureStateForFrame` 同曝光位姿，并使用仓库资格化脚本生成 hash ledger。
+- 使用公开 SDK 驱动原生地图、读取图像和曝光元数据；
+- 运行现有 detector/PnP/观测器/预测器的独立验收。
 
-Linux Release 不携带 TensorRT engine，也不通过 SDK 发布 target truth。1.3.1 collector 是模拟器拥有的普通角点数据全帧导出；需要同曝光位姿的研究采集只能使用公开 SDK `TcpImageClient`/`TalosMetadataReader`，不得自行实现或复制 TCP/SHM 协议。任何在线 detector/PnP/
-observer/predictor/fire-control 集成须通过各自的独立验收，不能从标签导出或历史 Windows 结果推断。
+Linux Release 不携带 TensorRT engine，也不通过 SDK 发布 target truth。学习式角点修复已终止，
+不得继续采集或训练该方向。任何在线 detector/PnP/observer/predictor/fire-control 集成都须通过
+各自的独立验收，不能从历史标签导出或 Windows 结果推断。
 
 ## 当前模块
 

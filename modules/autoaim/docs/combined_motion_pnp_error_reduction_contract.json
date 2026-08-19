@@ -77,9 +77,7 @@
     "same_frame_corner_intervention_available_in_formal_144": false,
     "reason": "stage3-observation-v1 stores PnP pose fields but not raw/refined corners or candidates",
     "historical_authorities": [
-      "modules/autoaim/docs/corner_evidence_registry.json",
       "modules/autoaim/docs/hit_oriented_ablation_registry.json",
-      "D:/仿真/runtime/autoaim-b-corner-evidence-complete-20260810",
       "D:/仿真/runtime/autoaim-b-hit-oriented-ablation-20260810-r1"
     ],
     "causal_use": "Use exact/raw/refined corner-to-PnP evidence to bound the corner layer; do not claim a same-sample corner-to-combined-prediction intervention on the 144 sessions."

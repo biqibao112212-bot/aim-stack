@@ -39,11 +39,7 @@
 
 ### 1.2 完整分布与四角不对称
 
-独立角点 atlas 有 4,280 条观测、3,149 个唯一 exposure、2 个 session、12 个运动段；逐角点保留 17,120 条 raw→refined 样本和 34,240 条 raw/refined→truth 残差。完整经验分布保存在：
-
-```text
-D:\仿真\runtime\autoaim-b-corner-evidence-complete-20260810
-```
+历史独立角点 atlas 有 4,280 条观测、3,149 个唯一 exposure、2 个 session、12 个运动段；曾包含 17,120 条 raw→refined 样本和 34,240 条 raw/refined→truth 残差。原始分布已随学习式角点修复方向于 2026-08-19 删除，以下数字只作为结论记录。
 
 四角的 refinement 位移确实不同：
 

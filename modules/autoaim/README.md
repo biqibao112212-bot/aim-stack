@@ -144,14 +144,9 @@ Linux Release 不携带 TensorRT engine；缺少匹配的 Linux detector 运行�
 
 ## 4. 启动自瞄 B
 
-当前正式入口是 Linux 1.3.1 的离线 exact-corner/full-frame 采集，而非生产预测器。创建一个
-新的任务目录并使用 Release 的 collector/validator，完整命令与安全边界见[消费者统一指南](../../SIMULATOR_CONSUMER_GUIDE.md)。`--save-rgba-frames --until-eof` 会收集每曝光 raw RGBA、wire identity ledger、capture manifest 与 exact-corner 标签；它不提供 detector 输出或在线真值。
-
-每次正式训练前必须先完成完整 session 的 train/validation/test 切分，并使用模拟器所有者发布、ledger hash 验证过的逐曝光 raw RGBA 在同一批图像上生成 raw detector corners。修复网络只接受图像 patch 与 raw corners；exact corners 只作监督/验收标签，不能作为网络输入、PnP 输入或任何在线状态字段。消费者不得自行解析 TCP 来实现全帧图像导出。
-
-Linux 1.3.1 图像角点修复已完成 session-disjoint 正式实验。当前 `v8` 候选在第二轮全新测试中四种运动模式均无退化、总体 RMS 改善 `2.55%`，但未达到预声明的 `5%` 强门，因此保留为带回退的离线研究候选，不替换现有生产 PCA/`cornerSubPix`。完整数据关联根因、网络结构、失败方法、指标和受保护证据见[Linux 1.3.1 图像角点修复正式实验](docs/corner_repair_linux_1_3_1_formal.md)。
-
-在不重新选择模型的前提下，又完成了一条 Linux 1.3.1 同曝光位姿的 post-test 开发 A/B：冻结修复器在同 IPPE、同坐标链和同 `400 ms` LOS 预测器下，将 50/100/200 ms mean cross-depth 误差从 `111.1/119.5/147.8 mm` 降到 `59.4/68.2/84.5 mm`；exact 恒向基线 P95 为 `6.2/7.7/12.5 mm`。该结果闭合了“角点修复确实会传递到预测”的离线因果链，但单会话不构成部署验收；采集合同、坐标根因、失败门控和全分布见[Linux 角点到局部预测 A/B](docs/linux_corner_to_local_prediction.md)。
+学习式角点修复路线已经正式终止：不再采集、训练或部署，产品继续使用现有 detector/legacy
+refinement 与 PnP 链路。角点修复不再是自瞄 B 的正式入口；后续观测器或预测器工作必须以现有
+生产观测链为基线独立验收。否决依据和资产清理边界见[角点修复网络方向否决记录](docs/corner_repair_rejected.md)。
 
 ## 5. 调试界面
 
@@ -180,10 +175,9 @@ python .\modules\autoaim\scripts\serve_debug_ui.py `
 当前优先阅读：
 
 - [PnP yaw 阶段二与 3/5/7 m 回放](docs/pnp_yaw_stage2.md)
-- [四角点联合残差网络 pilot](docs/sim_corner_residual_network.md)
+- [角点修复网络方向否决记录](docs/corner_repair_rejected.md)
 - [组合运动大规模验证](docs/combined_motion_large_scale_validation.md)
 - [组合运动 PnP 误差缩减](docs/combined_motion_pnp_error_reduction.md)
-- [Linux 角点到局部预测 A/B](docs/linux_corner_to_local_prediction.md)
 - [EKF11 与 CV 消融](docs/ekf11_cv_ablation.md)
 
 Stage3 合同与复现资料：

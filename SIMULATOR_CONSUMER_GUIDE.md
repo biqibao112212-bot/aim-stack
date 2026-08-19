@@ -7,15 +7,13 @@
 
 ## 当前操作系统支持
 
-当前正式开发和角点训练数据采集平台是 Linux（Ubuntu 24.04）。`simulator.lock.json` 锁定
-`1.3.1/linux-x86_64`；正式模拟器、SDK、TCP RGBA32 采集与 default-off 离线
-exact-corner JSONL sidecar 都必须来自该 Release。历史 Windows TensorRT 端到端结果仍可用于
-证据回溯，但不能替代 Linux 1.3.1 的兼容性、采集或性能结论。
+当前正式开发平台是 Linux（Ubuntu 24.04）。`simulator.lock.json` 锁定
+`1.3.1/linux-x86_64`；正式模拟器、SDK 和 TCP RGBA32 都必须来自该 Release。历史 Windows
+TensorRT 端到端结果仍可用于证据回溯，但不能替代 Linux 1.3.1 的兼容性或性能结论。
 
 旧 Linux Release、模拟器源码 build 目录、WSL 挂载路径和旧共享内存轮询均不属于当前锁，不能
-替代正式 Release。当前 Release 不携带或管理 TensorRT engine；Linux 角点研究先采集原图和
-严格同曝光标签，随后使用经单独验证的消费者 detector 生成 raw corners，不能把 exact corners
-偷渡为 detector/PnP/在线状态输入。
+替代正式 Release。当前 Release 不携带或管理 TensorRT engine。学习式角点修复方向已经终止；
+不得以该方向为由继续采集、训练，或把 exact corners 偷渡为 detector/PnP/在线状态输入。
 
 ## 1. 唯一依赖入口
 
@@ -48,10 +46,8 @@ exact-corner JSONL sidecar 都必须来自该 Release。历史 Windows TensorRT 
 | 场景控制 | `daedalus.scene-control/2`，UDP 5603 |
 | 运行时 IPC 根 | `/home/potato/Projects/仿真/runtime` 下的任务专用目录 |
 
-当前角点数据采集采用 Linux Release 模拟器和 localhost TCP。`--corner-labels-jsonl` 只能写到
-Release 外的新绝对 `.jsonl` 文件；它不解锁 SDK target truth。必须同时保留 raw frame、TCP identity
-ledger 和标签 JSONL；任一三元键不一致、无完整 TCP 帧或 schema/closure 失败时，样本 fail closed。
-Windows TensorRT bridge、`/mnt/d`、文件三缓冲图像和旧共享内存轮询均仅是历史资料。
+Release 的 default-off exact-corner 导出仍是模拟器公共能力，但当前消费者不再为学习式角点修复
+启动采集。Windows TensorRT bridge、`/mnt/d`、文件三缓冲图像和旧共享内存轮询均仅是历史资料。
 
 ## 3. 三张原生地图与 SDK 场景名
 
@@ -119,58 +115,6 @@ cmake -S <consumer> -B <build> -DCMAKE_BUILD_TYPE=Release \
 6. 用 `UdpGimbalClient` 向 5601/UDP 发送统一云台/发射命令；
 7. 用 `SceneControlClient` 管理地图、靶车和能量机关状态；
 8. 模拟器真值只可用于标签和验收，严禁作为神经预测器输入。
-
-### Linux exact-corner 数据采集
-
-每次采集新建一个任务专用目录；不得复用或覆盖标签文件。先启动带 labels 的模拟器：
-
-```bash
-task=/home/potato/Projects/仿真/runtime/corner-label-<session>
-mkdir -p "$task"
-cd /home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64
-./start-simulator.sh --ipc-dir "$task/talos-ipc" \
-  --corner-labels-jsonl "$task/exact-corners.jsonl"
-```
-
-第二个终端运行 Release 随附的 TCP collector；它会控制 Shooting Range #3，并在明确 opt-in 时
-为每个完整 identity 保存原始 RGBA32 帧、payload hash、raw-file hash 与 capture manifest：
-
-```bash
-python3 ./docs/capture-corner-label-experiment.py --output-dir "$task" \
-  --until-eof --linear-span-m 0.6 --save-rgba-frames
-```
-
-协调关闭模拟器并让 collector drain TCP 到 EOF 后，使用随附 validator 验证标签：
-
-```bash
-python3 ./docs/verify-corner-label-export.py "$task/exact-corners.jsonl" \
-  --tcp-identities "$task/tcp-identities.jsonl" \
-  --require-raw-frames --require-complete-z4 --require-uniform-and-excluded
-```
-
-该步骤资格化 identity—raw-frame—标签连接；它不产生 detector raw corners，也不等于 TensorRT/在线端到端性能验收。1.3.1 的 `--save-rgba-frames` 是唯一正式全帧导出；消费者 detector 只读取其 ledger 中 hash-verified raw RGBA 文件，消费者不得自行解析 TCP。
-
-### Linux 同曝光位姿研究采集
-
-需要把 PnP camera tvec 严格变换到世界/tracker 坐标时，不得用固定换轴或“最新云台姿态”代替同曝光位姿。消费者侧可构建 SDK-only 单客户端采集器：
-
-```bash
-cmake -S modules/autoaim -B /tmp/aim-stack-autoaim-pose \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_PREFIX_PATH=/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64/sdk \
-  -DAIM_SIM_WITH_ROS2=OFF -DAIM_SIM_WITH_VIVSIONN_TRT=OFF
-cmake --build /tmp/aim-stack-autoaim-pose \
-  --target aim_sim_linux_pose_frame_capture aim_sim_scene_control_cli -j2
-```
-
-`aim_sim_linux_pose_frame_capture` 只通过公开 `TcpImageClient` 和
-`TalosMetadataReader::readExposureStateForFrame` 取完整 RGBA 与同帧底盘/云台/相机位姿，不实现或复制 TCP/SHM 协议。资格化脚本为 raw payload 计算 SHA-256，生成 Release validator 可读的 ledger/manifest：
-
-```bash
-python3 scripts/qualify-linux-pose-frame-capture.py --session-dir <new-session>
-```
-
-该路径只用于需要严格坐标链的离线研究，不代替一般角点数据的 Release collector。`exposure-states.jsonl` 不含 target truth 和 future truth；它不得成为角点网络的输入，只用于复现生产 camera-to-world/tracker SE(3) 变换与评分。实测 Release 1.3.1 TCP 流不应依赖多客户端广播；不得同时启动 Release collector 与另一个 TCP 图像消费者并假定二者都能得到完整帧。
 
 ## 6. 模拟器修改审批门禁
 

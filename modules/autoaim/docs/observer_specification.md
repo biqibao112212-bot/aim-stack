@@ -19,7 +19,7 @@
 
 这是一份设计和验收合同，不授权修改当前 `RobotEstimator`、恢复预测器训练或接入火控。
 
-Python 参考实现、历史 120-run 结构回放和 Linux 1.3.1 完整 detector/repair/PnP sidecar 结果见 [因果观测器与角点修复部署域复核](causal_observer_and_corner_repair_validation.md)。
+Python 因果匿名参考实现保留为独立的观测器设计；学习式角点修复已终止，见[角点修复网络方向否决记录](corner_repair_rejected.md)。
 
 ## 2. 证据边界
 
