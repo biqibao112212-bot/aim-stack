@@ -149,6 +149,8 @@ Linux Release 不携带 TensorRT engine；缺少匹配的 Linux detector 运行�
 
 每次正式训练前必须先完成完整 session 的 train/validation/test 切分，并使用模拟器所有者发布、ledger hash 验证过的逐曝光 raw RGBA 在同一批图像上生成 raw detector corners。修复网络只接受图像 patch 与 raw corners；exact corners 只作监督/验收标签，不能作为网络输入、PnP 输入或任何在线状态字段。消费者不得自行解析 TCP 来实现全帧图像导出。
 
+Linux 1.3.1 图像角点修复已完成 session-disjoint 正式实验。当前 `v8` 候选在第二轮全新测试中四种运动模式均无退化、总体 RMS 改善 `2.55%`，但未达到预声明的 `5%` 强门，因此保留为带回退的离线研究候选，不替换现有生产 PCA/`cornerSubPix`。完整数据关联根因、网络结构、失败方法、指标和受保护证据见[Linux 1.3.1 图像角点修复正式实验](docs/corner_repair_linux_1_3_1_formal.md)。
+
 ## 5. 调试界面
 
 先运行一次自瞄任务以生成 `bridge.json` 和 `pipeline.json`，再把实际证据目录传给调试服务器。

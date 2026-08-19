@@ -122,7 +122,7 @@ def load_release_rgba(session: Path, identity: dict[str, object]) -> np.ndarray:
     return np.frombuffer(payload, dtype=np.uint8).reshape(1080, 1440, 4).copy()
 
 
-def load_session_rows(rows_path: Path, session: Path) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+def load_session_rows(rows_path: Path, session: Path, patch_fn=patch) -> tuple[dict[str, np.ndarray], dict[str, object]]:
     with rows_path.open(encoding="utf-8", newline="") as handle:
         records = list(csv.DictReader(handle))
     if not records:
@@ -133,7 +133,7 @@ def load_session_rows(rows_path: Path, session: Path) -> tuple[dict[str, np.ndar
     if not kept:
         raise ValueError("no uniform-motion rows")
     ledger = load_release_ledger(session)
-    images, geometry, targets, keys = [], [], [], []
+    images, geometry, targets, raw_corners, exact_corners, keys = [], [], [], [], [], []
     for record in kept:
         raw = corners(record, "raw")
         exact = corners(record, "exact")
@@ -144,14 +144,18 @@ def load_session_rows(rows_path: Path, session: Path) -> tuple[dict[str, np.ndar
         if record["image_file"] != str(ledger[identity]["raw_rgba_file"]):
             raise ValueError(f"detector row raw-frame path does not match Release ledger: {identity}")
         rgba = load_release_rgba(session, ledger[identity])
-        images.append(patch(rgba, raw))
+        images.append(patch_fn(rgba, raw))
         geometry.append(observable_features(raw))
         targets.append((exact - raw).reshape(-1))
+        raw_corners.append(raw)
+        exact_corners.append(exact)
         keys.append(frame)
     tensors = {
         "images": np.asarray(images, dtype=np.float32),
         "geometry": np.asarray(geometry, dtype=np.float32),
         "targets": np.asarray(targets, dtype=np.float32),
+        "raw_corners": np.asarray(raw_corners, dtype=np.float32),
+        "exact_corners": np.asarray(exact_corners, dtype=np.float32),
     }
     return tensors, {"rows_total": len(records), "rows_uniform": len(kept), "unique_frames": len(set(keys)), "keys": keys}
 

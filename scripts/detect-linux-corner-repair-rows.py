@@ -32,7 +32,13 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--output", required=True, type=Path)
     result.add_argument("--score-threshold", type=float, default=0.25)
     result.add_argument("--nms-threshold", type=float, default=0.45)
-    result.add_argument("--match-rms-px", type=float, default=80.0)
+    result.add_argument("--match-rms-px", type=float, default=25.0)
+    result.add_argument(
+        "--minimum-frame-seq",
+        type=int,
+        default=0,
+        help="exclude frames before a recorded Scene Control geometry/motion commit boundary",
+    )
     result.add_argument("--provider", choices=("cpu", "cuda"), default="cpu")
     result.add_argument(
         "--max-labeled-exposures",
@@ -144,7 +150,9 @@ def main() -> None:
             if key not in ledger:
                 raise ValueError(f"label lacks a stored TCP image: {key}")
             label_rows.setdefault(key, []).append(row)
-    keys = sorted(label_rows)
+    if args.minimum_frame_seq < 0:
+        raise ValueError("--minimum-frame-seq must be non-negative")
+    keys = [key for key in sorted(label_rows) if key[1] >= args.minimum_frame_seq]
     if args.sample_stride <= 0:
         raise ValueError("--sample-stride must be positive")
     keys = keys[::args.sample_stride]
