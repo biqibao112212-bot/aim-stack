@@ -30,6 +30,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root", required=True, type=Path)
     parser.add_argument("--release", required=True, type=Path)
     parser.add_argument("--scene-cli", required=True, type=Path)
+    parser.add_argument("--pose-capture", type=Path,
+                        help="SDK-only single-client RGBA + exposure collector")
+    parser.add_argument("--pose-qualifier", type=Path,
+                        help="qualifier used with --pose-capture")
     parser.add_argument("--split", choices=("train", "validation", "test"), action="append")
     parser.add_argument("--session-id", action="append", help="collect only this declared session id")
     parser.add_argument("--timeout-s", type=float, default=90.0)
@@ -114,6 +118,11 @@ def stop_owned_process(process: subprocess.Popen[bytes], timeout_s: float) -> No
 def session_result(session_dir: Path, planned: dict[str, object], first_eligible: int,
                    validator_stdout: str, scene_stdout: str) -> dict[str, object]:
     capture = json.loads((session_dir / "capture-manifest.json").read_text(encoding="utf-8"))
+    artifact_names = ["capture-manifest.json", "tcp-identities.jsonl", "exact-corners.jsonl"]
+    artifact_names.extend(
+        name for name in ("exposure-states.jsonl", "exposure-manifest.json")
+        if (session_dir / name).exists()
+    )
     return {
         "schema_version": "aim-stack.corner-repair-session-result/1",
         "planned": planned,
@@ -121,7 +130,7 @@ def session_result(session_dir: Path, planned: dict[str, object], first_eligible
         "capture": capture,
         "artifacts": {
             name: {"sha256": sha256(session_dir / name), "bytes": (session_dir / name).stat().st_size}
-            for name in ("capture-manifest.json", "tcp-identities.jsonl", "exact-corners.jsonl")
+            for name in artifact_names
         },
         "scene_control_stdout": scene_stdout,
         "validator_stdout": validator_stdout,
@@ -130,7 +139,8 @@ def session_result(session_dir: Path, planned: dict[str, object], first_eligible
 
 
 def collect_one(session_dir: Path, planned: dict[str, object], target_frames: int,
-                release: Path, scene_cli: Path, timeout_s: float) -> dict[str, object]:
+                release: Path, scene_cli: Path, timeout_s: float,
+                pose_capture: Path | None, pose_qualifier: Path | None) -> dict[str, object]:
     session_dir.mkdir(parents=False)
     (session_dir / "talos-ipc").mkdir()
     simulator_log = (session_dir / "simulator.log").open("xb")
@@ -144,15 +154,22 @@ def collect_one(session_dir: Path, planned: dict[str, object], target_frames: in
             stdout=simulator_log, stderr=subprocess.STDOUT, start_new_session=True,
         )
         wait_for_tcp_listener(simulator, timeout_s)
-        collector_command = [
-            sys.executable, str(release / "docs/capture-corner-label-experiment.py"),
-            "--output-dir", str(session_dir), "--until-eof", "--save-rgba-frames",
-            "--motion-mode", str(planned["mode"]),
-            "--direction-deg", str(planned["direction_deg"]),
-            "--linear-speed-mps", str(planned["linear_speed_mps"]),
-            "--linear-span-m", str(planned["linear_span_m"]),
-            "--spin-deg-s", str(planned["spin_deg_s"]),
-        ]
+        if pose_capture is None:
+            collector_command = [
+                sys.executable, str(release / "docs/capture-corner-label-experiment.py"),
+                "--output-dir", str(session_dir), "--until-eof", "--save-rgba-frames",
+                "--motion-mode", str(planned["mode"]),
+                "--direction-deg", str(planned["direction_deg"]),
+                "--linear-speed-mps", str(planned["linear_speed_mps"]),
+                "--linear-span-m", str(planned["linear_span_m"]),
+                "--spin-deg-s", str(planned["spin_deg_s"]),
+            ]
+        else:
+            collector_command = [
+                str(pose_capture), "--ipc-dir", str(session_dir / "talos-ipc"),
+                "--output-dir", str(session_dir), "--tcp-host", "127.0.0.1",
+                "--tcp-port", "5602", "--until-eof",
+            ]
         collector = subprocess.Popen(
             collector_command, stdout=collector_log, stderr=subprocess.STDOUT, start_new_session=True,
         )
@@ -189,6 +206,15 @@ def collect_one(session_dir: Path, planned: dict[str, object], target_frames: in
         collector.wait(timeout=30.0)
         if collector.returncode != 0:
             raise RuntimeError(f"collector failed: {collector.returncode}")
+        if pose_capture is not None:
+            assert pose_qualifier is not None
+            qualified = subprocess.run(
+                [sys.executable, str(pose_qualifier), "--session-dir", str(session_dir)],
+                check=False, capture_output=True, text=True, timeout=timeout_s,
+            )
+            write_new_text(session_dir / "pose-qualifier.log", qualified.stdout + qualified.stderr)
+            if qualified.returncode != 0:
+                raise RuntimeError(f"pose capture qualification failed: {qualified.returncode}")
         verifier = [
             sys.executable, str(release / "docs/verify-corner-label-export.py"),
             str(session_dir / "exact-corners.jsonl"), "--tcp-identities",
@@ -256,6 +282,10 @@ def main() -> None:
     plan_path = args.plan.resolve(strict=True)
     release = args.release.resolve(strict=True)
     scene_cli = args.scene_cli.resolve(strict=True)
+    if (args.pose_capture is None) != (args.pose_qualifier is None):
+        raise ValueError("--pose-capture and --pose-qualifier must be provided together")
+    pose_capture = args.pose_capture.resolve(strict=True) if args.pose_capture else None
+    pose_qualifier = args.pose_qualifier.resolve(strict=True) if args.pose_qualifier else None
     output_root = args.output_root.resolve()
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if plan.get("schema_version") != "aim-stack.corner-repair-formal-plan/1":
@@ -309,7 +339,7 @@ def main() -> None:
         print(f"collecting {planned['id']} split={planned['split']} mode={planned['mode']}", flush=True)
         results[planned["id"]] = collect_one(
             session_dir, planned, int(plan["target_complete_frames_per_session"]),
-            release, scene_cli, args.timeout_s,
+            release, scene_cli, args.timeout_s, pose_capture, pose_qualifier,
         )
         write_manifest(manifest_path, {
             "schema_version": SCHEMA, "plan_sha256": sha256(plan_path), "sessions": results,

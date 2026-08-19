@@ -19,6 +19,7 @@ option(AIM_SIM_BUILD_PNP_CANDIDATE_TESTS "Build deterministic planar PnP candida
 option(AIM_SIM_BUILD_TCP_IMAGE_TESTS "Build deterministic raw TCP image receiver tests" ON)
 option(AIM_SIM_BUILD_ARMOR_ASYNC_SCHEDULER_TESTS "Build deterministic armor async scheduler tests" ON)
 option(AIM_SIM_BUILD_SCENE_CONTROL_CLI "Build the SDK-only dynamic shooting-range control CLI" ON)
+option(AIM_SIM_BUILD_LINUX_POSE_CAPTURE "Build the SDK-only Linux RGBA and exposure-pose collector" ON)
 option(AIM_SIM_TCP_IMAGE_TEST_SANITIZERS "Enable ASan/UBSan for raw TCP receiver tests" OFF)
 
 find_package(Eigen3 REQUIRED)
@@ -232,6 +233,18 @@ if(UNIX)
     )
     target_link_libraries(aim_sim_scene_control_cli PRIVATE
       DaedalusSimSdk::DaedalusSimSdk
+    )
+  endif()
+
+  if(AIM_SIM_BUILD_LINUX_POSE_CAPTURE)
+    add_executable(aim_sim_linux_pose_frame_capture
+      src/sim_adapter/linux_pose_frame_capture.cpp
+    )
+    target_link_libraries(aim_sim_linux_pose_frame_capture PRIVATE
+      DaedalusSimSdk::DaedalusSimSdk
+    )
+    target_compile_options(aim_sim_linux_pose_frame_capture PRIVATE
+      -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Werror
     )
   endif()
 endif()

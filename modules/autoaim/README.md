@@ -151,6 +151,8 @@ Linux Release 不携带 TensorRT engine；缺少匹配的 Linux detector 运行�
 
 Linux 1.3.1 图像角点修复已完成 session-disjoint 正式实验。当前 `v8` 候选在第二轮全新测试中四种运动模式均无退化、总体 RMS 改善 `2.55%`，但未达到预声明的 `5%` 强门，因此保留为带回退的离线研究候选，不替换现有生产 PCA/`cornerSubPix`。完整数据关联根因、网络结构、失败方法、指标和受保护证据见[Linux 1.3.1 图像角点修复正式实验](docs/corner_repair_linux_1_3_1_formal.md)。
 
+在不重新选择模型的前提下，又完成了一条 Linux 1.3.1 同曝光位姿的 post-test 开发 A/B：冻结修复器在同 IPPE、同坐标链和同 `400 ms` LOS 预测器下，将 50/100/200 ms mean cross-depth 误差从 `111.1/119.5/147.8 mm` 降到 `59.4/68.2/84.5 mm`；exact 恒向基线 P95 为 `6.2/7.7/12.5 mm`。该结果闭合了“角点修复确实会传递到预测”的离线因果链，但单会话不构成部署验收；采集合同、坐标根因、失败门控和全分布见[Linux 角点到局部预测 A/B](docs/linux_corner_to_local_prediction.md)。
+
 ## 5. 调试界面
 
 先运行一次自瞄任务以生成 `bridge.json` 和 `pipeline.json`，再把实际证据目录传给调试服务器。
@@ -181,6 +183,7 @@ python .\modules\autoaim\scripts\serve_debug_ui.py `
 - [四角点联合残差网络 pilot](docs/sim_corner_residual_network.md)
 - [组合运动大规模验证](docs/combined_motion_large_scale_validation.md)
 - [组合运动 PnP 误差缩减](docs/combined_motion_pnp_error_reduction.md)
+- [Linux 角点到局部预测 A/B](docs/linux_corner_to_local_prediction.md)
 - [EKF11 与 CV 消融](docs/ekf11_cv_ablation.md)
 
 Stage3 合同与复现资料：

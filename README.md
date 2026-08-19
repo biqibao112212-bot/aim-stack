@@ -83,8 +83,9 @@ Linux 允许：
 - 用 Release collector 的 `--save-rgba-frames --until-eof` 采集受保护的逐曝光 RGBA、identity
   ledger、capture manifest 与 exact-corner JSONL，并验证其闭合；
 - 在完成 detector 运行时验证及完整 session 切分后训练离线、image-conditioned 四角修复器。
+- 对需要完整 PnP 坐标链的离线研究，用 SDK-only 单客户端同时保存 RGBA 和 `readExposureStateForFrame` 同曝光位姿，并使用仓库资格化脚本生成 hash ledger。
 
-Linux Release 不携带 TensorRT engine，也不通过 SDK 发布 target truth。1.3.1 collector 是模拟器拥有的版本化全帧导出；消费者只读取其 hash-verified raw RGBA 文件，绝不自行实现 TCP 保存全帧。任何在线 detector/PnP/
+Linux Release 不携带 TensorRT engine，也不通过 SDK 发布 target truth。1.3.1 collector 是模拟器拥有的普通角点数据全帧导出；需要同曝光位姿的研究采集只能使用公开 SDK `TcpImageClient`/`TalosMetadataReader`，不得自行实现或复制 TCP/SHM 协议。任何在线 detector/PnP/
 observer/predictor/fire-control 集成须通过各自的独立验收，不能从标签导出或历史 Windows 结果推断。
 
 ## 当前模块

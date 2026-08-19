@@ -150,6 +150,28 @@ python3 ./docs/verify-corner-label-export.py "$task/exact-corners.jsonl" \
 
 该步骤资格化 identity—raw-frame—标签连接；它不产生 detector raw corners，也不等于 TensorRT/在线端到端性能验收。1.3.1 的 `--save-rgba-frames` 是唯一正式全帧导出；消费者 detector 只读取其 ledger 中 hash-verified raw RGBA 文件，消费者不得自行解析 TCP。
 
+### Linux 同曝光位姿研究采集
+
+需要把 PnP camera tvec 严格变换到世界/tracker 坐标时，不得用固定换轴或“最新云台姿态”代替同曝光位姿。消费者侧可构建 SDK-only 单客户端采集器：
+
+```bash
+cmake -S modules/autoaim -B /tmp/aim-stack-autoaim-pose \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_PREFIX_PATH=/home/potato/Projects/仿真/releases/daedalus-simulator/1.3.1/linux-x86_64/sdk \
+  -DAIM_SIM_WITH_ROS2=OFF -DAIM_SIM_WITH_VIVSIONN_TRT=OFF
+cmake --build /tmp/aim-stack-autoaim-pose \
+  --target aim_sim_linux_pose_frame_capture aim_sim_scene_control_cli -j2
+```
+
+`aim_sim_linux_pose_frame_capture` 只通过公开 `TcpImageClient` 和
+`TalosMetadataReader::readExposureStateForFrame` 取完整 RGBA 与同帧底盘/云台/相机位姿，不实现或复制 TCP/SHM 协议。资格化脚本为 raw payload 计算 SHA-256，生成 Release validator 可读的 ledger/manifest：
+
+```bash
+python3 scripts/qualify-linux-pose-frame-capture.py --session-dir <new-session>
+```
+
+该路径只用于需要严格坐标链的离线研究，不代替一般角点数据的 Release collector。`exposure-states.jsonl` 不含 target truth 和 future truth；它不得成为角点网络的输入，只用于复现生产 camera-to-world/tracker SE(3) 变换与评分。实测 Release 1.3.1 TCP 流不应依赖多客户端广播；不得同时启动 Release collector 与另一个 TCP 图像消费者并假定二者都能得到完整帧。
+
 ## 6. 模拟器修改审批门禁
 
 自瞄调试中发现模拟器 bug 或新增需求时：
