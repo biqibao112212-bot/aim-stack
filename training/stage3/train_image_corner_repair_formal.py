@@ -39,6 +39,15 @@ WEIGHT_DECAY = 1.0e-4
 PATIENCE = 8
 SEED = 1701
 CONTEXT_SCALE = 1.5
+RELIABILITY_ARCHITECTURES = {
+    "v3-context-spatial-reliability",
+    "v4-corner-heatmap-reliability",
+    "v5-corner-heatmap-prior-reliability",
+}
+HEATMAP_ARCHITECTURES = {
+    "v4-corner-heatmap-reliability",
+    "v5-corner-heatmap-prior-reliability",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument(
         "--architecture",
-        choices=("v1-global", "v2-context-spatial", "v3-context-spatial-reliability", "v4-corner-heatmap-reliability"),
+        choices=("v1-global", "v2-context-spatial", "v3-context-spatial-reliability", "v4-corner-heatmap-reliability", "v5-corner-heatmap-prior-reliability"),
         default="v1-global",
     )
     parser.add_argument("--minimum-detector-score", type=float)
@@ -325,6 +334,70 @@ class CornerHeatmapReliabilityNet(nn.Module):
         return self.forward_with_logits(image, geometry, detector_score)[0]
 
 
+class CornerHeatmapPriorReliabilityNet(CornerHeatmapReliabilityNet):
+    """Spatial corner head with a zero-correction Gaussian anchor prior."""
+
+    family = "image-context-unet-four-corner-anchor-prior-heatmap-with-reliability-v5"
+    PRIOR_SIGMA_PX = 2.0
+    TARGET_SIGMA_PX = 1.5
+
+    def __init__(self) -> None:
+        super().__init__()
+        nn.init.zeros_(self.heatmaps.weight)
+        nn.init.zeros_(self.heatmaps.bias)
+        grid_x_px = self.grid_x.reshape(PATCH_HEIGHT, PATCH_WIDTH) * PATCH_WIDTH
+        grid_y_px = self.grid_y.reshape(PATCH_HEIGHT, PATCH_WIDTH) * PATCH_HEIGHT
+        anchor_x_px = self.anchors[:, 0] * PATCH_WIDTH
+        anchor_y_px = self.anchors[:, 1] * PATCH_HEIGHT
+        prior = -(
+            torch.square(grid_x_px[None] - anchor_x_px[:, None, None])
+            + torch.square(grid_y_px[None] - anchor_y_px[:, None, None])
+        ) / (2.0 * self.PRIOR_SIGMA_PX**2)
+        probability = torch.softmax(prior.flatten(1), dim=1)
+        baseline_x = torch.sum(probability * self.grid_x[None], dim=1)
+        baseline_y = torch.sum(probability * self.grid_y[None], dim=1)
+        self.register_buffer("anchor_logit_prior", prior)
+        self.register_buffer(
+            "prior_baseline_coordinates", torch.stack((baseline_x, baseline_y), dim=1)
+        )
+
+    def target_distribution(self, correction: torch.Tensor) -> torch.Tensor:
+        coordinates = self.anchors[None] + correction.reshape(-1, 4, 2)
+        center_x = coordinates[:, :, 0] * PATCH_WIDTH
+        center_y = coordinates[:, :, 1] * PATCH_HEIGHT
+        grid_x = self.grid_x.reshape(1, 1, PATCH_HEIGHT, PATCH_WIDTH) * PATCH_WIDTH
+        grid_y = self.grid_y.reshape(1, 1, PATCH_HEIGHT, PATCH_WIDTH) * PATCH_HEIGHT
+        logits = -(
+            torch.square(grid_x - center_x[:, :, None, None])
+            + torch.square(grid_y - center_y[:, :, None, None])
+        ) / (2.0 * self.TARGET_SIGMA_PX**2)
+        return torch.softmax(logits.flatten(2), dim=2)
+
+    def forward_with_logits(
+        self, image: torch.Tensor, geometry: torch.Tensor, detector_score: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        enc1 = self.enc1(image)
+        enc2 = self.enc2(F.max_pool2d(enc1, 2))
+        enc3 = self.enc3(F.max_pool2d(enc2, 2))
+        bottleneck = self.bottleneck(F.max_pool2d(enc3, 2))
+        bottleneck = bottleneck + self.geometry_to_bottleneck(geometry)[:, :, None, None]
+        dec3 = self.dec3(torch.cat((F.interpolate(bottleneck, size=enc3.shape[-2:], mode="bilinear", align_corners=False), enc3), dim=1))
+        dec2 = self.dec2(torch.cat((F.interpolate(dec3, size=enc2.shape[-2:], mode="bilinear", align_corners=False), enc2), dim=1))
+        dec1 = self.dec1(torch.cat((F.interpolate(dec2, size=enc1.shape[-2:], mode="bilinear", align_corners=False), enc1), dim=1))
+        logits = self.heatmaps(dec1) + self.anchor_logit_prior[None]
+        probability = torch.softmax(logits.flatten(2), dim=2)
+        x = torch.sum(probability * self.grid_x[None, None], dim=2)
+        y = torch.sum(probability * self.grid_y[None, None], dim=2)
+        coordinates = torch.stack((x, y), dim=2)
+        correction = (coordinates - self.prior_baseline_coordinates[None]).flatten(1)
+        pooled = torch.mean(bottleneck, dim=(2, 3))
+        correction_rms = torch.sqrt(torch.mean(torch.square(correction), dim=1, keepdim=True) + 1.0e-12)
+        reliability = self.reliability(
+            torch.cat((pooled, geometry, detector_score.reshape(-1, 1), correction_rms), dim=1)
+        )
+        return torch.cat((correction, reliability), dim=1), logits
+
+
 def rms(values: np.ndarray) -> float:
     return float(np.sqrt(np.mean(np.square(values))))
 
@@ -333,7 +406,7 @@ def improvement(raw: float, repaired: float) -> float:
     return (raw - repaired) / raw if raw > 0 else 0.0
 
 
-def verified_manifest(path: Path) -> tuple[dict[str, object], dict[str, float]]:
+def verified_manifest(path: Path) -> tuple[dict[str, object], dict[str, float] | None]:
     resolved = path.resolve(strict=True)
     value = json.loads(resolved.read_text(encoding="utf-8"))
     if value.get("schema_version") != "aim-stack.corner-repair-detector-dataset/1":
@@ -347,7 +420,11 @@ def verified_manifest(path: Path) -> tuple[dict[str, object], dict[str, float]]:
     if digest(Path(str(value["detector_model"]))) != value["detector_model_sha256"]:
         raise ValueError(f"detector model changed after dataset build: {resolved}")
     plan = json.loads(Path(str(value["plan"])).read_text(encoding="utf-8"))
-    gate = plan["split_policy"]["validation_gate"]
+    gate = plan["split_policy"].get("validation_gate")
+    if gate is None:
+        if set(value["splits"]) == {"train"}:
+            return value, None
+        raise ValueError(f"validation-bearing formal plan lacks validation_gate: {resolved}")
     return value, {
         "minimum_aggregate_rms_improvement_fraction": float(gate["minimum_aggregate_rms_improvement_fraction"]),
         "maximum_per_mode_rms_regression_fraction": float(gate["maximum_per_mode_rms_regression_fraction"]),
@@ -390,7 +467,8 @@ def main() -> None:
         path = supplied.resolve(strict=True)
         value, gate = verified_manifest(path)
         manifests.append((path, value))
-        gates.append(gate)
+        if gate is not None:
+            gates.append(gate)
         detector_hashes.add(str(value["detector_model_sha256"]))
         if "match_rms_px" not in value:
             raise ValueError(f"formal dataset does not declare detector-to-truth association gate: {path}")
@@ -399,6 +477,8 @@ def main() -> None:
         raise ValueError("all formal datasets must use the same frozen detector")
     if len(association_gates) != 1:
         raise ValueError("all formal datasets must use the same detector-to-truth association gate")
+    if not gates:
+        raise ValueError("formal training requires at least one validation-bearing declared gate")
     if any(gate != gates[0] for gate in gates[1:]):
         raise ValueError("all formal plans must predeclare identical validation gates")
 
@@ -434,7 +514,7 @@ def main() -> None:
                 })
                 continue
             patch_fn = context_patch if args.architecture in {
-                "v2-context-spatial", "v3-context-spatial-reliability", "v4-corner-heatmap-reliability"
+                "v2-context-spatial", *RELIABILITY_ARCHITECTURES
             } else None
             loaded, source = load_session_rows(rows_path, session_dir, **({"patch_fn": patch_fn} if patch_fn else {}))
             with rows_path.open(encoding="utf-8", newline="") as handle:
@@ -503,7 +583,7 @@ def main() -> None:
     geometry_std = np.maximum(values["geometry"][train_mask].std(0), 1.0e-6)
     standardized_geometry = (values["geometry"] - geometry_mean) / geometry_std
     standardized_targets = (model_targets - target_mean) / target_std
-    training_targets = model_targets if args.architecture == "v4-corner-heatmap-reliability" else standardized_targets
+    training_targets = model_targets if args.architecture in HEATMAP_ARCHITECTURES else standardized_targets
     reliability_threshold_px = 4.0
     reliability_labels = (
         np.sqrt(np.mean(np.square(values["targets"]), axis=1)) >= reliability_threshold_px
@@ -525,14 +605,15 @@ def main() -> None:
     validation_targets = torch.from_numpy(training_targets[validation_mask]).to(device)
     validation_scores = torch.from_numpy(detector_scores_array[validation_mask]).to(device)
     validation_reliability = torch.from_numpy(reliability_labels[validation_mask]).to(device)
-    if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+    if args.architecture in RELIABILITY_ARCHITECTURES:
         if args.minimum_detector_score is not None or args.minimum_predicted_correction_rms_px is not None:
             raise ValueError("reliability architectures use their frozen head instead of external thresholds")
-        model = (
-            CornerHeatmapReliabilityNet()
-            if args.architecture == "v4-corner-heatmap-reliability"
-            else ContextSpatialReliabilityNet()
-        )
+        if args.architecture == "v4-corner-heatmap-reliability":
+            model = CornerHeatmapReliabilityNet()
+        elif args.architecture == "v5-corner-heatmap-prior-reliability":
+            model = CornerHeatmapPriorReliabilityNet()
+        else:
+            model = ContextSpatialReliabilityNet()
     elif args.architecture == "v2-context-spatial":
         model = ContextSpatialResidualNet()
     else:
@@ -558,28 +639,43 @@ def main() -> None:
             batch_score = batch_score.to(device)
             batch_reliability = batch_reliability.to(device)
             optimizer.zero_grad(set_to_none=True)
-            if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
-                if args.architecture == "v4-corner-heatmap-reliability":
+            if args.architecture in RELIABILITY_ARCHITECTURES:
+                if args.architecture in HEATMAP_ARCHITECTURES:
                     network_output, heatmap_logits = model.forward_with_logits(batch_image, batch_geometry, batch_score)
                     correction_loss = F.smooth_l1_loss(network_output[:, :8], batch_target, beta=0.01)
-                    target_coordinates = (batch_target.reshape(-1, 4, 2) + model.anchors[None]).detach()
-                    target_x = torch.clamp(
-                        torch.round(target_coordinates[:, :, 0] * PATCH_WIDTH), 0, PATCH_WIDTH - 1
-                    ).long()
-                    target_y = torch.clamp(
-                        torch.round(target_coordinates[:, :, 1] * PATCH_HEIGHT), 0, PATCH_HEIGHT - 1
-                    ).long()
-                    target_index = target_y * PATCH_WIDTH + target_x
-                    heatmap_loss = F.cross_entropy(
-                        heatmap_logits.flatten(2).reshape(-1, PATCH_WIDTH * PATCH_HEIGHT),
-                        target_index.reshape(-1),
-                    )
+                    if args.architecture == "v5-corner-heatmap-prior-reliability":
+                        target_probability = model.target_distribution(batch_target).detach()
+                        heatmap_loss = torch.mean(
+                            torch.sum(
+                                -target_probability
+                                * F.log_softmax(heatmap_logits.flatten(2), dim=2),
+                                dim=2,
+                            )
+                        )
+                    else:
+                        target_coordinates = (batch_target.reshape(-1, 4, 2) + model.anchors[None]).detach()
+                        target_x = torch.clamp(
+                            torch.round(target_coordinates[:, :, 0] * PATCH_WIDTH), 0, PATCH_WIDTH - 1
+                        ).long()
+                        target_y = torch.clamp(
+                            torch.round(target_coordinates[:, :, 1] * PATCH_HEIGHT), 0, PATCH_HEIGHT - 1
+                        ).long()
+                        target_index = target_y * PATCH_WIDTH + target_x
+                        heatmap_loss = F.cross_entropy(
+                            heatmap_logits.flatten(2).reshape(-1, PATCH_WIDTH * PATCH_HEIGHT),
+                            target_index.reshape(-1),
+                        )
                 else:
                     network_output = model(batch_image, batch_geometry, batch_score)
                     correction_loss = torch.mean(torch.square(network_output[:, :8] - batch_target))
                     heatmap_loss = torch.zeros((), dtype=correction_loss.dtype)
                 reliability_loss = reliability_loss_fn(network_output[:, 8], batch_reliability)
-                loss = correction_loss + 0.05 * heatmap_loss + 0.25 * reliability_loss
+                heatmap_weight = (
+                    0.1
+                    if args.architecture == "v5-corner-heatmap-prior-reliability"
+                    else 0.05
+                )
+                loss = correction_loss + heatmap_weight * heatmap_loss + 0.25 * reliability_loss
             else:
                 loss = torch.mean(torch.square(model(batch_image, batch_geometry) - batch_target))
             loss.backward()
@@ -587,11 +683,11 @@ def main() -> None:
             training_losses.append(float(loss.item()))
         model.eval()
         with torch.no_grad():
-            if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+            if args.architecture in RELIABILITY_ARCHITECTURES:
                 validation_output = model(validation_images, validation_geometry, validation_scores)
                 validation_correction_loss = (
                     F.smooth_l1_loss(validation_output[:, :8], validation_targets, beta=0.01)
-                    if args.architecture == "v4-corner-heatmap-reliability"
+                    if args.architecture in HEATMAP_ARCHITECTURES
                     else torch.mean(torch.square(validation_output[:, :8] - validation_targets))
                 )
                 validation_reliability_loss = reliability_loss_fn(validation_output[:, 8], validation_reliability)
@@ -614,7 +710,7 @@ def main() -> None:
     model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+        if args.architecture in RELIABILITY_ARCHITECTURES:
             network_output = model(
                 torch.from_numpy(values["images"]).to(device),
                 torch.from_numpy(standardized_geometry).to(device),
@@ -628,7 +724,7 @@ def main() -> None:
                 torch.from_numpy(standardized_geometry).to(device),
             ).cpu().numpy()
             reliability_probability = np.ones(len(predicted), dtype=np.float32)
-    if args.architecture != "v4-corner-heatmap-reliability":
+    if args.architecture not in HEATMAP_ARCHITECTURES:
         predicted = predicted * target_std + target_mean
     predicted_full = (
         normalized_context_predictions_to_full(values["raw_corners"], predicted)
@@ -636,7 +732,7 @@ def main() -> None:
     )
     predicted_correction_rms = np.sqrt(np.mean(np.square(predicted_full), axis=1))
     apply_repair = np.ones(len(predicted), dtype=bool)
-    if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+    if args.architecture in RELIABILITY_ARCHITECTURES:
         apply_repair &= reliability_probability >= 0.5
     if args.minimum_detector_score is not None:
         if not 0.0 <= args.minimum_detector_score <= 1.0:
@@ -672,7 +768,7 @@ def main() -> None:
     reliability_balanced_accuracy = 0.5 * (true_positive_rate + true_negative_rate)
     reliability_passed = (
         reliability_balanced_accuracy >= 0.65
-        if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"} else True
+        if args.architecture in RELIABILITY_ARCHITECTURES else True
     )
 
     model.to("cpu")
@@ -687,9 +783,9 @@ def main() -> None:
         "minimum_predicted_correction_rms_px": args.minimum_predicted_correction_rms_px,
         "target_space": args.target_space, "target_mean": target_mean, "target_std": target_std,
         "target_definition": args.target_definition,
-        "output_standardized": args.architecture != "v4-corner-heatmap-reliability",
+        "output_standardized": args.architecture not in HEATMAP_ARCHITECTURES,
         "reliability": {
-            "enabled": args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"},
+            "enabled": args.architecture in RELIABILITY_ARCHITECTURES,
             "raw_coordinate_rms_threshold_px": reliability_threshold_px,
             "application_probability_threshold": 0.5,
         },
@@ -718,7 +814,7 @@ def main() -> None:
                 "rejected_behavior": "return raw detector corners unchanged",
                 "truth_input": False, "motion_input": False,
                 "reliability_probability_threshold": (
-                    0.5 if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"} else None
+                    0.5 if args.architecture in RELIABILITY_ARCHITECTURES else None
                 ),
             },
             "geometry_input": "raw-detector-only-15d",
@@ -735,9 +831,15 @@ def main() -> None:
             "repair_applied_validation_rows": int(np.sum(apply_repair & validation_mask)),
             "history": history,
             "reliability_loss_weight": (
-                0.25 if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"} else None
+                0.25 if args.architecture in RELIABILITY_ARCHITECTURES else None
             ),
-            "heatmap_cross_entropy_weight": 0.05 if args.architecture == "v4-corner-heatmap-reliability" else None,
+            "heatmap_loss_weight": (
+                0.1
+                if args.architecture == "v5-corner-heatmap-prior-reliability"
+                else 0.05
+                if args.architecture == "v4-corner-heatmap-reliability"
+                else None
+            ),
             "reliability_positive_class_weight": float(reliability_pos_weight.item()),
         },
         "detector_applicability": applicability,
@@ -750,7 +852,7 @@ def main() -> None:
             "true_negative_rate": true_negative_rate,
             "balanced_accuracy": reliability_balanced_accuracy,
             "minimum_balanced_accuracy": (
-                0.65 if args.architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"} else None
+                0.65 if args.architecture in RELIABILITY_ARCHITECTURES else None
             ),
         },
         "validation_gate_components": {

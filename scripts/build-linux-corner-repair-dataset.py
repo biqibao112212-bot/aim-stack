@@ -23,6 +23,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", required=True, type=Path)
     parser.add_argument("--detector-script", required=True, type=Path)
     parser.add_argument("--split", choices=("train", "validation", "test"), action="append")
+    parser.add_argument(
+        "--session-id",
+        action="append",
+        help="build only these declared, qualified session ids; failed protected siblings remain excluded",
+    )
     parser.add_argument("--test-authorization", type=Path)
     parser.add_argument("--match-rms-px", type=float, default=25.0)
     parser.add_argument("--artifact-tag", default="match25-v2")
@@ -107,6 +112,11 @@ def main() -> None:
     if sha256(model) != plan["detector_model_sha256"]:
         raise ValueError("detector model does not match the predeclared plan")
     splits = set(args.split or ("train", "validation"))
+    requested_ids = set(args.session_id or ())
+    declared_ids = {str(item["id"]) for item in plan["sessions"]}
+    unknown_ids = requested_ids - declared_ids
+    if unknown_ids:
+        raise ValueError(f"unknown --session-id values: {sorted(unknown_ids)}")
     if "test" in splits and args.test_authorization is None:
         raise PermissionError("test rows require --test-authorization from a passing validation gate")
     if args.test_authorization is not None and "test" not in splits:
@@ -118,6 +128,8 @@ def main() -> None:
     entries: list[dict[str, object]] = []
     for planned in plan["sessions"]:
         if planned["split"] not in splits:
+            continue
+        if requested_ids and planned["id"] not in requested_ids:
             continue
         session_dir = root / planned["id"]
         result_path = session_dir / "session-result.json"
@@ -151,7 +163,12 @@ def main() -> None:
             "rows": row_summary,
         }
         entries.append(entry)
-    expected = sum(1 for item in plan["sessions"] if item["split"] in splits)
+    expected = sum(
+        1
+        for item in plan["sessions"]
+        if item["split"] in splits
+        and (not requested_ids or item["id"] in requested_ids)
+    )
     if len(entries) != expected:
         raise ValueError(f"expected {expected} declared sessions, built {len(entries)}")
     prefix = "test-detector-dataset-manifest" if splits == {"test"} else "detector-dataset-manifest"
@@ -162,6 +179,7 @@ def main() -> None:
         "detector_script_sha256": sha256(detector_script), "detector_model": str(model),
         "detector_model_sha256": sha256(model), "match_rms_px": args.match_rms_px,
         "artifact_tag": args.artifact_tag, "splits": sorted(splits), "sessions": entries,
+        "selected_session_ids": sorted(requested_ids) if requested_ids else None,
         "test_accessed": "test" in splits, "test_authorization": authorization,
     })
     print(json.dumps({"manifest": str(output), "sessions": len(entries), "splits": sorted(splits)}, indent=2))

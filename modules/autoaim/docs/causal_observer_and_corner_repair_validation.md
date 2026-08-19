@@ -125,3 +125,39 @@ runtime 特征共 67 维，包括 raw 15D 四边形、归一化 8D proposal、de
 3. 先比较确定性 veto、正则线性 gate 和小 MLP，不训练更大网络；
 4. 方法和阈值冻结后再采全新 validation；
 5. 只有新 validation 通过才能开启 sealed test，然后再做 repaired-corners -> unchanged IPPE -> frozen 400 ms predictor 同锚点 A/B。
+
+## 后续 balanced development 扩展（2026-08-19）
+
+为解开 motion/view/scale 共线，后续预声明 8 个 train-only 交叉单元，覆盖 stationary/linear/spin/combined、radial scale 0.9/1.1、linear direction 0/90 deg 和 spin +/-90 deg/s。所有会话均来自 Linux Release 1.3.1；两条 pose-aware 采集在关闭边界出现 label/image identity 不闭合，一条 Release collector 在目标帧数前退出，失败资产全部保留，以新 ID 重采，未修补原证据。
+
+最终 8 个单元均有资格化替代会话，但 detector 支持并不平衡：
+
+| cell | matched rows |
+| --- | ---: |
+| stationary r0.90 / r1.10 | 0 / 598 |
+| linear d0 r0.90 / d90 r1.10 | 1 / 390 |
+| spin +90 r0.90 / -90 r1.10 | 7 / 401 |
+| combined d90 +90 r0.90 / d0 -90 r1.10 | 8 / 357 |
+
+计划交叉不等于有效图像支持交叉。零/低覆盖 cell 保留为 detector applicability 证据，不重采到“看起来平衡”，也不当 repair 负样本。
+
+在原数据上加入 1,762 条新合格行后，v3 同结构三种子开发训练结果为：
+
+| seed | aggregate RMS improvement | linear improvement | reliability balanced accuracy | gate |
+| --- | ---: | ---: | ---: | --- |
+| 4801 | 13.35% | -2.72% | 85.95% | fail |
+| 5801 | 12.60% | -7.37% | 84.38% | fail |
+| 6801 | 12.16% | -14.37% | 84.02% | fail |
+
+seed 4801 仅作 method-development proposer 重放。其二级 linear/MLP benefit gate 仍选择 reject-all；8,000 组只使用 runtime 的径向/横向/ray/width/area/reliability 阈值确定性 veto 网格也没有找到部署候选。
+
+图像叠加显示，目标装甲在 1440x1080 原图中常只有约 20 px 宽，raw/exact 常只差 1--2 px，v3 却可放大宽度 15--27%，对 IPPE 造成 200--400 mm 深度跳变。保留图在 `runtime/corner-repair-balanced-proposer-overlays-v2-20260819`。
+
+随后实现的 `v5-corner-heatmap-prior-reliability` 使用 U-Net 全分辨率四热图、raw-anchor Gaussian prior、零修正初始化和 Gaussian target distribution。单种子 7801 于 9 epochs 早停，约耗时 26 min：
+
+- aggregate RMS 改善 2.25%，低于 5% 门；
+- linear/combined/spin/stationary 分别改善 2.76%/0.56%/0.96%/19.17%，无 mode 回退；
+- reliability balanced accuracy 78.18%，该子门通过；
+- 因 aggregate 不足，停止后续种子，不调低 5% 门。
+
+最终决策仍是：产品路径保持 raw/legacy，新 proposer、benefit gate、确定性 veto 和 heatmap prior 均只保留为未授权开发证据；新 validation 和 sealed test 均不开启，预测器仍被角点/PnP 部署门阻塞。

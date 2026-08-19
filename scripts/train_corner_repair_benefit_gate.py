@@ -397,13 +397,17 @@ class Sample:
         return self.outcome == "BENEFIT"
 
 
-def load_session_samples(session: Path, match_gate_px: float) -> list[Sample]:
+def load_session_samples(
+    session: Path, match_gate_px: float, pnp_sidecar_name: str
+) -> list[Sample]:
     result = json.loads((session / "session-result.json").read_text(encoding="utf-8"))
-    pnp_path = session / "repair-pnp-complete-candidates-v1.jsonl"
+    pnp_path = session / pnp_sidecar_name
     frames = read_jsonl(pnp_path)
     pnp_manifest = json.loads(
-        (session / "repair-pnp-complete-candidates-v1-manifest.json").read_text(encoding="utf-8")
+        (session / f"{Path(pnp_sidecar_name).stem}-manifest.json").read_text(encoding="utf-8")
     )
+    if pnp_manifest["output_sha256"] != sha256(pnp_path):
+        raise ValueError(f"repair/PnP sidecar hash mismatch: {pnp_path}")
     calibration_path = Path(pnp_manifest["camera_calibration"]).resolve(strict=True)
     if pnp_manifest["camera_calibration_sha256"] != sha256(calibration_path):
         raise ValueError("camera calibration hash mismatch")
@@ -684,6 +688,11 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, type=Path)
     parser.add_argument("--model-dir", required=True, type=Path)
     parser.add_argument("--match-gate-px", type=float, default=25.0)
+    parser.add_argument(
+        "--pnp-sidecar-name",
+        default="repair-pnp-complete-candidates-v1.jsonl",
+        help="truth-free repair/PnP sidecar filename present in each selected session",
+    )
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--seed", action="append", type=int, default=[4201, 4202, 4203])
     args = parser.parse_args()
@@ -699,10 +708,16 @@ def main() -> None:
             sorted(
                 result.parent
                 for result in root.resolve(strict=True).glob("*/session-result.json")
-                if (result.parent / "repair-pnp-complete-candidates-v1.jsonl").exists()
+                if (result.parent / args.pnp_sidecar_name).exists()
             )
         )
-    all_samples = [sample for session in sessions for sample in load_session_samples(session, args.match_gate_px)]
+    all_samples = [
+        sample
+        for session in sessions
+        for sample in load_session_samples(
+            session, args.match_gate_px, args.pnp_sidecar_name
+        )
+    ]
     development = [sample for sample in all_samples if sample.split == "train"]
     validation = [sample for sample in all_samples if sample.split == "validation"]
     if len({sample.session for sample in development}) < 3:
@@ -825,6 +840,7 @@ def main() -> None:
             "radial_pointwise_factor": 1.02,
         },
         "policy": "final_apply = frozen_v3_apply AND benefit_gate_probability >= threshold",
+        "pnp_sidecar_name": args.pnp_sidecar_name,
         "selection_gate": {
             "per_session_angular_p95_noninferiority_deg": 0.02,
             "per_session_radial_p95_noninferiority_factor": 1.02,
