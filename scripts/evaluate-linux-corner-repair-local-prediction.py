@@ -28,6 +28,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from training.stage3.train_image_corner_repair_formal import (
     ContextSpatialResidualNet,
+    ContextSpatialReliabilityNet,
+    CornerHeatmapReliabilityNet,
     context_patch,
     normalized_context_predictions_to_full,
 )
@@ -177,24 +179,42 @@ def row_corners(row: dict[str, str], prefix: str) -> np.ndarray:
 
 def frozen_repairs(checkpoint_path: Path, rows_path: Path, session: Path) -> tuple[list[dict[str, str]], np.ndarray, np.ndarray]:
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-    if checkpoint.get("architecture") != "v2-context-spatial":
-        raise ValueError("local prediction adapter supports only the frozen context-spatial repairer")
+    architecture = checkpoint.get("architecture")
+    if architecture not in {"v2-context-spatial", "v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+        raise ValueError("local prediction adapter supports only frozen context-spatial repairers")
     records = [row for row in csv.DictReader(rows_path.open(encoding="utf-8", newline="")) if row["motion_uniform"] == "True"]
     values, _ = load_session_rows(rows_path, session, patch_fn=context_patch)
     if len(records) != len(values["targets"]):
         raise ValueError("repair rows lost alignment")
-    model = ContextSpatialResidualNet()
+    if architecture == "v4-corner-heatmap-reliability":
+        model = CornerHeatmapReliabilityNet()
+    elif architecture == "v3-context-spatial-reliability":
+        model = ContextSpatialReliabilityNet()
+    else:
+        model = ContextSpatialResidualNet()
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
     geometry = (values["geometry"] - checkpoint["geometry_mean"]) / checkpoint["geometry_std"]
     with torch.no_grad():
-        predicted = model(torch.from_numpy(values["images"]), torch.from_numpy(geometry)).numpy()
+        if architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+            network_output = model(
+                torch.from_numpy(values["images"]), torch.from_numpy(geometry),
+                torch.from_numpy(np.asarray([float(row["detector_score"]) for row in records], dtype=np.float32)),
+            ).numpy()
+            predicted = network_output[:, :8]
+            reliability_probability = 1.0 / (1.0 + np.exp(-network_output[:, 8]))
+        else:
+            predicted = model(torch.from_numpy(values["images"]), torch.from_numpy(geometry)).numpy()
+            reliability_probability = np.ones(len(predicted), dtype=np.float32)
     target_mean = checkpoint.get("target_mean", checkpoint.get("target_mean_px"))
     target_std = checkpoint.get("target_std", checkpoint.get("target_std_px"))
-    predicted = predicted * target_std + target_mean
+    if checkpoint.get("output_standardized", True):
+        predicted = predicted * target_std + target_mean
     if checkpoint.get("target_space", "full-pixel-residual") == "context-normalized-residual":
         predicted = normalized_context_predictions_to_full(values["raw_corners"], predicted)
     apply = np.ones(len(predicted), dtype=bool)
+    if architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+        apply &= reliability_probability >= float(checkpoint["reliability"]["application_probability_threshold"])
     minimum_score = checkpoint.get("minimum_detector_score")
     if minimum_score is not None:
         apply &= np.asarray([float(row["detector_score"]) for row in records]) >= float(minimum_score)

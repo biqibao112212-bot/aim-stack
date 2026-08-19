@@ -74,9 +74,7 @@ def inspect_rows(path: Path, expected_model_sha256: str, minimum_frame_seq: int,
                  maximum_match_rms_px: float) -> dict[str, object]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    if not rows:
-        raise ValueError(f"no detector rows: {path}")
-    if {row["model_sha256"] for row in rows} != {expected_model_sha256}:
+    if rows and {row["model_sha256"] for row in rows} != {expected_model_sha256}:
         raise ValueError(f"detector model hash mismatch: {path}")
     if any(int(row["frame_seq"]) < minimum_frame_seq for row in rows):
         raise ValueError(f"row precedes Scene Control eligibility boundary: {path}")
@@ -137,6 +135,7 @@ def main() -> None:
                 "--labels", str(session_dir / "exact-corners.jsonl"), "--model", str(model),
                 "--output", str(rows_path), "--minimum-frame-seq", str(result["first_eligible_frame_seq"]),
                 "--score-threshold", "0.25", "--match-rms-px", str(args.match_rms_px),
+                "--allow-empty",
             ]
             subprocess.run(command, check=True)
         row_summary = inspect_rows(

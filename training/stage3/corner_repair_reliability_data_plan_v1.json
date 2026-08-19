@@ -1,0 +1,34 @@
+{
+  "schema_version": "aim-stack.corner-repair-formal-plan/1",
+  "release_version": "1.3.1",
+  "release_source_commit": "d7637d00f69f0b6b01814c4fef6087baa92b0607",
+  "detector_model_sha256": "1d9233eb74391347d20352cd6cbcb847976784be0ac609ebec2bee626ac1b303",
+  "target_complete_frames_per_session": 64,
+  "purpose": "Session-disjoint cross-mode data expansion for an explicit detector-corner repair reliability head; the rejected poseeq-test sessions remain diagnostic-only and are not reused.",
+  "split_policy": {
+    "unit": "complete simulator session",
+    "test_sealed_during_training": true,
+    "validation_gate": {
+      "minimum_aggregate_rms_improvement_fraction": 0.05,
+      "maximum_per_mode_rms_regression_fraction": 0.02
+    },
+    "test_gate": {
+      "minimum_aggregate_rms_improvement_fraction": 0.05,
+      "maximum_per_mode_rms_regression_fraction": 0.02
+    }
+  },
+  "sessions": [
+    {"id": "reliability-train-linear-d045-r095", "split": "train", "mode": "linear", "direction_deg": 45.0, "linear_speed_mps": 1.4, "linear_span_m": 3.5, "spin_deg_s": 0.0, "radial_scale": 0.95},
+    {"id": "reliability-train-linear-d135-r110", "split": "train", "mode": "linear", "direction_deg": 135.0, "linear_speed_mps": 2.0, "linear_span_m": 4.0, "spin_deg_s": 0.0, "radial_scale": 1.1},
+    {"id": "reliability-train-linear-d270-r100", "split": "train", "mode": "linear", "direction_deg": 270.0, "linear_speed_mps": 2.6, "linear_span_m": 5.0, "spin_deg_s": 0.0, "radial_scale": 1.0},
+    {"id": "reliability-train-spin-p120-r105", "split": "train", "mode": "spin", "direction_deg": 0.0, "linear_speed_mps": 0.0, "linear_span_m": 0.0, "spin_deg_s": 120.0, "radial_scale": 1.05},
+    {"id": "reliability-train-spin-m180-r095", "split": "train", "mode": "spin", "direction_deg": 0.0, "linear_speed_mps": 0.0, "linear_span_m": 0.0, "spin_deg_s": -180.0, "radial_scale": 0.95},
+    {"id": "reliability-train-combined-d000-p120-r110", "split": "train", "mode": "linear_and_spin", "direction_deg": 0.0, "linear_speed_mps": 1.8, "linear_span_m": 4.0, "spin_deg_s": 120.0, "radial_scale": 1.1},
+    {"id": "reliability-train-combined-d180-m120-r090", "split": "train", "mode": "linear_and_spin", "direction_deg": 180.0, "linear_speed_mps": 2.2, "linear_span_m": 4.5, "spin_deg_s": -120.0, "radial_scale": 0.9},
+    {"id": "reliability-train-stationary-r105", "split": "train", "mode": "stationary", "direction_deg": 0.0, "linear_speed_mps": 0.0, "linear_span_m": 0.0, "spin_deg_s": 0.0, "radial_scale": 1.05},
+    {"id": "reliability-validation-linear-d315-r105", "split": "validation", "mode": "linear", "direction_deg": 315.0, "linear_speed_mps": 1.6, "linear_span_m": 3.5, "spin_deg_s": 0.0, "radial_scale": 1.05},
+    {"id": "reliability-validation-spin-p150-r100", "split": "validation", "mode": "spin", "direction_deg": 0.0, "linear_speed_mps": 0.0, "linear_span_m": 0.0, "spin_deg_s": 150.0, "radial_scale": 1.0},
+    {"id": "reliability-validation-combined-d090-m150-r115", "split": "validation", "mode": "linear_and_spin", "direction_deg": 90.0, "linear_speed_mps": 2.1, "linear_span_m": 4.5, "spin_deg_s": -150.0, "radial_scale": 1.15},
+    {"id": "reliability-validation-stationary-r090", "split": "validation", "mode": "stationary", "direction_deg": 0.0, "linear_speed_mps": 0.0, "linear_span_m": 0.0, "spin_deg_s": 0.0, "radial_scale": 0.9}
+  ]
+}

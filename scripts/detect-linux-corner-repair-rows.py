@@ -41,6 +41,10 @@ def parser() -> argparse.ArgumentParser:
     )
     result.add_argument("--provider", choices=("cpu", "cuda"), default="cpu")
     result.add_argument(
+        "--allow-empty", action="store_true",
+        help="write a header-only evidence table when detector applicability is zero",
+    )
+    result.add_argument(
         "--max-labeled-exposures",
         type=int,
         help="deterministically process at most this many label-bearing frames; omitted means all",
@@ -191,9 +195,14 @@ def main() -> None:
                 row[f"raw_{name}_x_px"], row[f"raw_{name}_y_px"] = float(raw[0]), float(raw[1])
                 row[f"exact_{name}_x_px"], row[f"exact_{name}_y_px"] = float(exact[0]), float(exact[1])
             rows.append(row)
-    if not rows:
+    if not rows and not args.allow_empty:
         raise ValueError("detector produced no label-matched raw corner rows")
-    fields = list(rows[0])
+    fields = [
+        "session_id", "producer_epoch", "frame_seq", "timestamp_ns", "relative_slot",
+        "motion_uniform", "distance_m", "image_file", "detector_score", "match_corner_rms_px",
+        "model_sha256", "future_truth_included",
+        *(f"{prefix}_{corner}_{axis}_px" for corner in ORDER for prefix in ("raw", "exact") for axis in ("x", "y")),
+    ]
     with output.open("x", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()

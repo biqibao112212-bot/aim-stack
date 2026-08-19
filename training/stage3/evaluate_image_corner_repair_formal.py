@@ -19,6 +19,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from training.stage3.train_image_corner_repair_formal import (
     ContextSpatialResidualNet,
+    ContextSpatialReliabilityNet,
+    CornerHeatmapReliabilityNet,
     group_metrics,
     context_patch,
     normalized_context_predictions_to_full,
@@ -74,7 +76,13 @@ def main() -> None:
     if float(checkpoint_association) != float(manifest.get("match_rms_px", -2.0)):
         raise ValueError("repair checkpoint and test dataset use different association gates")
     architecture = checkpoint.get("architecture", "v1-global")
-    if architecture == "v2-context-spatial":
+    if architecture == "v4-corner-heatmap-reliability":
+        model = CornerHeatmapReliabilityNet()
+        patch_fn = context_patch
+    elif architecture == "v3-context-spatial-reliability":
+        model = ContextSpatialReliabilityNet()
+        patch_fn = context_patch
+    elif architecture == "v2-context-spatial":
         model = ContextSpatialResidualNet()
         patch_fn = context_patch
     elif architecture == "v1-global":
@@ -97,6 +105,15 @@ def main() -> None:
         result_in = Path(str(entry["session_result"]["path"])).resolve(strict=True)
         if digest(rows_path) != entry["rows"]["sha256"] or digest(result_in) != entry["session_result"]["sha256"]:
             raise ValueError(f"sealed test evidence changed: {entry['session_id']}")
+        if int(entry["rows"].get("uniform_rows", 0)) == 0:
+            applicability.append({
+                "session_id": entry["session_id"], "mode": entry["mode"],
+                "matched_exposures": entry["rows"]["matched_exposures"],
+                "qualified_exposures": entry.get("qualified_exposures"),
+                "detector_exposure_coverage_fraction": entry.get("detector_exposure_coverage_fraction"),
+                "uniform_repair_rows": 0,
+            })
+            continue
         loaded, _ = load_session_rows(rows_path, result_in.parent, **({"patch_fn": patch_fn} if patch_fn else {}))
         with rows_path.open(encoding="utf-8", newline="") as handle:
             score_rows = [row for row in csv.DictReader(handle) if row["motion_uniform"] == "True"]
@@ -125,13 +142,25 @@ def main() -> None:
     }
     standardized_geometry = (values["geometry"] - checkpoint["geometry_mean"]) / checkpoint["geometry_std"]
     with torch.no_grad():
-        predicted = model(torch.from_numpy(values["images"]), torch.from_numpy(standardized_geometry)).numpy()
+        if architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+            output = model(
+                torch.from_numpy(values["images"]), torch.from_numpy(standardized_geometry),
+                torch.from_numpy(np.asarray(scores, dtype=np.float32)),
+            ).numpy()
+            predicted = output[:, :8]
+            reliability_probability = 1.0 / (1.0 + np.exp(-output[:, 8]))
+        else:
+            predicted = model(torch.from_numpy(values["images"]), torch.from_numpy(standardized_geometry)).numpy()
+            reliability_probability = np.ones(len(predicted), dtype=np.float32)
     target_mean = checkpoint.get("target_mean", checkpoint.get("target_mean_px"))
     target_std = checkpoint.get("target_std", checkpoint.get("target_std_px"))
-    predicted = predicted * target_std + target_mean
+    if checkpoint.get("output_standardized", True):
+        predicted = predicted * target_std + target_mean
     if checkpoint.get("target_space", "full-pixel-residual") == "context-normalized-residual":
         predicted = normalized_context_predictions_to_full(values["raw_corners"], predicted)
     apply_repair = np.ones(len(predicted), dtype=bool)
+    if architecture in {"v3-context-spatial-reliability", "v4-corner-heatmap-reliability"}:
+        apply_repair &= reliability_probability >= float(checkpoint["reliability"]["application_probability_threshold"])
     minimum_score = checkpoint.get("minimum_detector_score")
     if minimum_score is not None:
         apply_repair &= np.asarray(scores) >= float(minimum_score)

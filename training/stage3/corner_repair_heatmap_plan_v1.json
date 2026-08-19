@@ -1,0 +1,26 @@
+{
+  "schema_version": "aim-stack.corner-repair-heatmap-plan/1",
+  "purpose": "Replace global residual regression with four spatial heatmaps while retaining the detector-only reliability gate.",
+  "frozen_design": {
+    "architecture": "v4-corner-heatmap-reliability",
+    "input": "rgb-128x64 1.5x detector quad plus raw-detector-only 15d geometry and detector score",
+    "target_space": "context-normalized nominal-PnP-pose-equivalent corners",
+    "corner_objective": "SmoothL1 soft-argmax coordinates + 0.05 * four-way spatial cross entropy",
+    "reliability_objective": "0.25 * class-weighted BCE for raw visual coordinate RMS >= 4 px",
+    "application_policy": "apply only when sigmoid(reliability_logit) >= 0.5",
+    "seeds": [1901, 2901, 3901],
+    "device": "cpu",
+    "device_amendment_before_any_optimizer_step": "The simulation-ml PyTorch build is CPU-only even though the host has an NVIDIA GPU; no checkpoint was produced by the rejected CUDA invocation.",
+    "selection": "Pass aggregate, every-mode and reliability validation gates; then maximize aggregate RMS improvement, tie-break by least per-mode regression and lower seed."
+  },
+  "validation_gate": {
+    "minimum_aggregate_rms_improvement_fraction": 0.05,
+    "maximum_per_mode_rms_regression_fraction": 0.02,
+    "minimum_reliability_balanced_accuracy": 0.65
+  },
+  "test_policy": {
+    "all_existing_test_and_pose_sessions_forbidden_for_selection": true,
+    "collect_new_session_disjoint_test_only_after_validation_pass": true,
+    "no_model_or_policy_update_after_test": true
+  }
+}

@@ -1,5 +1,8 @@
 # Linux 1.3.1 图像角点修复正式实验
 
+后续可靠性头、全新 sealed test 与 pose-aware 预测闭环见
+[`corner_repair_reliability_and_prediction.md`](corner_repair_reliability_and_prediction.md)。
+
 ## 1. 当前结论
 
 本轮完成了 Linux `daedalus-simulator 1.3.1` 原始 RGBA 全帧采集、冻结检测器推理、完整 session 切分、图像角点修复训练和两轮封存测试。最重要的结论不是某个单一网络分数，而是把“检测覆盖、检测到真值的离线关联、同一目标的角点修复”三个问题分开了。
