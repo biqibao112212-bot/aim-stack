@@ -49,8 +49,26 @@ experiments:
   proxy_metric: "Worst of aggregate P95 improvement fractions for position_mm, depth_abs_mm, and ray_mrad versus raw production-parity IPPE; exploratory packs only until a candidate is frozen."
   baseline_value: 0.0
   best_value: null
-  total_runs: 0
-  trajectory: []
+  total_runs: 3
+  trajectory:
+    - run_id: "v19_sparse_laplace_epro_smoke"
+      hypothesis: "H1"
+      metric_value: null
+      delta: null
+      change_summary: "Finite CUDA grid+tail+Laplace-EPro forward/backward on 16 exploratory samples; implementation check only."
+      timestamp: "2026-08-24"
+    - run_id: "v19_dense_immediate_epro_negative"
+      hypothesis: "H2"
+      metric_value: null
+      delta: null
+      change_summary: "Invalid large negative Laplace normalizer exposed untrustworthy MAP modes before UV curriculum."
+      timestamp: "2026-08-24"
+    - run_id: "v19_dense_consistent_epro_smoke"
+      hypothesis: "H2"
+      metric_value: null
+      delta: null
+      change_summary: "Solver-consistency gate made the dense CUDA smoke finite; curriculum remains required."
+      timestamp: "2026-08-24"
 
 outer_loop:
   cycle: 0
