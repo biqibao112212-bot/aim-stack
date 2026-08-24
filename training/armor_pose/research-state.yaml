@@ -1,0 +1,65 @@
+project:
+  title: "Autoaim-B probabilistic sparse+dense PnP"
+  question: "Can same-frame probabilistic corners and dense planar correspondences reduce raw-YOLO PnP P95 position, depth, and ray error by at least 30%, with a 50% position/depth stretch target, without online truth?"
+  status: active
+  started: "2026-08-24"
+  domain: "monocular planar pose estimation"
+
+literature:
+  key_papers:
+    - id: bpnp2020
+      title: "End-to-End Learnable Geometric Vision by Backpropagating PnP Optimization"
+      relevance: "Implicit differentiation through PnP."
+    - id: epropnp2022
+      title: "EPro-PnP: Generalized End-to-End Probabilistic Perspective-N-Points"
+      relevance: "Pose distributions and correspondence weighting."
+    - id: pvnet2019
+      title: "PVNet: Pixel-Wise Voting Network for 6DoF Pose Estimation"
+      relevance: "Uncertainty-aware keypoints from pixel-wise evidence."
+    - id: zebrapose2022
+      title: "ZebraPose: Coarse To Fine Surface Encoding for 6DoF Object Pose Estimation"
+      relevance: "Dense surface correspondence followed by PnP."
+  open_problems:
+    - "Four deterministic planar corners are brittle under blur and detector bias."
+    - "Planar IPPE ambiguity creates heavy-tailed pose errors."
+  evidence_gaps:
+    - "No truth-free inference implementation of probabilistic sparse+dense PnP has been tested in this project."
+
+hypotheses:
+  - id: H1
+    statement: "A calibrated four-heatmap corner distribution with GPU probabilistic PnP will reduce exploratory-development P95 position/depth error by at least 25% versus raw YOLO IPPE."
+    status: active
+    motivation: "Uncertainty should prevent a single ambiguous corner from dominating planar PnP."
+    parent: null
+    priority: high
+  - id: H2
+    statement: "A dense canonical-surface correspondence field with spatially covered sampling will reduce exploratory-development P95 position/depth error by at least 30% versus raw YOLO IPPE."
+    status: active
+    motivation: "Many weighted correspondences should be less brittle than four coordinates."
+    parent: null
+    priority: high
+  - id: H3
+    statement: "Calibrated fusion of sparse anchors and dense correspondences will pass a fresh session-disjoint 30% P95 gate on position, depth, and ray, with a 50% position/depth stretch target."
+    status: pending
+    motivation: "Sparse global anchors and dense local evidence should be complementary."
+    parent: null
+    priority: high
+
+experiments:
+  proxy_metric: "Worst of aggregate P95 improvement fractions for position_mm, depth_abs_mm, and ray_mrad versus raw production-parity IPPE; exploratory packs only until a candidate is frozen."
+  baseline_value: 0.0
+  best_value: null
+  total_runs: 0
+  trajectory: []
+
+outer_loop:
+  cycle: 0
+  last_direction: null
+  last_reflection: ""
+
+workspace:
+  findings: "training/armor_pose/findings.md"
+  log: "training/armor_pose/research-log.md"
+  experiments_dir: "training/armor_pose/experiments/"
+  runtime_root: "/home/potato/Projects/仿真/runtime/autoaim-b-prob-dense-pnp-20260824-v1"
+  protected_legacy_runtime: "/home/potato/Projects/仿真/runtime/autoaim-b-corner-pnp-20260824-v1"

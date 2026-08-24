@@ -1,0 +1,47 @@
+{
+  "schema_version": "aim-stack.armor-pose-experiment-plan/1",
+  "name": "autoaim-b-probabilistic-sparse-dense-pnp-v19-bootstrap",
+  "status": "pre_registered",
+  "online_contract": {
+    "inputs": ["same-frame RGB ROI", "raw YOLO corners", "raw detector geometry", "camera intrinsics", "raw ROI inverse transform"],
+    "forbidden": ["exact corners", "labelled pose", "range", "motion", "identity", "temporal history", "tracker state", "future fields"],
+    "outputs": ["pose rotation", "pose translation", "pose uncertainty", "validity status"],
+    "fallback": "unchanged raw YOLO production-parity IPPE when the learned solver is invalid or geometrically degenerate"
+  },
+  "development_data": {
+    "train_pack": "/home/potato/Projects/仿真/runtime/autoaim-b-corner-pnp-20260824-v1/packs/train-v12-pilot-calibrated-stable.npz",
+    "exploratory_validation_pack": "/home/potato/Projects/仿真/runtime/autoaim-b-corner-pnp-20260824-v1/packs/validation-v17-fresh-candidate-reduced-scale.npz",
+    "exploratory_only": true,
+    "forbidden_test_packs": ["test-v15-sealed-candidate.npz", "test-v18-sealed-candidate-reduced-scale.npz"],
+    "formal_validation": "a future untouched full-session pack frozen after model selection",
+    "formal_test": "a future once-authorized sealed full-session pack"
+  },
+  "compute": {
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "fail_closed": true,
+    "neural_cpu_fallback": false,
+    "differentiable_geometry_cpu_fallback": false,
+    "production_parity_audit": "CPU OpenCV IPPE is allowed only as a final offline semantic audit"
+  },
+  "branches": {
+    "sparse": {"corner_heatmaps": 4, "predict_covariance": true, "pose_distribution": true},
+    "dense": {"mask": true, "canonical_uv": true, "predict_uncertainty": true, "correspondence_counts": [32, 64, 128]},
+    "fusion": {"level": "weighted correspondence set", "retain_planar_modes": 2}
+  },
+  "exploratory_gates": {
+    "sparse_minimum_p95_improvement_fraction": {"position_mm": 0.25, "depth_abs_mm": 0.25, "ray_mrad": 0.20},
+    "dense_minimum_p95_improvement_fraction": {"position_mm": 0.30, "depth_abs_mm": 0.30, "ray_mrad": 0.25},
+    "maximum_per_mode_p95_regression_fraction": 0.03
+  },
+  "formal_gate": {
+    "minimum_p95_improvement_fraction": {"position_mm": 0.30, "depth_abs_mm": 0.30, "ray_mrad": 0.30},
+    "stretch_p95_improvement_fraction": {"position_mm": 0.50, "depth_abs_mm": 0.50, "ray_mrad": 0.40},
+    "maximum_per_mode_p95_regression_fraction": 0.03
+  },
+  "frozen_components": ["simulator 1.3.1", "simulator SDK and Release", "detector ONNX and decode", "production C++ PnP", "tracker", "predictor", "fire control"],
+  "retention": {
+    "protected": ["raw captures", "exact-corner labels", "detector rows", "sealed-test evidence", "model checkpoints", "formal releases"],
+    "deletable": ["current-task reproducible caches after decisive metrics and reproduction commands are retained"]
+  }
+}
