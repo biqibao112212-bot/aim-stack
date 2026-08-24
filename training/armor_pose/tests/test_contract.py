@@ -7,6 +7,9 @@ import numpy as np
 import torch
 
 from training.armor_pose.data import ArmorPoseDataset, FORBIDDEN_ONLINE_TOKENS, load_development_pack
+from training.armor_pose.dense_correspondence_head import (
+    DenseCorrespondenceNet, LegacyDenseCorrespondenceNet, build_dense_correspondence_net,
+)
 from training.armor_pose.gpu_pnp import solve_weighted_planar_pnp
 from training.armor_pose.labels import CANONICAL_CORNER_UV, canonical_uv_to_object_points
 from training.armor_pose.sparse_prob_head import ProbabilisticCornerNet
@@ -37,9 +40,24 @@ def test_dataset_separates_online_inputs_from_supervision() -> None:
 
 def test_online_signatures_do_not_accept_reference_or_target() -> None:
     forbidden = ("target", "truth", "reference", "exact", "motion", "session", "history")
-    for function in (ProbabilisticCornerNet.forward, solve_weighted_planar_pnp):
+    for function in (ProbabilisticCornerNet.forward, DenseCorrespondenceNet.forward,
+                     LegacyDenseCorrespondenceNet.forward, solve_weighted_planar_pnp):
         names = tuple(inspect.signature(function).parameters)
         assert not any(token in name for token in forbidden for name in names)
+
+
+def test_dense_checkpoint_config_reconstructs_legacy_and_projective_versions() -> None:
+    for original_type in (LegacyDenseCorrespondenceNet, DenseCorrespondenceNet):
+        original = original_type()
+        config = original.config
+        if original_type is LegacyDenseCorrespondenceNet:
+            # Completed V19 checkpoints predate the explicit architecture key;
+            # their frozen family is sufficient to reconstruct them.
+            config = {key: value for key, value in config.items() if key != "architecture"}
+        reconstructed = build_dense_correspondence_net(model_config=config)
+        reconstructed.load_state_dict(original.state_dict(), strict=True)
+        assert reconstructed.config["family"] == original.config["family"]
+        assert reconstructed.config["architecture"] == original.config["architecture"]
 
 
 def test_v19_plan_never_names_sealed_pack_as_development_input() -> None:

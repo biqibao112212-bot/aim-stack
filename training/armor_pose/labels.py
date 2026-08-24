@@ -65,6 +65,37 @@ def heatmap_moments(logits: torch.Tensor, *, temperature: float = 1.0) -> tuple[
     return mean, covariance, entropy
 
 
+def calibrated_patch_grid_moments(
+    residual_logits: torch.Tensor, raw_patch: torch.Tensor, *, prior_sigma_px: float = 2.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return calibrated patch-space moments for a raw-corner prior.
+
+    The returned logits include the raw Gaussian prior.  The coordinate grid
+    used for the moments is translated by the (possibly boundary-truncated)
+    prior's bias, so identically zero residual logits preserve ``raw_patch``
+    exactly, including corners close to or outside the 128x64 context.
+    """
+    if residual_logits.ndim != 4 or residual_logits.shape[1:] != (4, PATCH_HEIGHT, PATCH_WIDTH):
+        raise ValueError("residual_logits must be [B,4,64,128]")
+    if raw_patch.shape != (residual_logits.shape[0], 4, 2) or prior_sigma_px <= 0.0:
+        raise ValueError("raw_patch must be [B,4,2] and prior_sigma_px positive")
+    grid = patch_grid(device=residual_logits.device, dtype=residual_logits.dtype).reshape(-1, 2)
+    prior_residual = grid[None, None] - raw_patch[:, :, None]
+    prior_logits = -0.5 * prior_residual.square().sum(dim=-1) / (prior_sigma_px * prior_sigma_px)
+    combined_logits = prior_logits + residual_logits.flatten(2)
+    prior_probability = torch.softmax(prior_logits, dim=-1)
+    probability = torch.softmax(combined_logits, dim=-1)
+    prior_mean = prior_probability @ grid
+    calibrated_grid = grid[None, None] + (raw_patch - prior_mean)[:, :, None]
+    mean = torch.einsum("bkn,bkni->bki", probability, calibrated_grid)
+    centered = calibrated_grid - mean[:, :, None]
+    covariance = torch.einsum("bkn,bkni,bknj->bkij", probability, centered, centered)
+    identity = torch.eye(2, dtype=residual_logits.dtype, device=residual_logits.device)
+    covariance = covariance + 1.0e-4 * identity
+    entropy = -(probability * probability.clamp_min(1.0e-12).log()).sum(dim=-1)
+    return mean, covariance, entropy, combined_logits.reshape_as(residual_logits)
+
+
 def calibrated_grid_moments(residual_logits: torch.Tensor, raw_patch: torch.Tensor,
                             raw_full: torch.Tensor, inverse_transform: torch.Tensor,
                             *, prior_sigma_px: float = 2.0) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -92,7 +123,7 @@ def calibrated_grid_moments(residual_logits: torch.Tensor, raw_patch: torch.Tens
     return mean, covariance, entropy
 
 
-def _pixel_to_uv_homography(target_patch: torch.Tensor) -> torch.Tensor:
+def pixel_to_uv_homography(target_patch: torch.Tensor) -> torch.Tensor:
     """Solve target-patch pixel -> canonical UV homographies by batched DLT."""
     if target_patch.ndim != 3 or target_patch.shape[1:] != (4, 2):
         raise ValueError("target_patch must be [B,4,2]")
@@ -119,7 +150,7 @@ def dense_surface_labels(target_patch: torch.Tensor) -> tuple[torch.Tensor, torc
     This is an amodal planar support derived from the nominal target quad.  It
     is deliberately not called an occlusion-tested visible foreground mask.
     """
-    transform = _pixel_to_uv_homography(target_patch)
+    transform = pixel_to_uv_homography(target_patch)
     grid = patch_grid(device=target_patch.device, dtype=target_patch.dtype)
     points = grid.reshape(1, -1, 2).expand(target_patch.shape[0], -1, -1)
     uv = map_points_homography(points, transform).reshape(target_patch.shape[0], PATCH_HEIGHT, PATCH_WIDTH, 2)

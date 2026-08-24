@@ -1,0 +1,71 @@
+{
+  "schema_version": "aim-stack.armor-pose-experiment-plan/1",
+  "name": "autoaim-b-projective-dense-risk-gated-pnp-v20",
+  "status": "pre_registered",
+  "antecedent": {
+    "v19_sparse": "On the 387-row V17 exploratory validation, the full-session sparse checkpoint improved paired median position by 24.8% but regressed paired P95 position by 149.9%; an observable reprojection-residual gate recovered only about 16% aggregate P95 position improvement.",
+    "v19_dense": "The homography-plus-free-local-UV dense checkpoint had only 30.8% candidate validity and multi-metre P95 error. Zeroing the local UV residual did not rescue the learned global-corner head because its global-average pooling discarded spatial location.",
+    "solver": "A raw-corner homography sampled densely can occasionally jump to a different planar basin in the independent dense DLT route; observable raw-PnP modes may therefore seed dense refinement, but labels may not."
+  },
+  "online_contract": {
+    "inputs": ["same-frame RGB ROI", "raw YOLO corners", "raw detector geometry", "camera intrinsics", "raw ROI inverse transform"],
+    "forbidden": ["exact corners", "target corners", "labelled pose", "range", "motion", "session", "identity", "temporal history", "tracker state", "future fields"],
+    "outputs": ["top-two pose modes", "pose covariance", "candidate risk probability", "validity status"],
+    "fallback": "unchanged raw YOLO PnP when the candidate is invalid, geometrically degenerate, or rejected by the observable risk gate"
+  },
+  "development_data": {
+    "train_pack": "/home/potato/Projects/仿真/runtime/autoaim-b-corner-pnp-20260824-v1/packs/train-v12-pilot-calibrated-stable.npz",
+    "exploratory_validation_pack": "/home/potato/Projects/仿真/runtime/autoaim-b-corner-pnp-20260824-v1/packs/validation-v17-fresh-candidate-reduced-scale.npz",
+    "train_rows": 1058,
+    "train_whole_sessions": 8,
+    "exploratory_validation_rows": 387,
+    "exploratory_validation_whole_sessions": 3,
+    "exploratory_only": true,
+    "forbidden_test_packs": ["test-v15-sealed-candidate.npz", "test-v18-sealed-candidate-reduced-scale.npz"],
+    "formal_validation": "collect a future untouched full-session pack after all V20 weights, gates, and thresholds are frozen",
+    "formal_test": "collect or authorize a later sealed full-session pack only after formal validation passes"
+  },
+  "compute": {
+    "device": "cuda",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU",
+    "fail_closed": true,
+    "neural_cpu_fallback": false,
+    "differentiable_geometry_cpu_fallback": false,
+    "production_parity_audit": "CPU OpenCV IPPE is permitted only after a candidate is frozen, never for training or exploratory selection"
+  },
+  "changes": {
+    "sparse": {
+      "distribution": "calibrated in-ROI four-heatmap distribution plus continuous Gaussian tail",
+      "tail_encoder": "spatial-bin pooled, not global-average pooled",
+      "trust_scales": [0.2, 0.4, 0.6, 0.8, 1.0],
+      "risk_gate": "offline utility labels; online observable diagnostics only"
+    },
+    "dense": {
+      "global_geometry": "calibrated spatial four-corner distribution followed by one projective homography",
+      "local_non_projective_uv_residual": 0.0,
+      "outputs": ["nominal projected support", "strict projective canonical UV", "uncertainty", "edge distance"],
+      "correspondence_counts": [32, 64, 128]
+    },
+    "gpu_pnp": {
+      "initialization": ["dense correspondence DLT", "optional raw-observation GPU-PnP modes"],
+      "retained_modes": 2,
+      "forbidden_initialization": ["reference pose", "target pose", "truth-derived depth"]
+    }
+  },
+  "offline_truth_usage": {
+    "allowed": ["heatmap/corner/dense correspondence supervision", "EPro-PnP target energy", "risk-gate utility label", "validation metrics"],
+    "inference": "all label/reference dictionaries can be deleted before forward and pose solve"
+  },
+  "exploratory_gate": {
+    "minimum_p95_improvement_fraction": {"position_mm": 0.30, "depth_abs_mm": 0.30, "ray_mrad": 0.25},
+    "stretch_p95_improvement_fraction": {"position_mm": 0.50, "depth_abs_mm": 0.50, "ray_mrad": 0.40},
+    "maximum_per_mode_p95_regression_fraction": 0.03,
+    "minimum_candidate_valid_rate": 0.95,
+    "invalid_reporting": ["fail_closed", "explicit raw fallback"]
+  },
+  "frozen_components": ["simulator 1.3.1", "simulator SDK and Release", "detector ONNX and decode", "production C++ PnP", "tracker", "predictor", "fire control"],
+  "retention": {
+    "protected": ["raw captures", "exact-corner labels", "detector rows", "sealed-test evidence", "model checkpoints", "formal releases"],
+    "deletable": ["explicit current-task reproducible caches after decisive manifests and reproduction commands are retained"]
+  }
+}

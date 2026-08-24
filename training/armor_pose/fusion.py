@@ -10,7 +10,11 @@ from torch import nn
 from training.corner_pnp.pnp import NOMINAL_OBJECT_POINTS_M
 
 from .dense_correspondence_head import DenseCorrespondenceNet, DensePrediction, stratified_correspondences
-from .gpu_pnp import GpuPnPResult, solve_weighted_planar_pnp
+from .gpu_pnp import (
+    GpuPnPResult,
+    observable_initialization_from_result,
+    solve_weighted_planar_pnp,
+)
 from .sparse_prob_head import ProbabilisticCornerNet, SparsePrediction
 
 
@@ -38,7 +42,7 @@ class SparseDensePoseNet(nn.Module):
                 raw_patch: torch.Tensor, inverse_transform: torch.Tensor, scale: torch.Tensor,
                 intrinsics: torch.Tensor) -> FusionPrediction:
         sparse = self.sparse(patch, geometry, raw_full, raw_patch, inverse_transform, scale)
-        dense = self.dense(patch, geometry)
+        dense = self.dense(patch, geometry, raw_patch)
         dense_set = stratified_correspondences(dense, inverse_transform, count=self.dense_count)
         batch = patch.shape[0]
         sparse_object = torch.as_tensor(NOMINAL_OBJECT_POINTS_M, dtype=patch.dtype, device=patch.device)[None].expand(batch, -1, -1)
@@ -53,8 +57,14 @@ class SparseDensePoseNet(nn.Module):
         identity2 = torch.eye(2, dtype=patch.dtype, device=patch.device)
         dense_covariance = identity2.expand(batch, self.dense_count, 2, 2)
         covariance = torch.cat((sparse.image_covariance, dense_covariance), dim=1)
+        raw_object = torch.as_tensor(
+            NOMINAL_OBJECT_POINTS_M, dtype=patch.dtype, device=patch.device,
+        )[None].expand(batch, -1, -1)
+        raw_pnp = solve_weighted_planar_pnp(raw_full, raw_object, intrinsics)
+        initialization = observable_initialization_from_result(raw_pnp)
         pnp = solve_weighted_planar_pnp(
             image_points, object_points, intrinsics, weights=weights, covariance=covariance,
+            initialization=initialization,
         )
         return FusionPrediction(sparse, dense, pnp, image_points, object_points, weights, covariance)
 

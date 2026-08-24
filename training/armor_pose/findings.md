@@ -13,7 +13,9 @@ The accepted V12/V13 corner-repair candidate improves sealed-test P95 position/d
 - A clean CUDA-only weighted planar PnP MVP now performs observable-only planar DLT initialization, deterministic multi-start LM, covariance whitening, top-two result retention, local Hessian covariance, and fail-closed validity. Synthetic translation recovery is below 0.1 mm in the locked test.
 - The sparse probability head combines a calibrated in-ROI grid with a continuous Gaussian tail. Zero initialization preserves raw detector corners, including near ROI boundaries; all predicted 2-D covariances pass CUDA Cholesky checks.
 - The dense branch produces nominal projected-support, canonical UV, uncertainty, edge distance, and stratified correspondences. Its first immediate pose-loss smoke was numerically invalid; the failure showed that support/UV curriculum and online-MAP consistency are prerequisites for EPro training.
-- These are implementation/smoke findings only. No V19 candidate has yet been measured against the pre-registered P95 gates.
+- V19 has now been measured on the 387-row V17 exploratory validation. Sparse probability prediction improved paired median position by 24.8% but regressed paired P95 position by 149.9%; dense and direct fusion produced multi-metre tails. Neither checkpoint qualifies.
+- A gate using only the candidate's observable GPU-PnP reprojection residual reduced raw-GPU P95 position from about 795.9 mm to about 665.8 mm (16.3%) and ray P95 from about 32.6 to 24.0 mrad. This confirms that uncertainty-aware selection is useful, but the current representation still lacks the 30--50% headroom requested.
+- The dense global-corner head used global average pooling, which discards where evidence occurs in the ROI. V20 replaces it with a calibrated spatial decoder and removes the non-projective per-pixel UV warp that violated planar consistency.
 
 ## Patterns and Insights
 
@@ -33,10 +35,10 @@ The accepted V12/V13 corner-repair candidate improves sealed-test P95 position/d
 
 ## Open Questions
 
-- How much gain comes from calibrated sparse uncertainty alone?
-- Does dense planar surface supervision add information beyond a homography implied by four labels?
-- Is correspondence-level fusion better than product-of-experts pose fusion for planar ambiguity?
+- Can spatial-bin tail decoding preserve the sparse median gain without the planar-mode P95 jump?
+- Does a strictly projective dense representation add stable evidence, or merely resample the same four-point homography?
+- Can an observable utility gate reach the V19 truth-only multi-scale oracle ceiling without importing truth into inference?
 
 ## Optimization Trajectory
 
-Baseline is raw production-parity YOLO IPPE. V19 smoke runs validate implementation only; the optimization trajectory remains unmeasured until a development P95 evaluator is frozen.
+The frozen development evaluator reports raw/sparse/dense/fusion, fail-closed and explicit-raw-fallback policies, and per-session/per-mode P50/P95. V19 is a decisive negative result. V20 changes representation and initialization rather than tuning the failed checkpoints.

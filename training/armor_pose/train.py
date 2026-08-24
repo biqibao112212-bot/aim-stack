@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 from training.corner_pnp.data import sha256, write_json_new
 
 from .data import ArmorPoseDataset, load_development_pack, move_tensor_tree
-from .dense_correspondence_head import DenseCorrespondenceNet
+from .dense_correspondence_head import build_dense_correspondence_net
 from .losses import LossOutput, dense_loss, sparse_loss
 from .sparse_prob_head import ProbabilisticCornerNet
 
@@ -57,9 +57,11 @@ def _mean_epoch(model: torch.nn.Module, loader: DataLoader, device: torch.device
 
 def train(*, plan_path: Path, train_pack_path: Path, validation_pack_path: Path,
           output_dir: Path, branch: str, epochs: int, batch_size: int, learning_rate: float,
-          seed: int, maximum_samples: int | None = None, dense_warmup_epochs: int = 2) -> dict[str, object]:
+          seed: int, maximum_samples: int | None = None, dense_warmup_epochs: int = 2,
+          initial_checkpoint: Path | None = None,
+          dense_architecture: str | None = None) -> dict[str, object]:
     if not torch.cuda.is_available():
-        raise RuntimeError("V19 requires CUDA and refuses CPU fallback")
+        raise RuntimeError("armor-pose training requires CUDA and refuses CPU fallback")
     if branch not in {"sparse", "dense"}:
         raise ValueError("branch must be sparse or dense")
     plan_path = plan_path.resolve(strict=True)
@@ -78,8 +80,31 @@ def train(*, plan_path: Path, train_pack_path: Path, validation_pack_path: Path,
         raise PermissionError("whole-session train/validation overlap")
     _seed(seed)
     device = torch.device("cuda")
-    model: torch.nn.Module = ProbabilisticCornerNet() if branch == "sparse" else DenseCorrespondenceNet()
+    initial_checkpoint_hash: str | None = None
+    loaded: dict[str, object] | None = None
+    if initial_checkpoint is not None:
+        initial_checkpoint = initial_checkpoint.resolve(strict=True)
+        loaded = torch.load(initial_checkpoint, map_location=device, weights_only=False)
+        if loaded.get("schema_version") != "aim-stack.armor-pose-checkpoint/1" or loaded.get("branch") != branch:
+            raise ValueError("initial checkpoint branch/schema mismatch")
+    if branch == "sparse":
+        model: torch.nn.Module = ProbabilisticCornerNet()
+    elif loaded is not None:
+        model_config = loaded.get("model")
+        if not isinstance(model_config, dict):
+            raise ValueError("dense checkpoint omitted its reconstructible model config")
+        model = build_dense_correspondence_net(model_config=model_config)
+        if dense_architecture is not None and model.config.get("architecture") != dense_architecture:
+            raise ValueError("requested dense architecture disagrees with initial checkpoint")
+    else:
+        if dense_architecture is None:
+            raise ValueError("new dense training requires an explicit dense architecture")
+        model = build_dense_correspondence_net(architecture=dense_architecture)
     model = model.to(device)
+    if loaded is not None:
+        model.load_state_dict(loaded["state_dict"], strict=True)
+        assert initial_checkpoint is not None
+        initial_checkpoint_hash = sha256(initial_checkpoint)
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=1.0e-4)
     train_loader = DataLoader(ArmorPoseDataset(train_pack, maximum_samples=maximum_samples),
                               batch_size=batch_size, shuffle=True, num_workers=0, pin_memory=True,
@@ -99,7 +124,10 @@ def train(*, plan_path: Path, train_pack_path: Path, validation_pack_path: Path,
         "device": "cuda", "gpu": torch.cuda.get_device_name(0), "cpu_fallback": False,
         "seed": seed, "epochs": epochs, "batch_size": batch_size, "learning_rate": learning_rate,
         "maximum_samples": maximum_samples, "model": model.config,
+        "dense_architecture": model.config.get("architecture") if branch == "dense" else None,
         "dense_warmup_epochs": dense_warmup_epochs if branch == "dense" else None,
+        "initial_checkpoint": str(initial_checkpoint) if initial_checkpoint is not None else None,
+        "initial_checkpoint_sha256": initial_checkpoint_hash,
     })
     history: list[dict[str, object]] = []
     best = float("inf")
@@ -113,8 +141,8 @@ def train(*, plan_path: Path, train_pack_path: Path, validation_pack_path: Path,
             training_loss_function = lambda current, batch, weight=pose_weight: dense_loss(
                 current, batch, correspondence_count=64, pose_weight=weight
             )
-            validation_loss_function = lambda current, batch: dense_loss(
-                current, batch, correspondence_count=64, pose_weight=1.0
+            validation_loss_function = lambda current, batch, weight=pose_weight: dense_loss(
+                current, batch, correspondence_count=64, pose_weight=weight
             )
         training = _mean_epoch(model, train_loader, device, training_loss_function, optimizer)
         validation = _mean_epoch(model, validation_loader, device, validation_loss_function, None)
@@ -154,13 +182,17 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20260824)
     parser.add_argument("--maximum-samples", type=int)
     parser.add_argument("--dense-warmup-epochs", type=int, default=2)
+    parser.add_argument("--initial-checkpoint", type=Path)
+    parser.add_argument("--dense-architecture", choices=("legacy_global_average_v1", "spatial_projective_v2"))
     args = parser.parse_args()
     print(json.dumps(train(plan_path=args.plan, train_pack_path=args.train_pack,
                            validation_pack_path=args.validation_pack, output_dir=args.output_dir,
                            branch=args.branch, epochs=args.epochs, batch_size=args.batch_size,
                            learning_rate=args.learning_rate, seed=args.seed,
                            maximum_samples=args.maximum_samples,
-                           dense_warmup_epochs=args.dense_warmup_epochs), indent=2))
+                           dense_warmup_epochs=args.dense_warmup_epochs,
+                           initial_checkpoint=args.initial_checkpoint,
+                           dense_architecture=args.dense_architecture), indent=2))
 
 
 if __name__ == "__main__":

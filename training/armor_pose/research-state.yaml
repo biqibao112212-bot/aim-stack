@@ -28,13 +28,13 @@ literature:
 hypotheses:
   - id: H1
     statement: "A calibrated four-heatmap corner distribution with GPU probabilistic PnP will reduce exploratory-development P95 position/depth error by at least 25% versus raw YOLO IPPE."
-    status: active
+    status: falsified
     motivation: "Uncertainty should prevent a single ambiguous corner from dominating planar PnP."
     parent: null
     priority: high
   - id: H2
     statement: "A dense canonical-surface correspondence field with spatially covered sampling will reduce exploratory-development P95 position/depth error by at least 30% versus raw YOLO IPPE."
-    status: active
+    status: falsified
     motivation: "Many weighted correspondences should be less brittle than four coordinates."
     parent: null
     priority: high
@@ -49,7 +49,7 @@ experiments:
   proxy_metric: "Worst of aggregate P95 improvement fractions for position_mm, depth_abs_mm, and ray_mrad versus raw production-parity IPPE; exploratory packs only until a candidate is frozen."
   baseline_value: 0.0
   best_value: null
-  total_runs: 3
+  total_runs: 7
   trajectory:
     - run_id: "v19_sparse_laplace_epro_smoke"
       hypothesis: "H1"
@@ -69,11 +69,35 @@ experiments:
       delta: null
       change_summary: "Solver-consistency gate made the dense CUDA smoke finite; curriculum remains required."
       timestamp: "2026-08-24"
+    - run_id: "v19_sparse_full_v17"
+      hypothesis: "H1"
+      metric_value: -1.4986
+      delta: -1.4986
+      change_summary: "Paired median improved 24.8%, but paired P95 position regressed 149.9%; unconditional sparse candidate falsified."
+      timestamp: "2026-08-24"
+    - run_id: "v19_dense_full_v17"
+      hypothesis: "H2"
+      metric_value: -4.0192
+      delta: -4.0192
+      change_summary: "Dense candidate valid rate 30.8% and P95 position 4.11 m; failed representation."
+      timestamp: "2026-08-24"
+    - run_id: "v19_fusion_full_v17"
+      hypothesis: "H3"
+      metric_value: -3.8673
+      delta: -3.8673
+      change_summary: "Uncalibrated correspondence fusion amplified the failed dense branch and was disqualified."
+      timestamp: "2026-08-24"
+    - run_id: "v19_sparse_observable_reprojection_gate_diagnostic"
+      hypothesis: "H1"
+      metric_value: 0.1634
+      delta: 0.1634
+      change_summary: "Truth-free reprojection gating recovered 16.3% position P95 improvement, below the 30% target."
+      timestamp: "2026-08-24"
 
 outer_loop:
-  cycle: 0
-  last_direction: null
-  last_reflection: ""
+  cycle: 1
+  last_direction: "V20 spatial projective decoding plus observable risk gating and raw-mode GPU initialization"
+  last_reflection: "V19 learned better central tendency but failed the tails. More dense points do not help when the field violates one homography or the decoder loses spatial location; tail control and planar-mode stability are now first-class objectives."
 
 workspace:
   findings: "training/armor_pose/findings.md"

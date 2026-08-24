@@ -24,6 +24,33 @@ class GpuPnPResult:
     reprojection_rms_px: torch.Tensor  # [B,M]
 
 
+@dataclass(frozen=True)
+class ObservablePnPInitialization:
+    """Detached pose seeds produced by an online-observable GPU-PnP solve.
+
+    This is deliberately not a target/reference-pose argument.  Construct it
+    with :func:`observable_initialization_from_result` from a solve over the
+    same frame's detector corners (or another explicitly online correspondence
+    set), then pass it to a denser solve.  The receiving solve re-refines and
+    re-scores every seed against its own correspondences; it never averages
+    planar modes or treats the seed as a pose label.
+    """
+
+    rotation_camera_from_pnp: torch.Tensor  # [B,S,3,3]
+    translation_m: torch.Tensor  # [B,S,3]
+    valid: torch.Tensor  # [B,S]
+    provenance: str = "online-observable-gpu-pnp"
+
+
+def observable_initialization_from_result(result: GpuPnPResult) -> ObservablePnPInitialization:
+    """Stop gradients through discrete mode selection and expose its top modes as seeds."""
+    return ObservablePnPInitialization(
+        rotation_camera_from_pnp=result.rotation_camera_from_pnp.detach(),
+        translation_m=result.translation_m.detach(),
+        valid=result.valid.detach(),
+    )
+
+
 def _skew(vector: torch.Tensor) -> torch.Tensor:
     x, y, z = vector.unbind(dim=-1)
     zero = torch.zeros_like(x)
@@ -93,10 +120,12 @@ def _planar_dlt(image_points: torch.Tensor, object_points: torch.Tensor, intrins
     matrix = torch.stack((row_u, row_v), dim=2).reshape(image_points.shape[0], -1, 8)
     right = torch.stack((u, v), dim=2).reshape(image_points.shape[0], -1, 1)
     equation_weights = scalar_weights[:, :, None].expand(-1, -1, 2).reshape(image_points.shape[0], -1, 1)
-    normal = matrix.transpose(1, 2) @ (equation_weights * matrix)
-    rhs = matrix.transpose(1, 2) @ (equation_weights * right)
-    identity = torch.eye(8, dtype=matrix.dtype, device=matrix.device).expand_as(normal)
-    solution = torch.linalg.solve(normal + 1.0e-6 * identity, rhs).squeeze(-1)
+    square_root_weight = equation_weights.clamp_min(1.0e-12).sqrt()
+    weighted_matrix = square_root_weight * matrix
+    weighted_right = square_root_weight * right
+    # Do not form normal equations here: their squared condition number caused
+    # centimetre-scale depth tails even for perfect dense correspondences.
+    solution = torch.linalg.lstsq(weighted_matrix, weighted_right).solution.squeeze(-1)
     homography_normalized = torch.cat((solution, torch.ones_like(solution[:, :1])), dim=1).reshape(-1, 3, 3)
     homography = homography_normalized.clone()
     homography[:, :, 0] = homography_normalized[:, :, 0] / object_scale[0]
@@ -111,7 +140,7 @@ def _planar_dlt(image_points: torch.Tensor, object_points: torch.Tensor, intrins
     r3 = torch.linalg.cross(r1, r2, dim=1)
     rotation = torch.stack((r1, r2, r3), dim=-1)
     translation = scale[:, None] * h3
-    condition = torch.linalg.cond(normal + 1.0e-6 * identity)
+    condition = torch.linalg.cond(weighted_matrix)
     return rotation, translation, condition
 
 
@@ -188,14 +217,82 @@ def _refine(rotation: torch.Tensor, translation: torch.Tensor, image_points: tor
     return rotation, translation, covariance_local, objective, valid, condition, reprojection
 
 
+def _validated_observable_seeds(initialization: ObservablePnPInitialization | None, *, batch: int,
+                                device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, ...] | None:
+    if initialization is None:
+        return None
+    if not isinstance(initialization, ObservablePnPInitialization):
+        raise TypeError("initialization must be ObservablePnPInitialization or None")
+    if initialization.provenance != "online-observable-gpu-pnp":
+        raise ValueError("PnP initialization provenance is not online-observable")
+    rotation = initialization.rotation_camera_from_pnp
+    translation = initialization.translation_m
+    valid = initialization.valid
+    if rotation.ndim != 4 or rotation.shape[0] != batch or rotation.shape[2:] != (3, 3):
+        raise ValueError("observable initialization rotation must be [B,S,3,3]")
+    if translation.shape != (*rotation.shape[:2], 3) or valid.shape != rotation.shape[:2]:
+        raise ValueError("observable initialization translation/valid contract changed")
+    if rotation.device != device or translation.device != device or valid.device != device:
+        raise ValueError("observable initialization must remain on the PnP device")
+    if not rotation.is_floating_point() or not translation.is_floating_point():
+        raise TypeError("observable initialization pose tensors must be floating point")
+    if rotation.requires_grad or translation.requires_grad:
+        raise ValueError("observable initialization must be detached from its source solve")
+    finite = torch.isfinite(rotation).all(dim=(2, 3)) & torch.isfinite(translation).all(dim=2)
+    valid = valid.to(dtype=torch.bool) & finite
+    return rotation.to(dtype=dtype), translation.to(dtype=dtype), valid
+
+
+def _select_diverse_modes(rotation: torch.Tensor, translation: torch.Tensor,
+                          ranked_objective: torch.Tensor) -> torch.Tensor:
+    """Select MAP first and a genuinely separate planar basin second when available."""
+    batch, proposals = ranked_objective.shape
+    best = ranked_objective.argmin(dim=1)
+    batch_index = torch.arange(batch, device=ranked_objective.device)
+    best_rotation = rotation[batch_index, best]
+    best_translation = translation[batch_index, best]
+    relative = rotation @ best_rotation[:, None].transpose(-1, -2)
+    trace = torch.diagonal(relative, dim1=-2, dim2=-1).sum(dim=-1)
+    rotation_distance = torch.acos(((trace - 1.0) * 0.5).clamp(-1.0, 1.0))
+    translation_distance = torch.linalg.vector_norm(translation - best_translation[:, None], dim=-1)
+    separate = (rotation_distance > 2.0e-2) | (translation_distance > 5.0e-3)
+    separate[batch_index, best] = False
+    separate_objective = torch.where(separate, ranked_objective, torch.full_like(ranked_objective, torch.inf))
+    second_separate = separate_objective.argmin(dim=1)
+    has_separate = torch.isfinite(separate_objective[batch_index, second_separate])
+    fallback_objective = ranked_objective.clone()
+    fallback_objective[batch_index, best] = torch.inf
+    second_fallback = fallback_objective.argmin(dim=1)
+    second = torch.where(has_separate, second_separate, second_fallback)
+    return torch.stack((best, second), dim=1)
+
+
 def solve_weighted_planar_pnp(image_points: torch.Tensor, object_points: torch.Tensor,
                               intrinsics: torch.Tensor, *, weights: torch.Tensor | None = None,
                               covariance: torch.Tensor | None = None, modes: int = 2,
-                              iterations: int = 8) -> GpuPnPResult:
-    """Solve planar PnP from observable correspondences and return top MAP modes."""
+                              iterations: int = 8,
+                              initialization: ObservablePnPInitialization | None = None) -> GpuPnPResult:
+    """Solve planar PnP from observable correspondences and return top MAP modes.
+
+    ``initialization`` may carry detached modes from another same-frame,
+    online-observable GPU solve, most usefully the raw four detector corners.
+    They are seeds only: all candidates are refined and ranked solely by this
+    call's ``image_points``/``object_points``/uncertainty.  No target or
+    reference pose is accepted by this online kernel.
+    """
     weights, covariance = _validate_inputs(image_points, object_points, intrinsics, weights, covariance)
     if modes != 2:
         raise ValueError("V19 pre-registers exactly two retained planar modes")
+    original_dtype = image_points.dtype
+    # Consumer GPUs have slow FP64 throughput, but these matrices are tiny and
+    # planar depth is condition-sensitive.  Keeping geometry on the same CUDA
+    # device in FP64 removes the perfect-correspondence tail without a CPU hop.
+    geometry_dtype = torch.float64 if image_points.device.type == "cuda" else original_dtype
+    image_points = image_points.to(dtype=geometry_dtype)
+    object_points = object_points.to(dtype=geometry_dtype)
+    intrinsics = intrinsics.to(dtype=geometry_dtype)
+    weights = weights.to(dtype=geometry_dtype)
+    covariance = covariance.to(dtype=geometry_dtype)
     finite_input = (
         torch.isfinite(image_points).all(dim=(1, 2))
         & torch.isfinite(object_points).all(dim=(1, 2))
@@ -221,6 +318,17 @@ def solve_weighted_planar_pnp(image_points: torch.Tensor, object_points: torch.T
     batch, proposals = image_points.shape[0], perturbations.shape[0]
     seed_rotation = _so3_exp(perturbations)[None] @ base_rotation[:, None]
     seed_translation = base_translation[:, None].expand(-1, proposals, -1)
+    dlt_seed_valid = torch.isfinite(dlt_condition) & (dlt_condition < 1.0e12)
+    seed_enabled = dlt_seed_valid[:, None].expand(-1, proposals)
+    observable_seeds = _validated_observable_seeds(
+        initialization, batch=batch, device=image_points.device, dtype=geometry_dtype,
+    )
+    if observable_seeds is not None:
+        observable_rotation, observable_translation, observable_valid = observable_seeds
+        seed_rotation = torch.cat((seed_rotation, observable_rotation), dim=1)
+        seed_translation = torch.cat((seed_translation, observable_translation), dim=1)
+        seed_enabled = torch.cat((seed_enabled, observable_valid), dim=1)
+        proposals = seed_rotation.shape[1]
     repeat = lambda value: value[:, None].expand(-1, proposals, *value.shape[1:]).reshape(batch * proposals, *value.shape[1:])
     refined = _refine(
         seed_rotation.reshape(batch * proposals, 3, 3), seed_translation.reshape(batch * proposals, 3),
@@ -230,9 +338,16 @@ def solve_weighted_planar_pnp(image_points: torch.Tensor, object_points: torch.T
     rotation, translation, covariance_local, objective, valid, condition, reprojection = (
         value.reshape(batch, proposals, *value.shape[1:]) for value in refined
     )
-    valid = valid & finite_input[:, None] & torch.isfinite(dlt_condition)[:, None] & (dlt_condition < 1.0e12)[:, None]
+    valid = valid & seed_enabled & finite_input[:, None]
     ranked_objective = torch.where(valid, objective, torch.full_like(objective, torch.inf))
-    selected = ranked_objective.topk(k=modes, dim=1, largest=False).indices
+    # Preserve the V19 no-initialization ranking exactly.  Observable seeds add
+    # repeated refinements around the raw modes, so only that path deduplicates
+    # near-identical proposals before retaining the two planar basins.
+    selected = (
+        ranked_objective.topk(k=modes, dim=1, largest=False).indices
+        if initialization is None
+        else _select_diverse_modes(rotation, translation, ranked_objective)
+    )
     gather = lambda value: value.gather(1, selected.reshape(batch, modes, *([1] * (value.ndim - 2))).expand(batch, modes, *value.shape[2:]))
     selected_rotation = gather(rotation)
     selected_translation = gather(translation)
@@ -245,12 +360,12 @@ def solve_weighted_planar_pnp(image_points: torch.Tensor, object_points: torch.T
     mode_log_weight = log_mass - torch.logsumexp(log_mass, dim=1, keepdim=True)
     mode_log_weight = torch.where(selected_valid, mode_log_weight, torch.full_like(mode_log_weight, -torch.inf))
     return GpuPnPResult(
-        rotation_camera_from_pnp=selected_rotation,
-        translation_m=selected_translation,
-        covariance_local=selected_covariance,
-        objective=selected_objective,
-        mode_log_weight=mode_log_weight,
+        rotation_camera_from_pnp=selected_rotation.to(dtype=original_dtype),
+        translation_m=selected_translation.to(dtype=original_dtype),
+        covariance_local=selected_covariance.to(dtype=original_dtype),
+        objective=selected_objective.to(dtype=original_dtype),
+        mode_log_weight=mode_log_weight.to(dtype=original_dtype),
         valid=selected_valid,
-        condition=selected_condition,
-        reprojection_rms_px=selected_reprojection,
+        condition=selected_condition.to(dtype=original_dtype),
+        reprojection_rms_px=selected_reprojection.to(dtype=original_dtype),
     )

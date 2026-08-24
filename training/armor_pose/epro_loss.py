@@ -60,7 +60,9 @@ def laplace_epro_nll(pnp: GpuPnPResult, image_points: torch.Tensor, object_point
     solver_consistent = target_cost + 1.0e-3 >= minimum_objective
     valid = (torch.isfinite(target_cost) & torch.isfinite(log_partition)
              & mode_valid.any(dim=1) & solver_consistent)
-    per_sample = 0.5 * (target_cost - minimum_objective) + log_partition
+    # Correspondence-count normalization keeps the same probabilistic energy
+    # scale for four sparse anchors and 64 dense points.
+    per_sample = (0.5 * (target_cost - minimum_objective) + log_partition) / float(count)
     if not valid.any():
         return image_points.sum() * 0.0
     return per_sample[valid].mean()
