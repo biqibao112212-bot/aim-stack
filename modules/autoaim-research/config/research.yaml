@@ -1,0 +1,15 @@
+%YAML:1.0
+simulator_release_root: "/home/potato/Projects/仿真/releases/daedalus-simulator/1.4.0-learning-r1/linux-x86_64"
+ipc_directory: "/tmp/daedalus-learning-1000"
+model_path: "/home/potato/Projects/仿真/models/engines/windows/armor-0526-fp32-converted.onnx"
+score_threshold: 0.50
+nms_threshold: 0.45
+small_armor_width_m: 0.135
+big_armor_width_m: 0.225
+armor_height_m: 0.055
+min_detect_count: 3
+max_temp_lost_count: 15
+max_observation_gap_s: 0.10
+initial_radius_m: 0.20
+armor_count: 4
+max_frames: 0

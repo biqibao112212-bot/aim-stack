@@ -30,12 +30,11 @@ if ($sim.consumer_guide.path -ne 'SIMULATOR_CONSUMER_GUIDE.md' -or
 }
 
 $expectedMaps = @{
-    normal_map = @('armor', 'F7')
     shooting_range = @('shooting_range', 'F8')
     energy_mechanism = @('energy', 'F9')
 }
 if (@($sim.native_operator_maps).Count -ne $expectedMaps.Count) {
-    throw 'The simulator lock must expose exactly three native operator maps.'
+    throw 'The learning simulator lock must expose exactly Shooting Range and Energy Mechanism.'
 }
 foreach ($map in $sim.native_operator_maps) {
     if (-not $expectedMaps.ContainsKey($map.id)) { throw "Unexpected native map: $($map.id)" }
@@ -73,8 +72,27 @@ if ($forbidden.Count -ne 0) {
 if ($tracked -contains 'Cargo.toml') {
     throw 'A simulator Cargo root must not exist in the consumer repository.'
 }
-if (-not (Select-String -LiteralPath (Join-Path $root 'modules\autoaim\CMakeLists.txt') -Pattern 'find_package\(DaedalusSimSdk 1 REQUIRED CONFIG\)' -Quiet)) {
-    throw 'Auto-aim must consume the published DaedalusSimSdk 1.x package.'
+$researchCmake = Join-Path $root 'modules\autoaim-research\CMakeLists.txt'
+if (-not (Test-Path -LiteralPath $researchCmake) -or
+    -not (Select-String -LiteralPath $researchCmake -Pattern 'find_package\(DaedalusSimSdk 1 REQUIRED CONFIG\)' -Quiet)) {
+    throw 'The sole internal auto-aim research implementation must consume DaedalusSimSdk 1.x.'
+}
+$implementationLockPath = Join-Path $root 'modules\autoaim-research\implementation.lock.json'
+if (-not (Test-Path -LiteralPath $implementationLockPath -PathType Leaf)) {
+    throw 'The internal auto-aim research implementation lock is missing.'
+}
+$implementationLock = Get-Content -LiteralPath $implementationLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($implementationLock.status -ne 'sole_internal_implementation' -or
+    $implementationLock.autoaim.module -ne 'modules/autoaim-research' -or
+    $implementationLock.simulator.exact_release -ne $sim.version -or
+    $implementationLock.autoaim.upstream_commit -ne 'bd9f5e798fa3c6dd3b483ae6627796afb41c608d') {
+    throw 'The internal auto-aim research lock is incomplete or conflicts with simulator.lock.json.'
+}
+$researchCmakeText = Get-Content -LiteralPath $researchCmake -Raw -Encoding UTF8
+if ($researchCmakeText.Contains('../autoaim/') -or
+    $researchCmakeText.Contains('aim_core_from_vivsionn') -or
+    $researchCmakeText.Contains('YpdAngleTracker')) {
+    throw 'The research baseline must not link the legacy auto-aim implementation.'
 }
 
-"consumer_boundary_ok guide=$($sim.consumer_guide.version) native_maps=$(@($sim.native_operator_maps).Count)"
+"consumer_boundary_ok guide=$($sim.consumer_guide.version) native_maps=$(@($sim.native_operator_maps).Count) implementation=$($implementationLock.autoaim.module)"

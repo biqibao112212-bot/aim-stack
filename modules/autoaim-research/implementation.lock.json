@@ -1,0 +1,87 @@
+{
+  "schema": "aim-stack.internal-autoaim-research-lock/v1",
+  "status": "sole_internal_implementation",
+  "scope": [
+    "armor_detection",
+    "pnp_pose_estimation",
+    "11d_ekf_state_estimation",
+    "research_jsonl_logging"
+  ],
+  "simulator": {
+    "requested_version_line": "1.4.0",
+    "exact_release": "1.4.0-learning-r1",
+    "platform": "linux-x86_64",
+    "release_relative_to_workspace": "releases/daedalus-simulator/1.4.0-learning-r1/linux-x86_64",
+    "source_commit": "2983e5532b9ceed2d556c498762552eec22ef294",
+    "release_json_sha256": "44a0e2877d6e06ac6d69119bfebe85dd3b116f9162fe705d363e5ebdfcf2e902",
+    "release_manifest_sha256": "76d50bc2a4968a3bb79ac109ae29dfeb4846130c3b4a3fa30c5e753ae81adc50",
+    "distribution_profile": "learning",
+    "competition_eligible": false,
+    "online_same_exposure_truth": true,
+    "future_truth_included": false
+  },
+  "autoaim": {
+    "module": "modules/autoaim-research",
+    "upstream_repository": "https://github.com/TongjiSuperPower/sp_vision_25",
+    "upstream_commit": "bd9f5e798fa3c6dd3b483ae6627796afb41c608d",
+    "license": "MIT",
+    "legacy_module_status": "retained_for_history_not_an_execution_baseline",
+    "excluded_subsystems": [
+      "legacy_YpdAngleTracker",
+      "gimbal_control",
+      "fire_control",
+      "ballistics",
+      "hit_events",
+      "competition_logic"
+    ],
+    "vendored_sha256": {
+      "LICENSE": "0fa08b8ec95308eb75b21b2a5254928c6107afa362765245cbde8959e087776f",
+      "tasks/auto_aim/armor.cpp": "a1beffd8e2552794920407c08e292fff74ed1be45deb9104eb989259b7853f2b",
+      "tasks/auto_aim/armor.hpp": "d3aecbc8062a76a6d08550649701ba0156a481cd1c8470d5c1e117d117119d96",
+      "tasks/auto_aim/target.cpp": "bda1ca30d70250bbf51b710f4d5583cf7bc641ef075454c705e1be62f6922eba",
+      "tasks/auto_aim/target.hpp": "11a4a253012b03e099646bc00f0dc05d6a1f02f8aea816444244b9382aa8d6a2",
+      "tools/extended_kalman_filter.cpp": "b482d6408d8a8191bf2848f84d1e92e2f86f2c5f1edab7c58945cbfbc924e57c",
+      "tools/extended_kalman_filter.hpp": "6ec0dde11e73315b0c6c602539b6f5a940fec916c1b46330b181535d31fbf7b3",
+      "tools/math_tools.cpp": "4afcef90290b4528955f1f693c80b4889c6ab758bfbc753396bb468201b55bb5",
+      "tools/math_tools.hpp": "9df46c9743276035bedd53f15554a30d991f6b5221ab198cd6bcb800f1d6c899"
+    }
+  },
+  "model": {
+    "relative_to_workspace": "models/engines/windows/armor-0526-fp32-converted.onnx",
+    "bytes": 7924310,
+    "sha256": "1d9233eb74391347d20352cd6cbcb847976784be0ac609ebec2bee626ac1b303",
+    "input": [1, 3, 640, 640],
+    "output": [1, 25200, 22],
+    "note": "ONNX is platform-neutral; the historical directory name does not select a Windows runtime"
+  },
+  "inference_runtime": {
+    "name": "onnxruntime",
+    "version": "1.22.1",
+    "relative_to_workspace": "deps/onnxruntime-linux-x64-1.22.1",
+    "official_package": "Microsoft.ML.OnnxRuntime.1.22.1.nupkg",
+    "official_package_sha256": "2ee0ed327f6cf2b860182bc4f2feb905c44a596cd120a05c510da6e4044a3e58",
+    "libonnxruntime_sha256": "3907398e408dae083deb3439e8f643d9e26180ed614b29cc7d5ec342ce5ce06f",
+    "provider": "CPUExecutionProvider"
+  },
+  "coordinates": {
+    "pnp_input": "opencv_optical_right_down_forward",
+    "world_orientation": "ros_odom_forward_left_up",
+    "research_origin": "same_exposure_gimbal_pivot",
+    "optical_to_camera_link_row_major": [
+      0, 0, 1,
+      -1, 0, 0,
+      0, -1, 0
+    ],
+    "armor_dimensions_m": {
+      "small_width": 0.135,
+      "big_width": 0.225,
+      "height": 0.055
+    }
+  },
+  "truth_policy": {
+    "identity": ["producer_epoch", "frame_seq", "timestamp_ns"],
+    "target_truth_enters_detector_pnp_or_ekf": false,
+    "target_truth_use": "post-update evaluation log only",
+    "external_truth_gimbal_collection": true
+  }
+}

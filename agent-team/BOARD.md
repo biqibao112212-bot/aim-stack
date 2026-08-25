@@ -1,33 +1,23 @@
 # Aim Stack 当前任务板
 
-## 当前状态
+## 已完成
 
-- 生产 detector、PnP、`RobotEstimator`、tracker、predictor 和 fire control 均未因离线研究而改变。
-- V12 角点修复器与 V13 同帧 benefit gate 已通过 V17 fresh validation 和 V18 sealed test，
-  但只获得“离线候选”资格；线上接入仍需单独的 C++/ONNX A/B、时延和部署审批。
-- `training/armor_pose` 正在研究同帧概率角点与图像证据能否把 raw-YOLO PnP 的 position、depth
-  和 ray P95 至少降低 30%。H1 的无条件稀疏概率角点和 H2 的同一单应重采样 dense PnP 已否定。
-- 当前最佳 V20 observable gate 仍是开发集结果，未达到 position/depth 30% 目标，也不能作为
-  泛化或部署结论。权威状态与数字只保存在 `training/armor_pose/research-state.yaml` 和
-  `training/armor_pose/findings.md`。
+- 锁定 Daedalus `1.4.0-learning-r1` 为内部唯一模拟器。
+- 建立 `modules/autoaim-research`，固定同济 YOLO/IPPE/11D EKF 上游提交。
+- 完成受保护 ONNX 模型路径、ONNX Runtime 1.22.1、ROS odom 坐标和同曝光真值日志适配。
+- 通过构建、核心单测、模型形状冒烟和 1.4.0 真实帧端到端冒烟。
 
-## 进行中
+## 下一步（尚未采集）
 
-- V21：高分辨率双尺度图像输入、dense pixel-to-corner voting、四角概率分布与
-  probabilistic PnP。目标是增加独立图像证据，而不是从同一四角单应重复生成伪对应点。
-- 在线输入限于同一帧 RGB、原始检测角点、相机内参和 ROI 几何；truth、motion label、
-  physical identity、future 和 tracker history 均不得进入推理。
+使用同一版本组合分别采集 20 秒：
 
-## 下一步
+1. 原地旋转：真值角速度 `8 rad/s`。
+2. 平移：真值线速度约 `1.5 m/s`。
+3. 平移 + 旋转：真值线速度 `1 m/s`，角速度 `6 rad/s`。
 
-1. 完成 V21 的可复现训练与开发集检查；失败时保留负证据，不继续围绕同一表示调阈值。
-2. 候选冻结后采集新的 session-disjoint validation；达到预注册门槛后才能开启一次 sealed test。
-3. 只有离线验收通过且用户另行批准，才提出生产集成；必须保留 raw/repaired 双路对照和
-   fail-closed 回退。
+每组都输出角速度、中心线速度、长短半径与真值对比，以及真值与观测/估计轨迹的俯视图。
+正式采集前先固定场景、目标 ID、初始位姿、真值云台策略、采样率和 manifest；冒烟数据不得进入教程图表。
 
-## 不可越过的门禁
+## 保留
 
-- V15/V18 sealed evidence 不得用于后续模型、阈值、样本或超参数选择。
-- train/validation/test 按完整 session 隔离，并验证 raw frame、label、identity 与 SHA-256 闭合。
-- GPU 研究请求 fail closed，不允许静默回退 CPU；生产候选还需 ONNX/C++ 数值一致性与时延预算。
-- 未获单独批准前，不修改生产 PnP、tracker、predictor、fire control、模拟器或 SDK。
+旧教程图、旧数据、旧代码和历史实验暂不删除；它们仅供重写时取证，不构成当前结论。
