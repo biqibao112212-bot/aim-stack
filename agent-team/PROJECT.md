@@ -15,6 +15,8 @@
 - 目标真值只能在估计器更新后用于记录、匹配和评估；不得进入 detector、PnP 或 EKF。
 - 图像、曝光位姿和真值必须以
   `(producer_epoch, frame_seq, timestamp_ns)` 精确联结。
+- 正式数据采集只使用无前端的 Release 高性能模式；必须保存曝光时间戳，
+  并分别报告处理 FPS 和源序列推进速率。
 
 ## 受保护资产
 
@@ -28,3 +30,4 @@
 - 模拟器锁：`simulator.lock.json`
 - 当前任务：`agent-team/BOARD.md`
 - 长期决策：`agent-team/DECISIONS.md`
+- 已接受的 EKF 异常基线：`modules/autoaim-research/experiments/ekf11-baseline`

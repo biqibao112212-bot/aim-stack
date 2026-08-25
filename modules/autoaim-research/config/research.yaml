@@ -13,3 +13,4 @@ max_observation_gap_s: 0.10
 initial_radius_m: 0.20
 armor_count: 4
 max_frames: 0
+duration_s: 0.0

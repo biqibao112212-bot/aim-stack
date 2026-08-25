@@ -68,6 +68,12 @@ target_link_libraries(autoaim_research_runner PRIVATE
   DaedalusSimSdk::DaedalusSimSdk
 )
 
+add_executable(autoaim_research_truth_gimbal src/truth_gimbal_controller.cpp)
+target_link_libraries(autoaim_research_truth_gimbal PRIVATE
+  Eigen3::Eigen
+  DaedalusSimSdk::DaedalusSimSdk
+)
+
 include(CTest)
 if(BUILD_TESTING)
   find_package(Python3 REQUIRED COMPONENTS Interpreter)

@@ -63,6 +63,25 @@ CTest 同时校验 vendored 源文件、模型、模拟器 Release 和 ONNX Runt
 
 ## 运行
 
+正式实验只允许使用 Release 的 `--performance` 模式：不创建可见窗口，不使用源码
+debug/visible 运行替代 Release。每份数据必须保存曝光时间戳，并在汇总中分别计算
+算法处理 FPS 与源 `frame_seq` 推进速率，不将两者混为同一个“帧率”。
+
+三组锁定工况的推荐入口是：
+
+```bash
+python3 modules/autoaim-research/experiments/ekf11-baseline/collect.py \
+  --output-root /home/potato/Projects/仿真/runtime/autoaim-research/<new-run-id> \
+  --duration-s 20 --settle-s 1
+```
+
+该脚本会为每个工况重启独立的高性能 Release，通过公开 SDK 设置靶车运动，
+启动与被测 estimator 隔离的真值云台，并对时间窗、运动真值和三元身份做
+fail-closed 验收。已接受的数据、图和指标见
+[`experiments/ekf11-baseline`](experiments/ekf11-baseline/README.md)。
+
+单独调试 runner 时可使用两个终端：
+
 终端 A：
 
 ```bash
@@ -81,7 +100,7 @@ CTest 同时校验 vendored 源文件、模型、模拟器 Release 和 ONNX Runt
 
 `--model` 可以显式覆盖 ONNX 路径。输出文件必须不存在，程序拒绝覆盖。每行保存完整
 `producer_epoch + frame_seq + timestamp_ns`、PnP 观测、11 维 EKF 状态、匹配的同曝光真值和
-匹配误差。
+匹配误差。`--duration-s 20` 按曝光时间截取窗口；`--max-frames` 只适用于冒烟调试。
 
 `ekf_state` 的顺序与同济上游一致：
 `[cx, vx, cy, vy, cz, vz, yaw, omega, r_even, r_odd-r_even, h_odd-h_even]`。
@@ -93,4 +112,5 @@ PnP 输出先使用 OpenCV optical `(+x 右, +y 下, +z 前)`，再转到 ROS ca
 `(+x 前, +y 左, +z 上)`，最后由同一曝光的相机世界位姿转到 ROS odom 方向。研究坐标系
 保持 ROS odom 轴方向，原点移到该曝光时的云台轴心。
 
-目前只完成构建、模型形状和 1.4.0 真实帧冒烟验证；用于教程的三组 20 秒正式实验尚未采集。
+三组 20 秒基线已于 `20260825-ekf11-baseline-r2` 采集并锁定。它们只是“观察到异常”
+的起点数据，不直接证明 PnP、EKF 结构或某个参数是唯一原因。

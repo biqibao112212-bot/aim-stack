@@ -41,6 +41,7 @@ struct RuntimeConfig {
   autoaim_research::ArmorGeometry geometry;
   autoaim_research::TrackerConfig tracker;
   std::uint64_t max_frames = 0;
+  double duration_s = 0.0;
 };
 
 RuntimeConfig loadConfig(const std::string& path) {
@@ -63,6 +64,10 @@ RuntimeConfig loadConfig(const std::string& path) {
   double max_frames = 0.0;
   file["max_frames"] >> max_frames;
   config.max_frames = max_frames > 0.0 ? static_cast<std::uint64_t>(max_frames) : 0;
+  file["duration_s"] >> config.duration_s;
+  if (!std::isfinite(config.duration_s) || config.duration_s < 0.0) {
+    throw std::runtime_error("duration_s must be finite and non-negative");
+  }
   return config;
 }
 
@@ -79,6 +84,7 @@ void parseArguments(int argc, char** argv, RuntimeConfig* config,
     else if (argument == "--ipc-dir") config->ipc_directory = value();
     else if (argument == "--output") config->output_path = value();
     else if (argument == "--max-frames") config->max_frames = std::stoull(value());
+    else if (argument == "--duration-s") config->duration_s = std::stod(value());
     else throw std::runtime_error("unknown argument: " + argument);
   }
 }
@@ -316,6 +322,7 @@ int main(int argc, char** argv) {
     if (!overrides.ipc_directory.empty()) config.ipc_directory = overrides.ipc_directory;
     if (!overrides.output_path.empty()) config.output_path = overrides.output_path;
     if (overrides.max_frames != 0) config.max_frames = overrides.max_frames;
+    if (overrides.duration_s > 0.0) config.duration_s = overrides.duration_s;
 
     if (!std::filesystem::is_regular_file(
             std::filesystem::path(config.simulator_release_root) / "release.json")) {
@@ -376,6 +383,7 @@ int main(int argc, char** argv) {
 
     std::uint64_t after_sequence = 0;
     std::uint64_t accepted = 0;
+    std::uint64_t first_timestamp_ns = 0;
     while (running.load() && (config.max_frames == 0 || accepted < config.max_frames)) {
       const auto frame_result = simulator.nextFrame(after_sequence);
       if (!frame_result) {
@@ -410,6 +418,17 @@ int main(int argc, char** argv) {
           tracker.update(solved, frame.image.header.capture_timestamp_ns);
       writeFrame(*output, frame.image, *exact.value, solved, tracker_snapshot);
       ++accepted;
+      if (first_timestamp_ns == 0) {
+        first_timestamp_ns = frame.image.header.capture_timestamp_ns;
+      }
+      if (config.duration_s > 0.0 &&
+          frame.image.header.capture_timestamp_ns >= first_timestamp_ns &&
+          static_cast<double>(frame.image.header.capture_timestamp_ns -
+                              first_timestamp_ns) *
+                  1e-9 >=
+              config.duration_s) {
+        break;
+      }
     }
     simulator.close();
     return 0;

@@ -1,0 +1,57 @@
+{
+  "schema": "aim-stack.ekf11-baseline-summary/v1",
+  "collection_manifest": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-baseline-r2/collection-manifest.json",
+  "scenarios": {
+    "spin_8": {
+      "records": 948,
+      "duration_s": 20.013283517,
+      "processed_event_fps": 47.3185721471234,
+      "source_sequence_rate_hz": 241.63950887380014,
+      "detected_event_fps": 47.36853896037273,
+      "ekf_estimate_fps": 47.36853896037273,
+      "source_frames_skipped": 3889,
+      "inter_event_ms_median": 20.736672000000002,
+      "inter_event_ms_p95": 28.152515100000002,
+      "truth_speed_mps_median": 0.0,
+      "truth_abs_omega_rad_s_median": 8.0,
+      "omega_rmse_rad_s": 0.7735625755792639,
+      "center_speed_rmse_mps": 0.1717070343083106,
+      "radius_even_rmse_m": 0.022108361055937557,
+      "radius_odd_rmse_m": 0.018048152626749595
+    },
+    "translate_1p5": {
+      "records": 925,
+      "duration_s": 20.004734013,
+      "processed_event_fps": 46.18906701781399,
+      "source_sequence_rate_hz": 229.7456190626332,
+      "detected_event_fps": 43.73964679717234,
+      "ekf_estimate_fps": 45.989114346741204,
+      "source_frames_skipped": 3672,
+      "inter_event_ms_median": 21.234375999999997,
+      "inter_event_ms_p95": 29.404987350000003,
+      "truth_speed_mps_median": 1.5000000000000016,
+      "truth_abs_omega_rad_s_median": 0.0,
+      "omega_rmse_rad_s": 0.6499587440518894,
+      "center_speed_rmse_mps": 0.3509169243104188,
+      "radius_even_rmse_m": 0.07003238311736329,
+      "radius_odd_rmse_m": 0.10816250955557263
+    },
+    "translate_1_spin_6": {
+      "records": 846,
+      "duration_s": 20.00310434,
+      "processed_event_fps": 42.243443099492424,
+      "source_sequence_rate_hz": 210.6673008535634,
+      "detected_event_fps": 40.94364485027727,
+      "ekf_estimate_fps": 42.29343533984685,
+      "source_frames_skipped": 3369,
+      "inter_event_ms_median": 23.999807,
+      "inter_event_ms_p95": 30.999081399999998,
+      "truth_speed_mps_median": 1.0000000000000009,
+      "truth_abs_omega_rad_s_median": 6.0,
+      "omega_rmse_rad_s": 0.6532041516929865,
+      "center_speed_rmse_mps": 0.17643414221688278,
+      "radius_even_rmse_m": 0.04212660781232703,
+      "radius_odd_rmse_m": 0.031479387255766614
+    }
+  }
+}

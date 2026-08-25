@@ -1,0 +1,24 @@
+{
+  "schema": "aim-stack.ekf11-baseline-accepted-run/v1",
+  "run_id": "20260825-ekf11-baseline-r2",
+  "status": "accepted",
+  "raw_root": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-baseline-r2",
+  "collection_manifest_sha256": "a6d3dc616ff6436541d252465cab11c72a67cd579ccb66d864180f6965f1ffae",
+  "simulator": {
+    "release": "1.4.0-learning-r1",
+    "mode": "release_headless_high_performance",
+    "visible_frontend": false
+  },
+  "estimator": "modules/autoaim-research Tongji sp_vision_25 11D EKF",
+  "window_s": 20.0,
+  "raw_jsonl_sha256": {
+    "spin_8": "9dc8d78581f494eab45dbbd3e12203cce82fc968fde262cb8e6302d22a408933",
+    "translate_1p5": "fa71d314447ff993c4d76a826a9cceb8a44155a3542ccfafbea79c5f77bc9557",
+    "translate_1_spin_6": "bd61d965da2ebc6d552285e23e3743e73bb8e58c0bfa1e5c9c73e483de492e5d"
+  },
+  "figure_summary_sha256": "4bf1a9305519743cfb1c688777c8911000cefa3a2865d7c19acd13f6ccaacd10",
+  "excluded_run": {
+    "run_id": "20260825-ekf11-baseline-r1",
+    "reason": "Release stripped development motion environment variables; all three scenarios were stationary."
+  }
+}
