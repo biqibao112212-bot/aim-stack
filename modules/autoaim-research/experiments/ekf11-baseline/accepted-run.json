@@ -38,7 +38,7 @@
     "summary_sha256": "843de504eaaec64194193409c0faca6ad602b34d4ef0b1b8f795d0ae5e6e605b",
     "png_sha256": "ceecb4d7f4b4fdac32093c0451de45944150d98474b735e2fe670d486b2ed0ce",
     "pdf_sha256": "ddae962a0c63ab25fe905f40e5050c161b49709d31cdda5a86792bc41c4f9771",
-    "svg_sha256": "778f24c664059e6a2f1bbeb72738f6bcf3f5327441417bc9e26b430c65c7dadb"
+    "svg_sha256": "3f4da17eaca9d2a999a498f09e52bd0c536c60b2114dce8269e525bb3ca93140"
   },
   "cpu_comparison_run": {
     "run_id": "20260825-ekf11-baseline-r2",

@@ -340,9 +340,17 @@ def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> 
                 "ModDate": None,
             },
         )
+        svg_path = output_base.with_suffix(".svg")
         figure.savefig(
-            output_base.with_suffix(".svg"),
+            svg_path,
             metadata={"Creator": "aim-stack ekf11 baseline", "Date": None},
+        )
+        # Matplotlib writes path-data lines with trailing spaces.  Normalize
+        # them so the tracked vector artifact passes Git whitespace checks.
+        svg_lines = svg_path.read_text(encoding="utf-8").splitlines()
+        svg_path.write_text(
+            "\n".join(line.rstrip() for line in svg_lines) + "\n",
+            encoding="utf-8",
         )
         plt.close(figure)
 
