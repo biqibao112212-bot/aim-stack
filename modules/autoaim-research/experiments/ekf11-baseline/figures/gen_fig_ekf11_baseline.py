@@ -10,6 +10,7 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 
 COLORS = {
@@ -19,6 +20,8 @@ COLORS = {
     "secondary": "#CC79A7",
     "neutral": "#5B6573",
 }
+
+SLOT_COLORS = ("#E69F00", "#56B4E9", "#009E73", "#CC79A7")
 
 SCENARIO_TITLES = {
     "spin_8": r"Stationary spin: $\omega=8\,\mathrm{rad/s}$",
@@ -104,7 +107,32 @@ def metrics(rows: list[dict]) -> dict:
     velocity_truth = vec(rows, "truth", "velocity_mps", 3)
     speed_est = np.linalg.norm(velocity_est, axis=1)
     speed_truth = np.linalg.norm(velocity_truth, axis=1)
-    return {
+    pnp = vec(rows, "primary_pnp", "xyz_m", 3)
+    armor_truth = vec(rows, "truth", "armor_m", 3)
+    slots = scalar(rows, "truth", "matched_armor_slot")
+    observation_mask = (
+        np.all(np.isfinite(pnp), axis=1)
+        & np.all(np.isfinite(armor_truth), axis=1)
+        & np.isfinite(slots)
+    )
+    radial_absolute = np.asarray([], dtype=float)
+    transverse = np.asarray([], dtype=float)
+    slot_switches = 0
+    if np.any(observation_mask):
+        error = pnp[observation_mask] - armor_truth[observation_mask]
+        truth_range = np.linalg.norm(armor_truth[observation_mask], axis=1)
+        valid_range = truth_range > 1e-9
+        line_of_sight = (
+            armor_truth[observation_mask][valid_range]
+            / truth_range[valid_range, np.newaxis]
+        )
+        error = error[valid_range]
+        radial = np.sum(error * line_of_sight, axis=1)
+        radial_absolute = np.abs(radial)
+        transverse = np.linalg.norm(error - radial[:, np.newaxis] * line_of_sight, axis=1)
+        observed_slots = slots[observation_mask].astype(int)
+        slot_switches = int(np.sum(observed_slots[1:] != observed_slots[:-1]))
+    result = {
         "records": len(rows),
         "duration_s": duration,
         "processed_event_fps": (len(rows) - 1) / duration,
@@ -126,7 +154,18 @@ def metrics(rows: list[dict]) -> dict:
             scalar(rows, "ekf_estimate", "radius_odd_m"),
             scalar(rows, "truth", "radius_odd_m"),
         ),
+        "matched_armor_slot_switches": slot_switches,
     }
+    if radial_absolute.size:
+        result.update(
+            {
+                "pnp_abs_radial_error_m_median": float(np.median(radial_absolute)),
+                "pnp_abs_radial_error_m_p95": float(np.percentile(radial_absolute, 95)),
+                "pnp_transverse_error_m_median": float(np.median(transverse)),
+                "pnp_transverse_error_m_p95": float(np.percentile(transverse, 95)),
+            }
+        )
+    return result
 
 
 def plot_scenario(scenario_id: str, rows: list[dict], output_dir: Path) -> dict:
@@ -152,6 +191,7 @@ def plot_scenario(scenario_id: str, rows: list[dict], output_dir: Path) -> dict:
     center_est = vec(rows, "ekf_estimate", "center_m", 3)
     center_truth = vec(rows, "truth", "center_m", 3)
     armor_truth = vec(rows, "truth", "armor_m", 3)
+    slots = scalar(rows, "truth", "matched_armor_slot")
     summary = metrics(rows)
 
     fig, axes = plt.subplots(2, 2, figsize=(11.2, 7.6), constrained_layout=True)
@@ -189,28 +229,56 @@ def plot_scenario(scenario_id: str, rows: list[dict], output_dir: Path) -> dict:
     armor_mask = np.isfinite(armor_truth[:, 0]) & np.isfinite(armor_truth[:, 1])
     estimate_mask = np.isfinite(center_est[:, 0]) & np.isfinite(center_est[:, 1])
     truth_mask = np.isfinite(center_truth[:, 0]) & np.isfinite(center_truth[:, 1])
-    ax.scatter(pnp[pnp_mask, 0], pnp[pnp_mask, 1], s=8, alpha=0.28,
-               color=COLORS["observation"], label="PnP observation", rasterized=True)
-    ax.scatter(armor_truth[armor_mask, 0], armor_truth[armor_mask, 1],
-               s=7, color=COLORS["truth"], alpha=0.65,
-               label="True observed armor", rasterized=True)
-    ax.plot(center_est[estimate_mask, 0], center_est[estimate_mask, 1],
+    for slot, color in enumerate(SLOT_COLORS):
+        slot_mask = slots == slot
+        observed_slot = pnp_mask & slot_mask
+        truth_slot = armor_mask & slot_mask
+        ax.scatter(
+            pnp[observed_slot, 1], pnp[observed_slot, 0],
+            s=9, alpha=0.25, color=color, linewidths=0,
+            rasterized=True,
+        )
+        ax.scatter(
+            armor_truth[truth_slot, 1], armor_truth[truth_slot, 0],
+            s=11, alpha=0.72, color=color, marker="x", linewidths=0.75,
+            rasterized=True,
+        )
+    ax.plot(center_est[estimate_mask, 1], center_est[estimate_mask, 0],
             color=COLORS["estimate"], linewidth=1.5, label="EKF center")
-    ax.plot(center_truth[truth_mask, 0], center_truth[truth_mask, 1],
+    ax.plot(center_truth[truth_mask, 1], center_truth[truth_mask, 0],
             color="#111111", linestyle="--", linewidth=1.3, label="True center")
     if np.any(truth_mask):
-        ax.scatter(center_truth[truth_mask][0, 0], center_truth[truth_mask][0, 1],
+        ax.scatter(center_truth[truth_mask][0, 1], center_truth[truth_mask][0, 0],
                    marker="x", s=36, color="#111111", linewidths=1.3,
                    label="True center start")
-    ax.set(xlabel="x forward (m)", ylabel="y left (m)",
-           title="D  Top view: observation and reconstructed motion")
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.legend(ncol=2, loc="best")
+    top_view_title = "D  Top view (x-forward points upward; color = armor slot)"
+    if summary.get("pnp_abs_radial_error_m_median") is not None:
+        top_view_title += (
+            "\n"
+            f"{summary['matched_armor_slot_switches']} slot switches | "
+            f"median |radial| {summary['pnp_abs_radial_error_m_median']:.3f} m | "
+            f"transverse {summary['pnp_transverse_error_m_median']:.3f} m"
+        )
+    ax.set(xlabel="y left (m)", ylabel="x forward (m)",
+           title=top_view_title)
+    ax.set_aspect("equal", adjustable="box")
+    trace_handles = [
+        Line2D([], [], marker="o", linestyle="None", markersize=4,
+               markerfacecolor="#555555", markeredgewidth=0,
+               label="PnP observation"),
+        Line2D([], [], marker="x", linestyle="None", markersize=5,
+               color="#555555", label="Same-exposure truth armor"),
+        Line2D([], [], color=COLORS["estimate"], label="EKF center"),
+        Line2D([], [], color="#111111", linestyle="--", label="True center"),
+    ]
+    trace_legend = ax.legend(handles=trace_handles, ncol=2, loc="upper left")
+    ax.add_artist(trace_legend)
 
     fig.suptitle(
         SCENARIO_TITLES[scenario_id]
         + "\n"
-        + f"20 s timestamp window | processed {summary['processed_event_fps']:.1f} FPS | "
+        + f"{summary['duration_s']:.1f} s timestamp window | "
+        + f"processed {summary['processed_event_fps']:.1f} FPS | "
         + f"source sequence {summary['source_sequence_rate_hz']:.1f} Hz",
         fontsize=13,
         fontweight="bold",

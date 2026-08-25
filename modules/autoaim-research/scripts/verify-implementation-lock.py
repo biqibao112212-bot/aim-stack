@@ -47,6 +47,18 @@ def main() -> int:
             workspace / lock["model"]["relative_to_workspace"],
             lock["model"]["sha256"],
         )
+        engine = lock["tensorrt_engine"]
+        require_hash(
+            workspace / engine["relative_to_workspace"], engine["sha256"]
+        )
+        require_hash(
+            workspace / engine["metadata_relative_to_workspace"],
+            engine["metadata_sha256"],
+        )
+        require_hash(
+            workspace / engine["source_relative_to_workspace"],
+            engine["source_sha256"],
+        )
         release = workspace / lock["simulator"]["release_relative_to_workspace"]
         require_hash(
             release / "release.json", lock["simulator"]["release_json_sha256"]
@@ -57,14 +69,24 @@ def main() -> int:
         )
         runtime = workspace / lock["inference_runtime"]["relative_to_workspace"]
         require_hash(
-            runtime / "lib" / "libonnxruntime.so",
-            lock["inference_runtime"]["libonnxruntime_sha256"],
+            runtime / "libnvinfer.so.11.2.1",
+            lock["inference_runtime"]["libnvinfer_sha256"],
+        )
+        require_hash(
+            runtime / "libnvonnxparser.so.11.2.1",
+            lock["inference_runtime"]["libnvonnxparser_sha256"],
+        )
+        fallback = lock["inference_runtime"]["fallback"]
+        require_hash(
+            workspace / fallback["relative_to_workspace"] / "lib" / "libonnxruntime.so",
+            fallback["libonnxruntime_sha256"],
         )
 
     print(
         "implementation_lock_ok "
         f"upstream={lock['autoaim']['upstream_commit']} "
-        f"simulator={lock['simulator']['exact_release']}"
+        f"simulator={lock['simulator']['exact_release']} "
+        f"inference={lock['inference_runtime']['name']}-{lock['inference_runtime']['version']}"
     )
     return 0
 

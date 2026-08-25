@@ -1,24 +1,51 @@
 {
-  "schema": "aim-stack.ekf11-baseline-accepted-run/v1",
-  "run_id": "20260825-ekf11-baseline-r2",
+  "schema": "aim-stack.ekf11-baseline-accepted-run/v2",
+  "run_id": "20260825-ekf11-tensorrt-r2",
   "status": "accepted",
-  "raw_root": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-baseline-r2",
-  "collection_manifest_sha256": "a6d3dc616ff6436541d252465cab11c72a67cd579ccb66d864180f6965f1ffae",
+  "raw_root": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-tensorrt-r2",
+  "collection_manifest_sha256": "0cd92b2bff0a8f1ca015780e5406acfeeb6801e14e7847a886737a212b20c4ec",
+  "implementation_lock_sha256": "8d59fd881848564938c024fe250de5a938f22c7d03b7349e3cdcf856fec0457e",
   "simulator": {
     "release": "1.4.0-learning-r1",
     "mode": "release_headless_high_performance",
     "visible_frontend": false
   },
   "estimator": "modules/autoaim-research Tongji sp_vision_25 11D EKF",
+  "inference": {
+    "backend": "tensorrt_fp16",
+    "tensorrt": "11.2.1",
+    "cuda": "13.3",
+    "engine_sha256": "4b94da29b3e19b8b755320839fceaddb1bc1107e4663196f2ad6bdb330a02e5e"
+  },
   "window_s": 20.0,
   "raw_jsonl_sha256": {
-    "spin_8": "9dc8d78581f494eab45dbbd3e12203cce82fc968fde262cb8e6302d22a408933",
-    "translate_1p5": "fa71d314447ff993c4d76a826a9cceb8a44155a3542ccfafbea79c5f77bc9557",
-    "translate_1_spin_6": "bd61d965da2ebc6d552285e23e3743e73bb8e58c0bfa1e5c9c73e483de492e5d"
+    "spin_8": "41eb313753027c94140a8590209b8e13a6de87c872bbdfbc464b7a77adf6c289",
+    "translate_1p5": "af79e616d2b1f179789f7f01753f6be7606f72956ee6fdc7c8b53c3f08de2fcd",
+    "translate_1_spin_6": "08b4ba8c9f2aff80f4d258eb8c197c8929df06a7b5ed1daa399c90c3098b9022"
   },
-  "figure_summary_sha256": "4bf1a9305519743cfb1c688777c8911000cefa3a2865d7c19acd13f6ccaacd10",
-  "excluded_run": {
-    "run_id": "20260825-ekf11-baseline-r1",
-    "reason": "Release stripped development motion environment variables; all three scenarios were stationary."
-  }
+  "figures": {
+    "summary_sha256": "e9a3dcf0f6c0dfa3be3e31d2108e7b14faaf834d95ebcc9404f10b25d79ce93d",
+    "png_sha256": {
+      "spin_8": "4bb6833c1db92166d9fc1290ed8f77a4edc7d70b45d43d6928fe495e8f93c1dc",
+      "translate_1p5": "c4c6f222a9bf1a2122bb19d301cc55efbcdb9cb133a06172bc1630f06f6960ac",
+      "translate_1_spin_6": "8fd57e23a842893c6f092a5c6cd23af957d7dd1977d7e1f7a940a933eb209708"
+    }
+  },
+  "cpu_comparison_run": {
+    "run_id": "20260825-ekf11-baseline-r2",
+    "raw_root": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-baseline-r2",
+    "collection_manifest_sha256": "a6d3dc616ff6436541d252465cab11c72a67cd579ccb66d864180f6965f1ffae",
+    "backend": "onnxruntime_cpu",
+    "purpose": "same-model processing-rate and estimator comparison"
+  },
+  "excluded_runs": [
+    {
+      "run_id": "20260825-ekf11-baseline-r1",
+      "reason": "Release stripped development motion environment variables; all three scenarios were stationary."
+    },
+    {
+      "run_id": "20260825-ekf11-tensorrt-r1",
+      "reason": "Collection stopped at 14.48 s after a transient exact-exposure ground-truth history join miss, before the runner implemented bounded retry."
+    }
+  ]
 }

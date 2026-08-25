@@ -15,8 +15,9 @@
 | --- | --- |
 | 模拟器 | Daedalus `1.4.0-learning-r1` Linux x86_64 |
 | 上游自动瞄准 | Tongji `sp_vision_25@bd9f5e798fa3c6dd3b483ae6627796afb41c608d` |
-| 检测模型 | `armor-0526-fp32-converted.onnx`，`1x25200x22` |
-| 推理运行时 | ONNX Runtime `1.22.1` CPU |
+| 检测模型 | 实车同源 `armor-0526-fp16.onnx`，`1x25200x22` |
+| 默认推理 | TensorRT `11.2.1` + CUDA `13.3`，FP16，RTX 4060 `sm_89` engine |
+| 对照后端 | ONNX Runtime `1.22.1` CPU，只用于同模型 A/B |
 | 位姿 | 同济 IPPE 流程，尺寸适配为 `135/225 x 55 mm` |
 | 跟踪 | 同济 `Target` 的 11 维 EKF |
 
@@ -33,14 +34,21 @@ tracker 实现。
 
 ## Ubuntu 24.04 构建
 
-先安装常规依赖：
+当前固定为 NVIDIA 路线。先安装常规依赖，并准备 CUDA `13.3`、
+TensorRT `11.2.1` 和支持 `sm_89` 的 NVIDIA 驱动：
 
 ```bash
 sudo apt update
 sudo apt install -y build-essential cmake libeigen3-dev libopencv-dev curl unzip
 ```
 
-ONNX Runtime 被固定在工作区 `deps` 中。新机器上可用带哈希校验的安装脚本：
+TensorRT 头文件和动态库固定在
+`deps/tensorrt-11.2.1-cuda13.3/root`；模型和 engine 存放在受保护的
+`models/engines/linux`，不进入 Git。engine 与 GPU 架构绑定；换用其他架构时，
+应用同一 FP16 ONNX 重建，不应直接复制 `sm_89` engine。
+
+ONNX Runtime 仍固定在工作区 `deps` 中，用于 CPU 对照和回归测试。
+新机器上可用带哈希校验的安装脚本：
 
 ```bash
 ./modules/autoaim-research/scripts/install-onnxruntime-1.22.1.sh \
@@ -58,8 +66,15 @@ cmake --build build/autoaim-research --parallel
 ctest --test-dir build/autoaim-research --output-on-failure
 ```
 
-CTest 同时校验 vendored 源文件、模型、模拟器 Release 和 ONNX Runtime 哈希；任何一项漂移都
-会 fail closed。
+engine 缺失时，先完成上述构建，再运行：
+
+```bash
+python3 modules/autoaim-research/scripts/build-tensorrt-engine.py
+```
+
+构建器拒绝覆盖既有受保护 engine。CTest 同时校验 vendored 源文件、模型、
+TensorRT engine/运行库、模拟器 Release 和 CPU 对照后端的哈希；任何一项漂移
+都会 fail closed。
 
 ## 运行
 
@@ -98,9 +113,13 @@ fail-closed 验收。已接受的数据、图和指标见
   --max-frames 1000
 ```
 
-`--model` 可以显式覆盖 ONNX 路径。输出文件必须不存在，程序拒绝覆盖。每行保存完整
+TensorRT 是默认后端，`--engine` 可以显式覆盖 engine 路径。仅在做 CPU
+对照时使用 `--backend onnxruntime_cpu --model <onnx>`。输出文件必须不存在，
+程序拒绝覆盖。每行保存完整
 `producer_epoch + frame_seq + timestamp_ns`、PnP 观测、11 维 EKF 状态、匹配的同曝光真值和
-匹配误差。`--duration-s 20` 按曝光时间截取窗口；`--max-frames` 只适用于冒烟调试。
+匹配误差，并记录 GPU 预处理、推理、回传、后处理、PnP、tracker 和完整
+pipeline 的分阶段耗时。`--duration-s 20` 按曝光时间截取窗口；
+`--max-frames` 只适用于冒烟调试。
 
 `ekf_state` 的顺序与同济上游一致：
 `[cx, vx, cy, vy, cz, vz, yaw, omega, r_even, r_odd-r_even, h_odd-h_even]`。
@@ -112,5 +131,7 @@ PnP 输出先使用 OpenCV optical `(+x 右, +y 下, +z 前)`，再转到 ROS ca
 `(+x 前, +y 左, +z 上)`，最后由同一曝光的相机世界位姿转到 ROS odom 方向。研究坐标系
 保持 ROS odom 轴方向，原点移到该曝光时的云台轴心。
 
-三组 20 秒基线已于 `20260825-ekf11-baseline-r2` 采集并锁定。它们只是“观察到异常”
-的起点数据，不直接证明 PnP、EKF 结构或某个参数是唯一原因。
+三组 20 秒 TensorRT 高帧率基线已于 `20260825-ekf11-tensorrt-r2`
+采集并锁定；原 CPU 数据 `20260825-ekf11-baseline-r2` 保留为帧率对照。
+它们是“观察到异常”的起点数据，不直接证明 PnP、EKF 结构或某个参数是
+唯一原因。

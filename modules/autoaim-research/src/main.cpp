@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <csignal>
 #include <cstdint>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 #include <Eigen/Geometry>
 #include <opencv2/imgproc.hpp>
@@ -35,6 +37,8 @@ struct RuntimeConfig {
   std::string simulator_release_root;
   std::string ipc_directory;
   std::string model_path;
+  std::string engine_path;
+  std::string inference_backend;
   std::string output_path;
   float score_threshold = 0.5F;
   float nms_threshold = 0.45F;
@@ -51,6 +55,8 @@ RuntimeConfig loadConfig(const std::string& path) {
   file["simulator_release_root"] >> config.simulator_release_root;
   file["ipc_directory"] >> config.ipc_directory;
   file["model_path"] >> config.model_path;
+  file["engine_path"] >> config.engine_path;
+  file["inference_backend"] >> config.inference_backend;
   file["score_threshold"] >> config.score_threshold;
   file["nms_threshold"] >> config.nms_threshold;
   file["small_armor_width_m"] >> config.geometry.small_width_m;
@@ -81,6 +87,8 @@ void parseArguments(int argc, char** argv, RuntimeConfig* config,
     };
     if (argument == "--config") *config_path = value();
     else if (argument == "--model") config->model_path = value();
+    else if (argument == "--engine") config->engine_path = value();
+    else if (argument == "--backend") config->inference_backend = value();
     else if (argument == "--ipc-dir") config->ipc_directory = value();
     else if (argument == "--output") config->output_path = value();
     else if (argument == "--max-frames") config->max_frames = std::stoull(value());
@@ -128,6 +136,7 @@ struct TruthMatch {
   Eigen::Vector3d armor_position_m{Eigen::Vector3d::Zero()};
   double center_error_m = std::numeric_limits<double>::infinity();
   double armor_error_m = std::numeric_limits<double>::infinity();
+  double view_angle_error_rad = std::numeric_limits<double>::infinity();
 };
 
 Eigen::Vector3d targetCenter(const GroundTruthTarget& target,
@@ -156,12 +165,17 @@ TruthMatch selectResearchTarget(const GroundTruthBatch& truth,
                                 const autoaim_research::TrackerSnapshot& tracker) {
   TruthMatch match;
   const auto_aim::Armor* observation = primaryObservation(solved);
+  const bool has_observation = observation != nullptr;
   const bool has_tracker_center =
       tracker.has_estimate && tracker.state_vector.size() == 11;
   const Eigen::Vector3d tracker_center = has_tracker_center
       ? Eigen::Vector3d(tracker.state_vector[0], tracker.state_vector[2],
                         tracker.state_vector[4])
       : Eigen::Vector3d::Zero();
+  const Eigen::Quaterniond world_from_camera =
+      exposurePose(exposure).world_from_camera_link.normalized();
+  const Eigen::Vector3d camera_forward_world =
+      world_from_camera * Eigen::Vector3d::UnitX();
 
   for (std::uint32_t index = 0; index < truth.target_count; ++index) {
     const auto& target = truth.targets[index];
@@ -173,6 +187,16 @@ TruthMatch selectResearchTarget(const GroundTruthBatch& truth,
     const double center_error = has_tracker_center
         ? (tracker_center - center).norm()
         : std::numeric_limits<double>::infinity();
+    const Eigen::Vector3d camera_to_target(
+        target.position[0] - exposure.camera_position_world[0],
+        target.position[1] - exposure.camera_position_world[1],
+        target.position[2] - exposure.camera_position_world[2]);
+    double view_angle_error = std::numeric_limits<double>::infinity();
+    if (camera_to_target.allFinite() && camera_to_target.norm() > 1e-9) {
+      const double cosine = std::clamp(
+          camera_forward_world.dot(camera_to_target.normalized()), -1.0, 1.0);
+      view_angle_error = std::acos(cosine);
+    }
 
     double armor_error = std::numeric_limits<double>::infinity();
     int armor_slot = -1;
@@ -204,13 +228,18 @@ TruthMatch selectResearchTarget(const GroundTruthBatch& truth,
       }
     }
 
-    const double score = has_tracker_center ? center_error : armor_error;
-    const double best_score = has_tracker_center ? match.center_error_m
-                                                  : match.armor_error_m;
+    const double score = has_tracker_center
+        ? center_error
+        : (has_observation ? armor_error : view_angle_error);
+    const double best_score = has_tracker_center
+        ? match.center_error_m
+        : (has_observation ? match.armor_error_m
+                           : match.view_angle_error_rad);
     if (score < best_score) {
       match.target = &target;
       match.center_error_m = center_error;
       match.armor_error_m = armor_error;
+      match.view_angle_error_rad = view_angle_error;
       match.armor_slot = armor_slot;
       match.armor_position_m = armor_position;
     }
@@ -232,19 +261,45 @@ void writeFiniteOrNull(std::ostream& output, double value) {
   else output << "null";
 }
 
+struct PipelineTiming {
+  double color_convert_ms = 0.0;
+  double pnp_ms = 0.0;
+  double tracker_ms = 0.0;
+  double total_ms = 0.0;
+};
+
 void writeFrame(std::ostream& output, const TcpImageFrame& frame,
                 const GroundTruthExposureSnapshot& exact,
                 const std::list<auto_aim::Armor>& solved,
-                const autoaim_research::TrackerSnapshot& tracker) {
+                const autoaim_research::TrackerSnapshot& tracker,
+                const std::string& inference_backend,
+                const autoaim_research::DetectorTiming& detector_timing,
+                const PipelineTiming& pipeline_timing) {
   const auto_aim::Armor* observation = primaryObservation(solved);
   const TruthMatch match = selectResearchTarget(
       exact.ground_truth, exact.exposure_state, solved, tracker);
   const GroundTruthTarget* truth = match.target;
   output << std::setprecision(12) << '{'
-         << "\"schema\":\"autoaim-research-frame-v1\""
+         << "\"schema\":\"autoaim-research-frame-v2\""
          << ",\"producer_epoch\":" << frame.header.producer_epoch
          << ",\"frame_seq\":" << frame.header.source_sequence
          << ",\"timestamp_ns\":" << frame.header.capture_timestamp_ns
+         << ",\"inference_backend\":\"" << inference_backend << "\""
+         << ",\"timing_ms\":{"
+         << "\"color_convert\":" << pipeline_timing.color_convert_ms
+         << ",\"detector_host_prepare\":"
+         << detector_timing.host_prepare_ms
+         << ",\"detector_gpu_preprocess\":"
+         << detector_timing.gpu_preprocess_ms
+         << ",\"detector_inference\":" << detector_timing.inference_ms
+         << ",\"detector_output_copy\":"
+         << detector_timing.output_copy_ms
+         << ",\"detector_postprocess\":"
+         << detector_timing.postprocess_ms
+         << ",\"detector_total\":" << detector_timing.total_ms
+         << ",\"pnp\":" << pipeline_timing.pnp_ms
+         << ",\"tracker\":" << pipeline_timing.tracker_ms
+         << ",\"pipeline_total\":" << pipeline_timing.total_ms << '}'
          << ",\"detection_count\":" << solved.size()
          << ",\"tracker_state\":\"" << tracker.state << "\""
          << ",\"ekf_state\":";
@@ -285,6 +340,8 @@ void writeFrame(std::ostream& output, const TcpImageFrame& frame,
     writeFiniteOrNull(output, match.center_error_m);
     output << ",\"match_armor_error_m\":";
     writeFiniteOrNull(output, match.armor_error_m);
+    output << ",\"match_view_angle_error_rad\":";
+    writeFiniteOrNull(output, match.view_angle_error_rad);
     output << ",\"matched_armor_slot\":" << match.armor_slot
            << ",\"armor_m\":";
     if (match.armor_slot < 0) output << "null";
@@ -319,6 +376,10 @@ int main(int argc, char** argv) {
     parseArguments(argc, argv, &overrides, &config_path);
     RuntimeConfig config = loadConfig(config_path);
     if (!overrides.model_path.empty()) config.model_path = overrides.model_path;
+    if (!overrides.engine_path.empty()) config.engine_path = overrides.engine_path;
+    if (!overrides.inference_backend.empty()) {
+      config.inference_backend = overrides.inference_backend;
+    }
     if (!overrides.ipc_directory.empty()) config.ipc_directory = overrides.ipc_directory;
     if (!overrides.output_path.empty()) config.output_path = overrides.output_path;
     if (overrides.max_frames != 0) config.max_frames = overrides.max_frames;
@@ -333,8 +394,13 @@ int main(int argc, char** argv) {
                                config.output_path);
     }
 
-    autoaim_research::TongjiYoloDetector detector(
-        {config.model_path, config.score_threshold, config.nms_threshold});
+    autoaim_research::DetectorConfig detector_config;
+    detector_config.model_path = config.model_path;
+    detector_config.engine_path = config.engine_path;
+    detector_config.inference_backend = config.inference_backend;
+    detector_config.score_threshold = config.score_threshold;
+    detector_config.nms_threshold = config.nms_threshold;
+    autoaim_research::TongjiYoloDetector detector(std::move(detector_config));
     autoaim_research::TongjiResearchTracker tracker(config.tracker);
 
     ContestClientOptions options;
@@ -384,12 +450,34 @@ int main(int argc, char** argv) {
     std::uint64_t after_sequence = 0;
     std::uint64_t accepted = 0;
     std::uint64_t first_timestamp_ns = 0;
+    std::uint64_t frame_join_retries = 0;
+    std::uint64_t frame_timeouts = 0;
+    int consecutive_join_retries = 0;
     while (running.load() && (config.max_frames == 0 || accepted < config.max_frames)) {
       const auto frame_result = simulator.nextFrame(after_sequence);
       if (!frame_result) {
-        if (frame_result.status.error == ClientError::Timeout) continue;
+        if (frame_result.status.error == ClientError::Timeout) {
+          ++frame_timeouts;
+          continue;
+        }
+        const bool recoverable_join_miss =
+            (frame_result.status.error == ClientError::ProtocolError ||
+             frame_result.status.error == ClientError::UnstableSnapshot) &&
+            frame_result.status.message.find("ground-truth history") !=
+                std::string::npos;
+        if (recoverable_join_miss) {
+          ++frame_join_retries;
+          ++consecutive_join_retries;
+          if (consecutive_join_retries > 1000) {
+            throw std::runtime_error(
+                "ground-truth join did not recover after 1000 retries");
+          }
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+          continue;
+        }
         throw std::runtime_error(frame_result.status.message);
       }
+      consecutive_join_retries = 0;
       const auto& frame = *frame_result.value;
       after_sequence = frame.image.header.source_sequence;
       const auto exact = reader.readGroundTruthForFrame(after_sequence);
@@ -406,17 +494,31 @@ int main(int argc, char** argv) {
         continue;
       }
 
+      const auto pipeline_begin = std::chrono::steady_clock::now();
       const cv::Mat bgr = frameToBgr(frame.image);
+      const auto color_end = std::chrono::steady_clock::now();
       auto detected = detector.detect(bgr);
+      const auto detector_end = std::chrono::steady_clock::now();
       std::list<auto_aim::Armor> solved;
       const auto pose = exposurePose(exact.value->exposure_state);
       for (auto& armor : detected) {
         const auto result = solver.solve(armor, pose);
         if (result.valid) solved.push_back(armor);
       }
+      const auto pnp_end = std::chrono::steady_clock::now();
       const auto tracker_snapshot =
           tracker.update(solved, frame.image.header.capture_timestamp_ns);
-      writeFrame(*output, frame.image, *exact.value, solved, tracker_snapshot);
+      const auto tracker_end = std::chrono::steady_clock::now();
+      const auto milliseconds = [](auto begin, auto end) {
+        return std::chrono::duration<double, std::milli>(end - begin).count();
+      };
+      PipelineTiming timing;
+      timing.color_convert_ms = milliseconds(pipeline_begin, color_end);
+      timing.pnp_ms = milliseconds(detector_end, pnp_end);
+      timing.tracker_ms = milliseconds(pnp_end, tracker_end);
+      timing.total_ms = milliseconds(pipeline_begin, tracker_end);
+      writeFrame(*output, frame.image, *exact.value, solved, tracker_snapshot,
+                 detector.backendName(), detector.lastTiming(), timing);
       ++accepted;
       if (first_timestamp_ns == 0) {
         first_timestamp_ns = frame.image.header.capture_timestamp_ns;
@@ -430,6 +532,10 @@ int main(int argc, char** argv) {
         break;
       }
     }
+    std::cerr << "autoaim_research_runner complete backend="
+              << detector.backendName() << " accepted=" << accepted
+              << " frame_join_retries=" << frame_join_retries
+              << " frame_timeouts=" << frame_timeouts << '\n';
     simulator.close();
     return 0;
   } catch (const std::exception& error) {

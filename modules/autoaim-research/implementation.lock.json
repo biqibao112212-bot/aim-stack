@@ -52,16 +52,43 @@
     "sha256": "1d9233eb74391347d20352cd6cbcb847976784be0ac609ebec2bee626ac1b303",
     "input": [1, 3, 640, 640],
     "output": [1, 25200, 22],
-    "note": "ONNX is platform-neutral; the historical directory name does not select a Windows runtime"
+    "note": "Explicit FP32 parity model retained for the ONNX Runtime CPU comparison backend"
+  },
+  "tensorrt_engine": {
+    "relative_to_workspace": "models/engines/linux/armor-0526-trt11.2.1-cuda13.3-sm89-fp16.engine",
+    "bytes": 40837068,
+    "sha256": "4b94da29b3e19b8b755320839fceaddb1bc1107e4663196f2ad6bdb330a02e5e",
+    "metadata_relative_to_workspace": "models/engines/linux/armor-0526-trt11.2.1-cuda13.3-sm89-fp16.engine.json",
+    "metadata_sha256": "6601589a7a96f2125947bf6268905b4504b7628a8796ecbee3d3eb1a09d2fe51",
+    "source_relative_to_workspace": "models/engines/linux/armor-0526-fp16.onnx",
+    "source_bytes": 4359932,
+    "source_sha256": "b53470b42a5778aca8f3382ebe3c623482599cbf8ebad2e9a0dcc0c7f42c9255",
+    "input": [1, 3, 640, 640],
+    "input_dtype": "fp16",
+    "output": [1, 25200, 22],
+    "output_dtype": "fp32",
+    "precision": "strongly_typed_fp16",
+    "build_host": "NVIDIA GeForce RTX 4060 Laptop GPU sm_89",
+    "portable": false
   },
   "inference_runtime": {
-    "name": "onnxruntime",
-    "version": "1.22.1",
-    "relative_to_workspace": "deps/onnxruntime-linux-x64-1.22.1",
-    "official_package": "Microsoft.ML.OnnxRuntime.1.22.1.nupkg",
-    "official_package_sha256": "2ee0ed327f6cf2b860182bc4f2feb905c44a596cd120a05c510da6e4044a3e58",
-    "libonnxruntime_sha256": "3907398e408dae083deb3439e8f643d9e26180ed614b29cc7d5ec342ce5ce06f",
-    "provider": "CPUExecutionProvider"
+    "name": "tensorrt",
+    "version": "11.2.1",
+    "cuda_version": "13.3",
+    "provider": "direct TensorRT C++ runtime",
+    "relative_to_workspace": "deps/tensorrt-11.2.1-cuda13.3/root/usr/lib/x86_64-linux-gnu",
+    "libnvinfer_sha256": "f2894a3ca8942feac7af2f46e5cf936c91bfee04a606338a1fe4b8976f86e1dc",
+    "libnvonnxparser_sha256": "dfc95a15ec9eb73ca3a4cb1806ab4bdf97e8ea97022028eab818ea7287b73928",
+    "gpu_preprocess": "fused CUDA letterbox+BGR-to-RGB+normalization+HWC-to-CHW",
+    "cuda_architecture": "89-real",
+    "fallback": {
+      "name": "onnxruntime",
+      "version": "1.22.1",
+      "relative_to_workspace": "deps/onnxruntime-linux-x64-1.22.1",
+      "libonnxruntime_sha256": "3907398e408dae083deb3439e8f643d9e26180ed614b29cc7d5ec342ce5ce06f",
+      "provider": "CPUExecutionProvider",
+      "purpose": "same-model performance and output-quality comparison only"
+    }
   },
   "coordinates": {
     "pnp_input": "opencv_optical_right_down_forward",

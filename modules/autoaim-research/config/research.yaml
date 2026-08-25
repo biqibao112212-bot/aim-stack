@@ -2,6 +2,8 @@
 simulator_release_root: "/home/potato/Projects/仿真/releases/daedalus-simulator/1.4.0-learning-r1/linux-x86_64"
 ipc_directory: "/tmp/daedalus-learning-1000"
 model_path: "/home/potato/Projects/仿真/models/engines/windows/armor-0526-fp32-converted.onnx"
+engine_path: "/home/potato/Projects/仿真/models/engines/linux/armor-0526-trt11.2.1-cuda13.3-sm89-fp16.engine"
+inference_backend: "tensorrt_fp16"
 score_threshold: 0.50
 nms_threshold: 0.45
 small_armor_width_m: 0.135

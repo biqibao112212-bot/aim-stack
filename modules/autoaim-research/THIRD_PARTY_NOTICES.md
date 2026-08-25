@@ -10,8 +10,19 @@
 
 Vendored source content matches the pinned upstream commit; final newlines and trailing whitespace were
 normalized without semantic changes.
-The ONNX Runtime loader, Daedalus exposure-pose adapter, coordinate transform, research-only
-tracker wrapper and JSONL logger are local integration code.
+The TensorRT/ONNX Runtime loaders, CUDA preprocessing, Daedalus exposure-pose adapter,
+coordinate transform, research-only tracker wrapper and JSONL logger are local integration code.
+
+## NVIDIA TensorRT and CUDA
+
+- TensorRT release: `11.2.1`
+- CUDA toolkit: `13.3`
+- Source and license information: <https://docs.nvidia.com/deeplearning/tensorrt/latest/reference/sla.html>
+
+TensorRT, CUDA libraries and generated engines are not vendored in this Git repository. The
+locked research host keeps them under the workspace `deps` and protected `models/engines`
+directories; the shared-library, source-model and engine hashes are pinned in
+[`implementation.lock.json`](implementation.lock.json).
 
 ## ONNX Runtime
 

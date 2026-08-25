@@ -14,6 +14,7 @@ import hashlib
 import json
 import math
 import platform
+import re
 import socket
 import statistics
 import subprocess
@@ -55,9 +56,29 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def run(command: list[str], *, env: dict[str, str] | None = None) -> None:
+def run(
+    command: list[str],
+    *,
+    env: dict[str, str] | None = None,
+    log_path: Path | None = None,
+) -> None:
     print("+", " ".join(command), flush=True)
-    subprocess.run(command, env=env, check=True)
+    if log_path is None:
+        subprocess.run(command, env=env, check=True)
+        return
+    try:
+        with log_path.open("w", encoding="utf-8") as log:
+            subprocess.run(
+                command,
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                check=True,
+            )
+    except subprocess.CalledProcessError:
+        print(log_path.read_text(encoding="utf-8"), file=sys.stderr)
+        raise
 
 
 def set_target_motion(scenario: dict[str, object], target: int) -> dict:
@@ -97,6 +118,12 @@ def validate_scenario(path: Path, scenario: dict[str, object], duration_s: float
     }
     if len(identities) != len(rows):
         raise RuntimeError(f"duplicate exposure identity in {path}")
+    backends = {row.get("inference_backend") for row in rows}
+    if len(backends) != 1 or None in backends:
+        raise RuntimeError(f"mixed or missing inference backend in {path}: {backends}")
+    timing_rows = [row.get("timing_ms") for row in rows]
+    if not all(isinstance(timing, dict) for timing in timing_rows):
+        raise RuntimeError(f"missing stage timing in {path}")
     actual_duration_s = (rows[-1]["timestamp_ns"] - rows[0]["timestamp_ns"]) * 1e-9
     if actual_duration_s < duration_s:
         raise RuntimeError(
@@ -117,6 +144,14 @@ def validate_scenario(path: Path, scenario: dict[str, object], duration_s: float
             f"motion truth mismatch for {scenario['id']}: "
             f"speed={speed}, omega={omega}"
         )
+    def timing_summary(key: str) -> dict[str, float]:
+        values = sorted(float(timing[key]) for timing in timing_rows)
+        p95_index = min(len(values) - 1, math.ceil(len(values) * 0.95) - 1)
+        return {
+            "median_ms": statistics.median(values),
+            "p95_ms": values[p95_index],
+        }
+
     return {
         "records": len(rows),
         "unique_exposure_identities": len(identities),
@@ -125,6 +160,22 @@ def validate_scenario(path: Path, scenario: dict[str, object], duration_s: float
         "truth_abs_omega_rad_s_median": omega,
         "detected_records": sum(row.get("detection_count", 0) > 0 for row in rows),
         "ekf_records": sum(row.get("ekf_estimate") is not None for row in rows),
+        "inference_backend": next(iter(backends)),
+        "timing": {
+            key: timing_summary(key)
+            for key in (
+                "color_convert",
+                "detector_host_prepare",
+                "detector_gpu_preprocess",
+                "detector_inference",
+                "detector_output_copy",
+                "detector_postprocess",
+                "detector_total",
+                "pnp",
+                "tracker",
+                "pipeline_total",
+            )
+        },
     }
 
 
@@ -134,6 +185,11 @@ def main() -> int:
     parser.add_argument("--duration-s", type=float, default=20.0)
     parser.add_argument("--settle-s", type=float, default=1.0)
     parser.add_argument("--target", type=int, choices=(1, 3), default=3)
+    parser.add_argument(
+        "--backend",
+        choices=("tensorrt_fp16", "onnxruntime_cpu"),
+        default="tensorrt_fp16",
+    )
     args = parser.parse_args()
     if args.duration_s <= 0.0 or not math.isfinite(args.duration_s):
         parser.error("--duration-s must be finite and positive")
@@ -149,7 +205,14 @@ def main() -> int:
     truth_gimbal = repository / "build/autoaim-research/autoaim_research_truth_gimbal"
     config = module_root / "config/research.yaml"
     lock = module_root / "implementation.lock.json"
-    for required in (launcher, runner, truth_gimbal, config, lock, release / "release.json"):
+    engine = workspace / (
+        "models/engines/linux/"
+        "armor-0526-trt11.2.1-cuda13.3-sm89-fp16.engine"
+    )
+    required_files = [launcher, runner, truth_gimbal, config, lock, release / "release.json"]
+    if args.backend == "tensorrt_fp16":
+        required_files.append(engine)
+    for required in required_files:
         if not required.is_file():
             parser.error(f"required locked artifact is missing: {required}")
 
@@ -178,6 +241,9 @@ def main() -> int:
             "module": "modules/autoaim-research",
             "implementation_lock_sha256": sha256(lock),
             "runner": str(runner),
+            "inference_backend": args.backend,
+            "engine": str(engine) if args.backend == "tensorrt_fp16" else None,
+            "engine_sha256": sha256(engine) if args.backend == "tensorrt_fp16" else None,
         },
         "identity": ["producer_epoch", "frame_seq", "timestamp_ns"],
         "scenarios": [],
@@ -190,6 +256,7 @@ def main() -> int:
         start = dt.datetime.now(dt.timezone.utc)
         controller = None
         controller_log_path = runtime_dir / "truth-gimbal.log"
+        runner_log_path = runtime_dir / "autoaim-research-runner.log"
         try:
             run(
                 [
@@ -222,19 +289,22 @@ def main() -> int:
             if controller.poll() is not None:
                 controller_log.close()
                 raise RuntimeError(controller_log_path.read_text(encoding="utf-8"))
-            run(
-                [
-                    str(runner),
-                    "--config",
-                    str(config),
-                    "--ipc-dir",
-                    str(runtime_dir),
-                    "--output",
-                    str(output),
-                    "--duration-s",
-                    str(args.duration_s),
-                ]
-            )
+            runner_command = [
+                str(runner),
+                "--config",
+                str(config),
+                "--ipc-dir",
+                str(runtime_dir),
+                "--output",
+                str(output),
+                "--duration-s",
+                str(args.duration_s),
+                "--backend",
+                args.backend,
+            ]
+            if args.backend == "tensorrt_fp16":
+                runner_command.extend(("--engine", str(engine)))
+            run(runner_command, log_path=runner_log_path)
         finally:
             if controller is not None:
                 controller.terminate()
@@ -252,6 +322,23 @@ def main() -> int:
         if not output.is_file() or output.stat().st_size == 0:
             raise RuntimeError(f"scenario did not produce data: {scenario_id}")
         validation = validate_scenario(output, scenario, args.duration_s)
+        runner_log = runner_log_path.read_text(encoding="utf-8")
+        runner_summary = re.search(
+            r"accepted=(\d+) frame_join_retries=(\d+) frame_timeouts=(\d+)",
+            runner_log,
+        )
+        if runner_summary is None:
+            raise RuntimeError(f"runner summary is missing: {runner_log_path}")
+        validation["runner"] = {
+            "accepted": int(runner_summary.group(1)),
+            "frame_join_retries": int(runner_summary.group(2)),
+            "frame_timeouts": int(runner_summary.group(3)),
+        }
+        if validation["runner"]["accepted"] != validation["records"]:
+            raise RuntimeError(
+                f"runner/JSONL record mismatch for {scenario_id}: "
+                f"{validation['runner']['accepted']} != {validation['records']}"
+            )
         simulator_log_path = runtime_dir / "daedalus-learning.log"
         if "Daedalus launch mode=performance" not in simulator_log_path.read_text(
             encoding="utf-8"
@@ -272,6 +359,7 @@ def main() -> int:
                 "jsonl_sha256": sha256(output),
                 "simulator_log": str(simulator_log_path),
                 "truth_gimbal_log": str(controller_log_path),
+                "runner_log": str(runner_log_path),
                 "motion_ack": motion_ack,
                 "validation": validation,
             }
