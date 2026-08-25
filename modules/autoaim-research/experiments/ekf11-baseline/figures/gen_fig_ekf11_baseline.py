@@ -30,6 +30,15 @@ SCENARIO_TITLES = {
         r"Translation + spin: $v=1\,\mathrm{m/s},\ \omega=6\,\mathrm{rad/s}$",
 }
 
+SCENARIO_PREDICTION_TITLES = {
+    "spin_8": "A  原地旋转 8 rad/s",
+    "translate_1p5": "B  往复平移 1.5 m/s",
+    "translate_1_spin_6": "C  平移 1 m/s + 旋转 6 rad/s",
+}
+
+PREDICTION_HORIZONS_S = np.linspace(0.0, 0.2, 21)
+MAX_TRUTH_INTERPOLATION_GAP_S = 0.025
+
 
 plt.rcParams.update(
     {
@@ -92,6 +101,250 @@ def rmse(estimate: np.ndarray, truth: np.ndarray) -> float | None:
     if not np.any(mask):
         return None
     return float(np.sqrt(np.mean(np.square(estimate[mask] - truth[mask]))))
+
+
+def rotate_z(points: np.ndarray, yaw_rad: float) -> np.ndarray:
+    """Rotate one or more xyz points around +z."""
+    cosine = math.cos(yaw_rad)
+    sine = math.sin(yaw_rad)
+    result = np.array(points, dtype=float, copy=True)
+    result[..., 0] = cosine * points[..., 0] - sine * points[..., 1]
+    result[..., 1] = sine * points[..., 0] + cosine * points[..., 1]
+    return result
+
+
+def truth_local_armor_offsets(rows: list[dict]) -> np.ndarray:
+    """Recover the four fixed target-frame armor offsets from saved truth."""
+    samples: dict[int, list[np.ndarray]] = {slot: [] for slot in range(4)}
+    for row in rows:
+        truth = row.get("truth")
+        if not isinstance(truth, dict) or truth.get("armor_m") is None:
+            continue
+        slot = truth.get("matched_armor_slot")
+        if not isinstance(slot, int) or slot not in samples:
+            continue
+        center = np.asarray(truth["center_m"], dtype=float)
+        armor = np.asarray(truth["armor_m"], dtype=float)
+        samples[slot].append(rotate_z(armor - center, -float(truth["yaw_rad"])))
+
+    offsets = []
+    for slot in range(4):
+        if not samples[slot]:
+            raise RuntimeError(f"truth armor slot {slot} has no saved samples")
+        values = np.asarray(samples[slot], dtype=float)
+        median = np.median(values, axis=0)
+        if float(np.max(np.linalg.norm(values - median, axis=1))) > 1e-4:
+            raise RuntimeError(f"truth armor slot {slot} is not rigid")
+        offsets.append(median)
+    return np.asarray(offsets, dtype=float)
+
+
+def decode_ekf_armors(estimate: dict, horizon_s: float) -> np.ndarray:
+    """Apply the vendored Tongji 11D transition and four-armor decoder."""
+    center = np.asarray(estimate["center_m"], dtype=float)
+    velocity = np.asarray(estimate["velocity_mps"], dtype=float)
+    center = center + velocity * horizon_s
+    yaw = float(estimate["yaw_rad"]) + float(estimate["omega_rad_s"]) * horizon_s
+
+    armors = np.empty((4, 3), dtype=float)
+    for slot in range(4):
+        odd = slot % 2 == 1
+        radius = float(estimate["radius_odd_m" if odd else "radius_even_m"])
+        height = float(estimate["height_odd_m" if odd else "height_even_m"])
+        angle = yaw + slot * math.pi / 2.0
+        armors[slot] = (
+            center[0] - radius * math.cos(angle),
+            center[1] - radius * math.sin(angle),
+            height,
+        )
+    return armors
+
+
+def interpolate_truth_pose(
+    times_s: np.ndarray,
+    centers_m: np.ndarray,
+    unwrapped_yaw_rad: np.ndarray,
+    query_s: float,
+) -> tuple[np.ndarray, float] | None:
+    """Interpolate truth only across a bounded pair of recorded exposures."""
+    if query_s < times_s[0] or query_s > times_s[-1]:
+        return None
+    right = int(np.searchsorted(times_s, query_s, side="left"))
+    if right < len(times_s) and abs(float(times_s[right] - query_s)) < 1e-9:
+        return centers_m[right].copy(), float(unwrapped_yaw_rad[right])
+    if right == 0 or right >= len(times_s):
+        return None
+    left = right - 1
+    gap_s = float(times_s[right] - times_s[left])
+    if gap_s <= 0.0 or gap_s > MAX_TRUTH_INTERPOLATION_GAP_S:
+        return None
+    alpha = float((query_s - times_s[left]) / gap_s)
+    center = centers_m[left] + alpha * (centers_m[right] - centers_m[left])
+    yaw = unwrapped_yaw_rad[left] + alpha * (
+        unwrapped_yaw_rad[right] - unwrapped_yaw_rad[left]
+    )
+    return center, float(yaw)
+
+
+def prediction_horizon_metrics(rows: list[dict]) -> dict:
+    """Roll each tracking posterior forward and compare one physical armor."""
+    timestamp_ns = np.asarray([row["timestamp_ns"] for row in rows], dtype=np.int64)
+    times_s = (timestamp_ns - timestamp_ns[0]).astype(float) * 1e-9
+    if np.any(np.diff(times_s) <= 0.0):
+        raise RuntimeError("prediction evaluation requires increasing timestamps")
+    centers_m = vec(rows, "truth", "center_m", 3)
+    yaw_rad = np.unwrap(scalar(rows, "truth", "yaw_rad"))
+    if not np.all(np.isfinite(centers_m)) or not np.all(np.isfinite(yaw_rad)):
+        raise RuntimeError("prediction evaluation requires complete target truth")
+    local_offsets_m = truth_local_armor_offsets(rows)
+
+    horizons_s = [float(round(value, 6)) for value in PREDICTION_HORIZONS_S]
+    samples = {
+        horizon_s: {"normal_radial_abs_m": [], "tangential_abs_m": [], "error_3d_m": []}
+        for horizon_s in horizons_s
+    }
+    evaluated_posteriors = 0
+
+    for index, row in enumerate(rows):
+        estimate = row.get("ekf_estimate")
+        truth = row.get("truth")
+        if row.get("tracker_state") != "tracking" or not isinstance(estimate, dict):
+            continue
+        if not isinstance(truth, dict) or truth.get("armor_m") is None:
+            continue
+        physical_slot = truth.get("matched_armor_slot")
+        if not isinstance(physical_slot, int) or not 0 <= physical_slot < 4:
+            continue
+
+        current_truth_armor = np.asarray(truth["armor_m"], dtype=float)
+        current_candidates = decode_ekf_armors(estimate, 0.0)
+        estimator_slot = int(
+            np.argmin(np.linalg.norm(current_candidates - current_truth_armor, axis=1))
+        )
+        evaluated_posteriors += 1
+
+        for horizon_s in horizons_s:
+            future_pose = interpolate_truth_pose(
+                times_s,
+                centers_m,
+                yaw_rad,
+                float(times_s[index] + horizon_s),
+            )
+            if future_pose is None:
+                continue
+            future_center, future_yaw = future_pose
+            future_truth_armor = future_center + rotate_z(
+                local_offsets_m[physical_slot], future_yaw
+            )
+            predicted_armor = decode_ekf_armors(estimate, horizon_s)[estimator_slot]
+            error = predicted_armor - future_truth_armor
+
+            normal_radial = future_truth_armor - future_center
+            normal_radial[2] = 0.0
+            normal_radial_norm = float(np.linalg.norm(normal_radial))
+            if normal_radial_norm <= 1e-9:
+                continue
+            normal_radial /= normal_radial_norm
+            tangential = np.asarray(
+                [-normal_radial[1], normal_radial[0], 0.0], dtype=float
+            )
+            bucket = samples[horizon_s]
+            bucket["normal_radial_abs_m"].append(abs(float(error @ normal_radial)))
+            bucket["tangential_abs_m"].append(abs(float(error @ tangential)))
+            bucket["error_3d_m"].append(float(np.linalg.norm(error)))
+
+    result = {
+        "evaluated_tracking_posteriors": evaluated_posteriors,
+        "horizons_ms": [round(value * 1000.0, 6) for value in horizons_s],
+        "sample_count": [],
+        "normal_radial_abs_m": {"p50": [], "p95": []},
+        "tangential_abs_m": {"p50": [], "p95": []},
+        "error_3d_m": {"p50": [], "p95": []},
+        "truth_local_armor_offsets_m": local_offsets_m.tolist(),
+    }
+    for horizon_s in horizons_s:
+        bucket = samples[horizon_s]
+        result["sample_count"].append(len(bucket["error_3d_m"]))
+        for metric in ("normal_radial_abs_m", "tangential_abs_m", "error_3d_m"):
+            values = np.asarray(bucket[metric], dtype=float)
+            if not values.size:
+                raise RuntimeError(f"no prediction samples at horizon {horizon_s}")
+            result[metric]["p50"].append(float(np.percentile(values, 50)))
+            result[metric]["p95"].append(float(np.percentile(values, 95)))
+    return result
+
+
+def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> None:
+    scenario_order = ("spin_8", "translate_1p5", "translate_1_spin_6")
+    with plt.rc_context(
+        {
+            "font.family": "sans-serif",
+            # Matplotlib exposes the system Noto CJK collection under its JP
+            # family name; the collection still contains Simplified Chinese.
+            "font.sans-serif": ["Noto Sans CJK JP", "DejaVu Sans"],
+            "axes.titlesize": 11,
+            "axes.titleweight": "bold",
+            "svg.hashsalt": "aim-stack-ekf11-prediction-v1",
+        }
+    ):
+        figure, axes = plt.subplots(
+            1, 3, figsize=(12.6, 4.25), sharex=True, sharey=True,
+            constrained_layout=True,
+        )
+        plot_specs = (
+            ("normal_radial_abs_m", "#D55E00", "o", "法向/径向"),
+            ("tangential_abs_m", "#0072B2", "s", "切向"),
+        )
+        for axis, scenario_id in zip(axes, scenario_order):
+            result = predictions[scenario_id]
+            horizons_ms = np.asarray(result["horizons_ms"], dtype=float)
+            for metric, color, marker, label in plot_specs:
+                p50_cm = np.asarray(result[metric]["p50"], dtype=float) * 100.0
+                p95_cm = np.asarray(result[metric]["p95"], dtype=float) * 100.0
+                axis.plot(
+                    horizons_ms, p50_cm, color=color, marker=marker,
+                    markevery=5, markersize=4.0, linewidth=2.1,
+                    label=f"{label} p50",
+                )
+                axis.plot(
+                    horizons_ms, p95_cm, color=color, linestyle=":",
+                    linewidth=1.9, label=f"{label} p95",
+                )
+            axis.set_title(SCENARIO_PREDICTION_TITLES[scenario_id], loc="left")
+            axis.set_xlabel("预测时域 τ（ms）")
+            axis.set_xlim(0.0, 200.0)
+            axis.set_xticks((0, 50, 100, 150, 200))
+            axis.grid(True, alpha=0.22)
+        axes[0].set_ylabel("绝对位置误差（cm）")
+        axes[0].set_ylim(bottom=0.0)
+        axes[0].legend(loc="upper left", ncol=2, fontsize=8)
+        figure.suptitle(
+            "11 维 EKF 的未来装甲板位置误差",
+            fontsize=14, fontweight="bold",
+        )
+        figure.text(
+            0.5, -0.015,
+            "从每个 tracking 后验状态外推同一块物理装甲板；实线为 p50，点线为 p95。",
+            ha="center", va="top", fontsize=9,
+        )
+        output_base = output_dir / "fig_prediction_horizon"
+        figure.savefig(
+            output_base.with_suffix(".png"),
+            metadata={"Software": "aim-stack ekf11 baseline"},
+        )
+        figure.savefig(
+            output_base.with_suffix(".pdf"),
+            metadata={
+                "Creator": "aim-stack ekf11 baseline",
+                "CreationDate": None,
+                "ModDate": None,
+            },
+        )
+        figure.savefig(
+            output_base.with_suffix(".svg"),
+            metadata={"Creator": "aim-stack ekf11 baseline", "Date": None},
+        )
+        plt.close(figure)
 
 
 def metrics(rows: list[dict]) -> dict:
@@ -293,6 +546,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path(__file__).resolve().parent)
+    parser.add_argument(
+        "--prediction-only",
+        action="store_true",
+        help="generate only the prediction-horizon figure and summary",
+    )
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -301,14 +559,49 @@ def main() -> int:
         "collection_manifest": str(args.manifest),
         "scenarios": {},
     }
+    scenario_rows = {}
     for scenario in manifest["scenarios"]:
         scenario_id = scenario["id"]
         rows = load_jsonl(Path(scenario["jsonl"]))
-        summary["scenarios"][scenario_id] = plot_scenario(
-            scenario_id, rows, args.output_dir
+        scenario_rows[scenario_id] = rows
+        if not args.prediction_only:
+            summary["scenarios"][scenario_id] = plot_scenario(
+                scenario_id, rows, args.output_dir
+            )
+    if not args.prediction_only:
+        (args.output_dir / "summary.json").write_text(
+            json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
-    (args.output_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+
+    predictions = {
+        scenario_id: prediction_horizon_metrics(rows)
+        for scenario_id, rows in scenario_rows.items()
+    }
+    plot_prediction_horizons(predictions, args.output_dir)
+    prediction_summary = {
+        "schema": "aim-stack.ekf11-prediction-horizon/v1",
+        "collection_manifest": str(args.manifest),
+        "method": {
+            "source_state": "post-update Tongji 11D EKF state while tracker_state=tracking",
+            "rollout": "constant center velocity, constant yaw rate, fixed radii and heights",
+            "armor_correspondence": (
+                "nearest decoded EKF candidate to the same-exposure truth-matched physical armor; "
+                "the correspondence is held for the future horizon"
+            ),
+            "future_truth": (
+                "later recorded exposure truth, linearly interpolated only when the bracketing gap "
+                f"is <= {MAX_TRUTH_INTERPOLATION_GAP_S * 1000.0:.0f} ms"
+            ),
+            "normal_radial_definition": (
+                "horizontal target-center-to-armor axis; this is also the armor normal in the Z4 model"
+            ),
+            "tangential_definition": "horizontal axis perpendicular to normal_radial",
+        },
+        "scenarios": predictions,
+    }
+    (args.output_dir / "prediction_horizon_summary.json").write_text(
+        json.dumps(prediction_summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
     )
     return 0
 
