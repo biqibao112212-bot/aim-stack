@@ -5,6 +5,11 @@
 
 本文件由 `aim-stack/main` 跟踪，所有新自瞄、火控和打符分支必须从包含本文件与 `simulator.lock.json` 的 `main` 创建。分支可以不知道模拟器 Rust 实现，但必须按本文理解并使用发布版 SDK、场景和运行模式。
 
+> PnP/EKF 内部研究已于 2026-08-25 切换到
+> `modules/autoaim-research` 与 `1.4.0-learning-r1`。该范围以
+> `modules/autoaim-research/implementation.lock.json` 和根目录 `simulator.lock.json` 为准；
+> 下文的 1.3.1 流程只供旧模块回溯，不是新实验入口。
+
 ## 当前操作系统支持
 
 当前正式开发平台是 Linux（Ubuntu 24.04）。`simulator.lock.json` 锁定
