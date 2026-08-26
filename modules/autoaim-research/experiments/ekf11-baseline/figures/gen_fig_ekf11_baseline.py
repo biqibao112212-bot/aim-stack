@@ -36,8 +36,32 @@ SCENARIO_PREDICTION_TITLES = {
     "translate_1_spin_6": "C  平移 1 m/s + 旋转 6 rad/s",
 }
 
-PREDICTION_HORIZONS_S = np.linspace(0.0, 0.2, 21)
-MAX_TRUTH_INTERPOLATION_GAP_S = 0.025
+PREDICTION_STANDARD_PATH = (
+    Path(__file__).resolve().parents[3]
+    / "docs"
+    / "prediction_evaluation_standard_v1.json"
+)
+PREDICTION_STANDARD = json.loads(
+    PREDICTION_STANDARD_PATH.read_text(encoding="utf-8")
+)
+REQUIRED_HORIZONS_MS = tuple(PREDICTION_STANDARD["required_horizons_ms"])
+CURVE_STEP_MS = float(PREDICTION_STANDARD["curve_step_ms"])
+MAX_HORIZON_MS = float(max(REQUIRED_HORIZONS_MS))
+PREDICTION_HORIZONS_S = (
+    np.arange(0.0, MAX_HORIZON_MS + CURVE_STEP_MS, CURVE_STEP_MS) * 1e-3
+)
+MAX_TRUTH_INTERPOLATION_GAP_S = (
+    float(PREDICTION_STANDARD["max_truth_interpolation_gap_ms"]) * 1e-3
+)
+SMALL_ARMOR_WIDTH_M = float(
+    PREDICTION_STANDARD["armor_geometry_m"]["small"]["width"]
+)
+BIG_ARMOR_WIDTH_M = float(
+    PREDICTION_STANDARD["armor_geometry_m"]["big"]["width"]
+)
+ARMOR_HEIGHT_M = float(
+    PREDICTION_STANDARD["armor_geometry_m"]["small"]["height"]
+)
 
 
 plt.rcParams.update(
@@ -200,9 +224,17 @@ def prediction_horizon_metrics(rows: list[dict]) -> dict:
 
     horizons_s = [float(round(value, 6)) for value in PREDICTION_HORIZONS_S]
     samples = {
-        horizon_s: {"normal_radial_abs_m": [], "tangential_abs_m": [], "error_3d_m": []}
+        horizon_s: {
+            "normal_radial_abs_m": [],
+            "tangential_abs_m": [],
+            "vertical_abs_m": [],
+            "error_3d_m": [],
+            "small_armor_window": [],
+            "big_armor_window": [],
+        }
         for horizon_s in horizons_s
     }
+    eligible_time_anchors = {horizon_s: 0 for horizon_s in horizons_s}
     evaluated_posteriors = 0
 
     for index, row in enumerate(rows):
@@ -224,11 +256,15 @@ def prediction_horizon_metrics(rows: list[dict]) -> dict:
         evaluated_posteriors += 1
 
         for horizon_s in horizons_s:
+            query_s = float(times_s[index] + horizon_s)
+            if query_s < times_s[0] or query_s > times_s[-1]:
+                continue
+            eligible_time_anchors[horizon_s] += 1
             future_pose = interpolate_truth_pose(
                 times_s,
                 centers_m,
                 yaw_rad,
-                float(times_s[index] + horizon_s),
+                query_s,
             )
             if future_pose is None:
                 continue
@@ -248,30 +284,90 @@ def prediction_horizon_metrics(rows: list[dict]) -> dict:
             tangential = np.asarray(
                 [-normal_radial[1], normal_radial[0], 0.0], dtype=float
             )
+            tangential_abs_m = abs(float(error @ tangential))
+            vertical_abs_m = abs(float(error[2]))
             bucket = samples[horizon_s]
             bucket["normal_radial_abs_m"].append(abs(float(error @ normal_radial)))
-            bucket["tangential_abs_m"].append(abs(float(error @ tangential)))
+            bucket["tangential_abs_m"].append(tangential_abs_m)
+            bucket["vertical_abs_m"].append(vertical_abs_m)
             bucket["error_3d_m"].append(float(np.linalg.norm(error)))
+            bucket["small_armor_window"].append(
+                tangential_abs_m <= SMALL_ARMOR_WIDTH_M / 2.0
+                and vertical_abs_m <= ARMOR_HEIGHT_M / 2.0
+            )
+            bucket["big_armor_window"].append(
+                tangential_abs_m <= BIG_ARMOR_WIDTH_M / 2.0
+                and vertical_abs_m <= ARMOR_HEIGHT_M / 2.0
+            )
 
     result = {
         "evaluated_tracking_posteriors": evaluated_posteriors,
         "horizons_ms": [round(value * 1000.0, 6) for value in horizons_s],
+        "eligible_time_anchor_count": [],
         "sample_count": [],
+        "availability": [],
         "normal_radial_abs_m": {"p50": [], "p95": []},
         "tangential_abs_m": {"p50": [], "p95": []},
+        "vertical_abs_m": {"p50": [], "p95": []},
         "error_3d_m": {"p50": [], "p95": []},
+        "small_armor_window_coverage": [],
+        "big_armor_window_coverage": [],
         "truth_local_armor_offsets_m": local_offsets_m.tolist(),
     }
     for horizon_s in horizons_s:
         bucket = samples[horizon_s]
-        result["sample_count"].append(len(bucket["error_3d_m"]))
-        for metric in ("normal_radial_abs_m", "tangential_abs_m", "error_3d_m"):
+        eligible_count = eligible_time_anchors[horizon_s]
+        sample_count = len(bucket["error_3d_m"])
+        result["eligible_time_anchor_count"].append(eligible_count)
+        result["sample_count"].append(sample_count)
+        result["availability"].append(
+            float(sample_count / eligible_count) if eligible_count else 0.0
+        )
+        for metric in (
+            "normal_radial_abs_m",
+            "tangential_abs_m",
+            "vertical_abs_m",
+            "error_3d_m",
+        ):
             values = np.asarray(bucket[metric], dtype=float)
             if not values.size:
                 raise RuntimeError(f"no prediction samples at horizon {horizon_s}")
             result[metric]["p50"].append(float(np.percentile(values, 50)))
             result[metric]["p95"].append(float(np.percentile(values, 95)))
+        result["small_armor_window_coverage"].append(
+            float(np.mean(np.asarray(bucket["small_armor_window"], dtype=float)))
+        )
+        result["big_armor_window_coverage"].append(
+            float(np.mean(np.asarray(bucket["big_armor_window"], dtype=float)))
+        )
     return result
+
+
+def save_deterministic_figure(figure: plt.Figure, output_base: Path) -> None:
+    figure.savefig(
+        output_base.with_suffix(".png"),
+        metadata={"Software": "aim-stack ekf11 baseline"},
+    )
+    figure.savefig(
+        output_base.with_suffix(".pdf"),
+        metadata={
+            "Creator": "aim-stack ekf11 baseline",
+            "CreationDate": None,
+            "ModDate": None,
+        },
+    )
+    svg_path = output_base.with_suffix(".svg")
+    figure.savefig(
+        svg_path,
+        metadata={"Creator": "aim-stack ekf11 baseline", "Date": None},
+    )
+    # Matplotlib writes path-data lines with trailing spaces. Normalize them so
+    # the tracked vector artifact passes Git whitespace checks.
+    svg_lines = svg_path.read_text(encoding="utf-8").splitlines()
+    svg_path.write_text(
+        "\n".join(line.rstrip() for line in svg_lines) + "\n",
+        encoding="utf-8",
+    )
 
 
 def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> None:
@@ -303,7 +399,7 @@ def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> 
                 p95_cm = np.asarray(result[metric]["p95"], dtype=float) * 100.0
                 axis.plot(
                     horizons_ms, p50_cm, color=color, marker=marker,
-                    markevery=5, markersize=4.0, linewidth=2.1,
+                    markevery=10, markersize=4.0, linewidth=2.1,
                     label=f"{label} p50",
                 )
                 axis.plot(
@@ -312,8 +408,8 @@ def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> 
                 )
             axis.set_title(SCENARIO_PREDICTION_TITLES[scenario_id], loc="left")
             axis.set_xlabel("预测时域 τ（ms）")
-            axis.set_xlim(0.0, 200.0)
-            axis.set_xticks((0, 50, 100, 150, 200))
+            axis.set_xlim(0.0, MAX_HORIZON_MS)
+            axis.set_xticks((0, 100, 200, 300, 400, 500))
             axis.grid(True, alpha=0.22)
         axes[0].set_ylabel("绝对位置误差（cm）")
         axes[0].set_ylim(bottom=0.0)
@@ -327,30 +423,63 @@ def plot_prediction_horizons(predictions: dict[str, dict], output_dir: Path) -> 
             "从每个 tracking 后验状态外推同一块物理装甲板；实线为 p50，点线为 p95。",
             ha="center", va="top", fontsize=9,
         )
-        output_base = output_dir / "fig_prediction_horizon"
-        figure.savefig(
-            output_base.with_suffix(".png"),
-            metadata={"Software": "aim-stack ekf11 baseline"},
+        save_deterministic_figure(figure, output_dir / "fig_prediction_horizon")
+        plt.close(figure)
+
+
+def plot_small_armor_window_coverage(
+    predictions: dict[str, dict], output_dir: Path
+) -> None:
+    scenario_order = ("spin_8", "translate_1p5", "translate_1_spin_6")
+    scenario_styles = {
+        "spin_8": ("#D55E00", "o"),
+        "translate_1p5": ("#0072B2", "s"),
+        "translate_1_spin_6": ("#009E73", "^"),
+    }
+    with plt.rc_context(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Noto Sans CJK JP", "DejaVu Sans"],
+            "axes.titlesize": 12,
+            "axes.titleweight": "bold",
+            "svg.hashsalt": "aim-stack-ekf11-window-v1",
+        }
+    ):
+        figure, axis = plt.subplots(figsize=(8.6, 4.8), constrained_layout=True)
+        for scenario_id in scenario_order:
+            result = predictions[scenario_id]
+            color, marker = scenario_styles[scenario_id]
+            axis.plot(
+                result["horizons_ms"],
+                np.asarray(result["small_armor_window_coverage"], dtype=float) * 100.0,
+                color=color,
+                marker=marker,
+                markevery=10,
+                markersize=5.0,
+                linewidth=2.2,
+                label=SCENARIO_PREDICTION_TITLES[scenario_id].split("  ", 1)[1],
+            )
+        axis.set(
+            xlim=(0.0, MAX_HORIZON_MS),
+            ylim=(0.0, 100.0),
+            xlabel="预测时域 τ（ms）",
+            ylabel="落入板面窗口的样本比例（%）",
+            title="未来预测点的小装甲板窗口覆盖率",
         )
-        figure.savefig(
-            output_base.with_suffix(".pdf"),
-            metadata={
-                "Creator": "aim-stack ekf11 baseline",
-                "CreationDate": None,
-                "ModDate": None,
-            },
+        axis.set_xticks((0, 100, 200, 300, 400, 500))
+        axis.set_yticks((0, 20, 40, 60, 80, 100))
+        axis.legend(loc="upper right")
+        axis.grid(True, alpha=0.22)
+        figure.text(
+            0.5,
+            -0.01,
+            "小装甲板 135 × 55 mm：|切向误差| ≤ 67.5 mm 且 |竖直误差| ≤ 27.5 mm。",
+            ha="center",
+            va="top",
+            fontsize=9,
         )
-        svg_path = output_base.with_suffix(".svg")
-        figure.savefig(
-            svg_path,
-            metadata={"Creator": "aim-stack ekf11 baseline", "Date": None},
-        )
-        # Matplotlib writes path-data lines with trailing spaces.  Normalize
-        # them so the tracked vector artifact passes Git whitespace checks.
-        svg_lines = svg_path.read_text(encoding="utf-8").splitlines()
-        svg_path.write_text(
-            "\n".join(line.rstrip() for line in svg_lines) + "\n",
-            encoding="utf-8",
+        save_deterministic_figure(
+            figure, output_dir / "fig_small_armor_window_coverage"
         )
         plt.close(figure)
 
@@ -586,9 +715,15 @@ def main() -> int:
         for scenario_id, rows in scenario_rows.items()
     }
     plot_prediction_horizons(predictions, args.output_dir)
+    plot_small_armor_window_coverage(predictions, args.output_dir)
     prediction_summary = {
         "schema": "aim-stack.ekf11-prediction-horizon/v1",
         "collection_manifest": str(args.manifest),
+        "evaluation_standard": {
+            "id": PREDICTION_STANDARD["id"],
+            "schema": PREDICTION_STANDARD["schema"],
+            "path": str(PREDICTION_STANDARD_PATH),
+        },
         "method": {
             "source_state": "post-update Tongji 11D EKF state while tracker_state=tracking",
             "rollout": "constant center velocity, constant yaw rate, fixed radii and heights",
@@ -604,6 +739,11 @@ def main() -> int:
                 "horizontal target-center-to-armor axis; this is also the armor normal in the Z4 model"
             ),
             "tangential_definition": "horizontal axis perpendicular to normal_radial",
+            "vertical_definition": "tracker +z, lying in the armor plane",
+            "window_definition": (
+                "valid-sample geometric coverage: abs(tangential) <= half width and "
+                "abs(vertical) <= half height"
+            ),
         },
         "scenarios": predictions,
     }

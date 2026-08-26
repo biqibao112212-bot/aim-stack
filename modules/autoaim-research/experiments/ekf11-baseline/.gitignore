@@ -2,3 +2,4 @@ __pycache__/
 figures/__pycache__/
 figures/*.svg
 !figures/fig_prediction_horizon.svg
+!figures/fig_small_armor_window_coverage.svg

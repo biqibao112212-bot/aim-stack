@@ -1,0 +1,28 @@
+{
+  "schema": "aim-stack.future-armor-prediction-standard/v1",
+  "id": "AUTOAIM_FUTURE_ARMOR_PREDICTION_V1",
+  "required_horizons_ms": [100, 200, 300, 500],
+  "diagnostic_horizons_ms": [0],
+  "curve_step_ms": 10,
+  "max_truth_interpolation_gap_ms": 25,
+  "armor_geometry_m": {
+    "small": {
+      "width": 0.135,
+      "height": 0.055
+    },
+    "big": {
+      "width": 0.225,
+      "height": 0.055
+    }
+  },
+  "required_error_axes": [
+    "normal_radial",
+    "tangential",
+    "vertical",
+    "euclidean_3d"
+  ],
+  "required_percentiles": [50, 95],
+  "window_coverage_denominator": "valid_prediction_truth_pairs",
+  "future_truth_policy": "evaluation_only_later_exposure_truth",
+  "physical_identity_policy": "same_physical_armor_from_anchor_time"
+}

@@ -32,13 +32,19 @@
     }
   },
   "prediction_horizon": {
-    "range_ms": [0, 200],
+    "range_ms": [0, 500],
+    "required_horizons_ms": [100, 200, 300, 500],
     "step_ms": 10,
     "source": "post-update tracking state and later recorded exposure truth",
-    "summary_sha256": "843de504eaaec64194193409c0faca6ad602b34d4ef0b1b8f795d0ae5e6e605b",
-    "png_sha256": "ceecb4d7f4b4fdac32093c0451de45944150d98474b735e2fe670d486b2ed0ce",
-    "pdf_sha256": "ddae962a0c63ab25fe905f40e5050c161b49709d31cdda5a86792bc41c4f9771",
-    "svg_sha256": "3f4da17eaca9d2a999a498f09e52bd0c536c60b2114dce8269e525bb3ca93140"
+    "standard_id": "AUTOAIM_FUTURE_ARMOR_PREDICTION_V1",
+    "standard_json_sha256": "fe29f7e9d5a3acdfa0572bc01774e223b8e14f2abb9716a38ab2d72c897fe1aa",
+    "summary_sha256": "3b8812a6b7ff6723217dae203beae0f6a8c447ba22e9e912ccac3f965c1bb36f",
+    "png_sha256": "80b18b8c36f6e0f6435ada04ad7cda8f8d735d0ab5dd6992c716f95195567207",
+    "pdf_sha256": "4fd09523672557e4d7da506db78c400355cc2e44be7612ef016c918091531f86",
+    "svg_sha256": "18fa28a98aebb1e57b8d65298eb4c82807284be08178893a01bb9f4fc6abc87b",
+    "small_armor_window_png_sha256": "c32141fc47eebd453b4ccec388bb6fc2583c0814768364858cb42d18466cf0ae",
+    "small_armor_window_pdf_sha256": "eb13c804835fa1cbf328fba21bcc918d9e0feb3388b362b380163d2964b75ef4",
+    "small_armor_window_svg_sha256": "9fc43341e8fbdc9aea5e6f643f10942e53b696d10c13f9145ecf8fc38b85c2d4"
   },
   "cpu_comparison_run": {
     "run_id": "20260825-ekf11-baseline-r2",
