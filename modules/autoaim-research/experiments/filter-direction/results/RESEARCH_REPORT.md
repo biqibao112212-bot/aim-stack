@@ -1,39 +1,51 @@
-# Fixed-input filter research report
+# 固定输入滤波器研究报告
 
-## Data quality and provenance
+## 当前 1.4.0 回放数据
 
-- Scenarios: 3; particle count: 2048.
-- Numeric truth is excluded from all filter inputs. Saved physical slot is used only for oracle association.
-- Future truth is read only for post-hoc scoring at 100/200/300/500 ms.
+- 三种工况，每种约 20 秒；粒子滤波使用 2048 个粒子。
+- 数值真值不进入滤波器；保存的物理装甲板槽位只选择观测分支。
+- 未来真值只在 100/200/300/500 ms 预测完成后用于评分。
 
-| scenario | exposures | matched PnP | matched fraction | LOS abs p50/p95 | tangent abs p50/p95 | LOS lag-1 |
+| 工况 | 曝光数 | 匹配 PnP | 匹配率 | 沿视线绝对误差 P50/P95 | 水平切向绝对误差 P50/P95 | 沿视线相邻相关系数 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Spin 8 rad/s | 3495 | 3492 | 0.999 | 206.6/589.0 mm | 2.7/69.5 mm | 0.591 |
-| Translate 1.5 m/s | 3657 | 3470 | 0.949 | 144.9/599.5 mm | 3.8/77.8 mm | 0.562 |
-| Translate 1 m/s + spin 6 rad/s | 3852 | 3740 | 0.971 | 260.9/719.6 mm | 3.3/22.4 mm | 0.489 |
+| 原地旋转 8 rad/s | 3495 | 3492 | 0.999 | 206.6/589.0 mm | 2.7/69.5 mm | 0.591 |
+| 平移 1.5 m/s | 3657 | 3470 | 0.949 | 144.9/599.5 mm | 3.8/77.8 mm | 0.562 |
+| 平移 1 m/s＋旋转 6 rad/s | 3852 | 3740 | 0.971 | 260.9/719.6 mm | 3.3/22.4 mm | 0.489 |
 
-## Filter-family replay
+## EKF、UKF 与粒子滤波回放
 
-The following values are 3D future-position p95 in centimeters.
+下表均为未来装甲板三维位置误差 P95，单位厘米。
 
-| scenario | horizon | EKF | UKF | PF |
+| 工况 | 预测时长 | EKF | UKF | 粒子滤波 |
 | --- | ---: | ---: | ---: | ---: |
-| Spin 8 rad/s | 100 ms | 31.40 | 31.54 | 169.97 |
-| Spin 8 rad/s | 200 ms | 35.47 | 35.59 | 180.56 |
-| Spin 8 rad/s | 300 ms | 39.25 | 39.36 | 197.33 |
-| Spin 8 rad/s | 500 ms | 39.37 | 39.50 | 237.58 |
-| Translate 1.5 m/s | 100 ms | 58.25 | 58.36 | 173.69 |
-| Translate 1.5 m/s | 200 ms | 65.34 | 65.45 | 185.54 |
-| Translate 1.5 m/s | 300 ms | 74.33 | 74.43 | 193.87 |
-| Translate 1.5 m/s | 500 ms | 105.04 | 105.14 | 224.84 |
-| Translate 1 m/s + spin 6 rad/s | 100 ms | 47.10 | 47.29 | 76.86 |
-| Translate 1 m/s + spin 6 rad/s | 200 ms | 49.63 | 49.78 | 89.94 |
-| Translate 1 m/s + spin 6 rad/s | 300 ms | 54.50 | 54.76 | 97.07 |
-| Translate 1 m/s + spin 6 rad/s | 500 ms | 61.17 | 61.31 | 127.14 |
+| 原地旋转 8 rad/s | 100 ms | 31.40 | 31.54 | 169.97 |
+| 原地旋转 8 rad/s | 200 ms | 35.47 | 35.59 | 180.56 |
+| 原地旋转 8 rad/s | 300 ms | 39.25 | 39.36 | 197.33 |
+| 原地旋转 8 rad/s | 500 ms | 39.37 | 39.50 | 237.58 |
+| 平移 1.5 m/s | 100 ms | 58.25 | 58.36 | 173.69 |
+| 平移 1.5 m/s | 200 ms | 65.34 | 65.45 | 185.54 |
+| 平移 1.5 m/s | 300 ms | 74.33 | 74.43 | 193.87 |
+| 平移 1.5 m/s | 500 ms | 105.04 | 105.14 | 224.84 |
+| 平移 1 m/s＋旋转 6 rad/s | 100 ms | 47.10 | 47.29 | 76.86 |
+| 平移 1 m/s＋旋转 6 rad/s | 200 ms | 49.63 | 49.78 | 89.94 |
+| 平移 1 m/s＋旋转 6 rad/s | 300 ms | 54.50 | 54.76 | 97.07 |
+| 平移 1 m/s＋旋转 6 rad/s | 500 ms | 61.17 | 61.31 | 127.14 |
 
-## Missingness and limitations
+## 历史方法筛选数据
 
-- The replay preserves every exposure timestamp and every missing PnP event in the locked JSONL.
-- Oracle physical-slot association isolates the continuous estimator; it is not an online association result.
-- PF is a finite 2048-particle bootstrap implementation with a causal 20-update EKF warm start and the same 11D model and Q/R. The result does not rank all possible particle filters.
-- The structure-aware figure comes from the separately sealed combined-04 contract and must not be numerically subtracted from this 1.4.0 replay.
+- 原始采集共有 120 轮，其中 118 轮形成可评分历史。
+- 该实验预测相机射线 u/v，所以指标是条件等权角误差 P95（度），预测时长为 50/100/200 ms。
+- 它用于筛选后续候选方法，不与上面的 1.4.0 三维位置误差作数值比较。
+
+| 历史候选 | 输入 | 50 ms | 100 ms | 200 ms |
+| --- | --- | ---: | ---: | ---: |
+| 恒速外推＋历史窗口线性校正 | u/v | 0.214° | 0.247° | 0.345° |
+| 周期状态 EKF | u/v＋yaw | 0.308° | 0.389° | 0.642° |
+| 周期状态 UKF | u/v＋yaw | 0.308° | 0.390° | 0.646° |
+
+## 结果使用范围
+
+- 当前回放保留每个曝光时间戳和每次 PnP 缺失。
+- 当前回放的物理槽位关联隔离了连续估计问题；在线关联仍需单独评价。
+- 粒子滤波是 2048 粒子的 bootstrap 实现，先用 20 次 EKF 更新收窄 11 维先验。
+- 第三张图来自单独封存的 combined-04 历史实验，指标是 tracker 横向位置误差 P95。

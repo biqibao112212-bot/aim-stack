@@ -1,0 +1,41 @@
+{
+  "purpose": "historical candidate screening; separate from the current 1.4.0 3D replay",
+  "collection_runs": 120,
+  "usable_observation_histories": 118,
+  "split": "leave_distance_out",
+  "horizons_ms": [
+    50,
+    100,
+    200
+  ],
+  "metric": "condition_equal_angular_error_p95_deg",
+  "methods": {
+    "history_linear_correction": {
+      "source_method": "ridge_uv_residual",
+      "input_tier": "common_uv",
+      "condition_equal_angular_error_p95_deg": {
+        "50": 0.21410093591244225,
+        "100": 0.24746802756338446,
+        "200": 0.3446943549870238
+      }
+    },
+    "periodic_ekf": {
+      "source_method": "periodic_ekf_shared",
+      "input_tier": "uv_yaw",
+      "condition_equal_angular_error_p95_deg": {
+        "50": 0.3077182847999033,
+        "100": 0.388527248209871,
+        "200": 0.6422450376985811
+      }
+    },
+    "periodic_ukf": {
+      "source_method": "periodic_ukf_shared",
+      "input_tier": "uv_yaw",
+      "condition_equal_angular_error_p95_deg": {
+        "50": 0.3077655482791592,
+        "100": 0.3903902317677628,
+        "200": 0.6456966831508232
+      }
+    }
+  }
+}

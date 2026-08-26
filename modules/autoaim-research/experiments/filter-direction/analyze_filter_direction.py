@@ -11,6 +11,7 @@ initialization, observations, timestamps, and scoring anchors.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import math
@@ -26,9 +27,9 @@ import matplotlib.pyplot as plt
 
 
 SCENARIOS = {
-    "spin_8": "Spin 8 rad/s",
-    "translate_1p5": "Translate 1.5 m/s",
-    "translate_1_spin_6": "Translate 1 m/s + spin 6 rad/s",
+    "spin_8": "原地旋转 8 rad/s",
+    "translate_1p5": "平移 1.5 m/s",
+    "translate_1_spin_6": "平移 1 m/s＋旋转 6 rad/s",
 }
 METHODS = {
     "ekf": "EKF",
@@ -55,7 +56,7 @@ ARMOR_HEIGHT_M = 0.055
 plt.rcParams.update(
     {
         "font.family": "sans-serif",
-        "font.sans-serif": ["DejaVu Sans"],
+        "font.sans-serif": ["Noto Sans CJK JP", "DejaVu Sans"],
         "font.size": 9.2,
         "axes.titlesize": 10.5,
         "axes.titleweight": "bold",
@@ -78,6 +79,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--raw-root", required=True, type=Path)
     parser.add_argument("--combined-registry", required=True, type=Path)
+    parser.add_argument("--pnp-evidence-registry", required=True, type=Path)
+    parser.add_argument("--method-ranking", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--particles", type=int, default=2048)
     return parser.parse_args()
@@ -752,67 +755,148 @@ def ecdf(values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return x, y
 
 
+def load_historical_method_screening(method_ranking: Path, evidence_registry: Path) -> dict:
+    with method_ranking.open(newline="", encoding="utf-8-sig") as stream:
+        rows = list(csv.DictReader(stream))
+    registry = json.loads(evidence_registry.read_text(encoding="utf-8"))
+    authority = registry["authorities"]["accepted_120_run_observation_matrix"]
+    selected = {
+        "history_linear_correction": ("ridge_uv_residual", "common_uv"),
+        "periodic_ekf": ("periodic_ekf_shared", "uv_yaw"),
+        "periodic_ukf": ("periodic_ukf_shared", "uv_yaw"),
+    }
+    methods: dict[str, dict] = {}
+    for public_name, (method, input_tier) in selected.items():
+        values = {}
+        for horizon_ms in (50, 100, 200):
+            matches = [
+                row
+                for row in rows
+                if row.get("split") == "leave_distance_out"
+                and row.get("method") == method
+                and row.get("input_tier") == input_tier
+                and abs(float(row["horizon_s"]) * 1000.0 - horizon_ms) < 1e-9
+            ]
+            if len(matches) != 1:
+                raise RuntimeError(
+                    f"historical method row mismatch: {method}/{input_tier}/{horizon_ms}: {len(matches)}"
+                )
+            values[str(horizon_ms)] = float(matches[0]["condition_equal_p95_deg"])
+        methods[public_name] = {
+            "source_method": method,
+            "input_tier": input_tier,
+            "condition_equal_angular_error_p95_deg": values,
+        }
+    return {
+        "purpose": "historical candidate screening; separate from the current 1.4.0 3D replay",
+        "collection_runs": int(authority["runs"]),
+        "usable_observation_histories": int(authority["usable_observation_histories"]),
+        "split": "leave_distance_out",
+        "horizons_ms": [50, 100, 200],
+        "metric": "condition_equal_angular_error_p95_deg",
+        "methods": methods,
+    }
+
+
 def plot_observation_assumptions(distributions: dict[str, dict], arrays: dict[str, dict[str, np.ndarray]], output: Path) -> None:
     fig, axes = plt.subplots(2, 2, figsize=(10.5, 7.2))
     ax = axes[0, 0]
     positions = np.arange(len(SCENARIOS))
     offsets = {"normal_radial": -0.18, "tangential": 0.18}
-    for component, label, marker in (("normal_radial", "LOS / radial", "o"), ("tangential", "Tangential", "s")):
+    for component, label, marker in (
+        ("normal_radial", "沿视线（深度）", "o"),
+        ("tangential", "水平切向", "s"),
+    ):
         p50 = np.asarray([distributions[name]["components"][component]["abs_p50_m"] for name in SCENARIOS]) * 1000.0
         p95 = np.asarray([distributions[name]["components"][component]["abs_p95_m"] for name in SCENARIOS]) * 1000.0
         color = COLORS["radial" if component == "normal_radial" else "tangent"]
         ax.vlines(positions + offsets[component], p50, p95, color=color, linewidth=2.2)
-        ax.scatter(positions + offsets[component], p50, color=color, marker=marker, s=34, label=f"{label} p50")
-        ax.scatter(positions + offsets[component], p95, facecolors="none", edgecolors=color, marker=marker, s=42, label=f"{label} p95")
+        ax.scatter(positions + offsets[component], p50, color=color, marker=marker, s=34, label=f"{label} P50")
+        ax.scatter(positions + offsets[component], p95, facecolors="none", edgecolors=color, marker=marker, s=42, label=f"{label} P95")
     ax.set_yscale("log")
-    ax.set_xticks(positions, ["Spin", "Translate", "Combined"])
-    ax.set_ylabel("Absolute residual (mm, log scale)")
-    ax.set_title("A  Direction and tail scale")
+    ax.set_xticks(positions, ["原地旋转", "平移", "平移＋旋转"])
+    ax.set_ylabel("绝对误差（毫米，对数刻度）")
+    ax.set_title("A  误差大小取决于方向")
     ax.legend(ncol=2, fontsize=7.2)
 
     ax = axes[0, 1]
-    pooled_radial = np.concatenate([arrays[name]["normal_radial"] for name in SCENARIOS])
-    pooled_tangent = np.concatenate([arrays[name]["tangential"] for name in SCENARIOS])
-    for values, label, color in ((pooled_radial, "LOS / radial", COLORS["radial"]), (pooled_tangent, "Tangential", COLORS["tangent"])):
-        x, cdf = ecdf(robust_standardized_absolute(values))
-        keep = (x <= 12.0) & ((1.0 - cdf) >= 1e-4)
-        ax.plot(x[keep], 1.0 - cdf[keep], color=color, label=label)
-    grid = np.linspace(0.0, 5.0, 400)
-    gaussian_survival = np.asarray([math.erfc(float(value) / math.sqrt(2.0)) for value in grid])
-    ax.plot(grid, gaussian_survival, color="#555555", linestyle="--", label="Half-normal reference")
-    ax.set_yscale("log")
-    ax.set_xlim(0, 8)
-    ax.set_ylim(1e-4, 1.0)
-    ax.set_xlabel("|residual - median| / robust sigma")
-    ax.set_ylabel("Survival probability")
-    ax.set_title("B  Tail shape after robust scaling")
-    ax.legend()
+    width = 0.34
+    radial_ratios = np.asarray(
+        [distributions[name]["components"]["normal_radial"]["p95_p50_ratio"] for name in SCENARIOS]
+    )
+    tangent_ratios = np.asarray(
+        [distributions[name]["components"]["tangential"]["p95_p50_ratio"] for name in SCENARIOS]
+    )
+    radial_bars = ax.bar(
+        positions - width / 2,
+        radial_ratios,
+        width,
+        color=COLORS["radial"],
+        label="沿视线（深度）",
+    )
+    tangent_bars = ax.bar(
+        positions + width / 2,
+        tangent_ratios,
+        width,
+        color=COLORS["tangent"],
+        label="水平切向",
+    )
+    ax.axhline(2.91, color="#555555", linestyle="--", linewidth=1.1, label="零均值高斯参考≈2.9")
+    ax.bar_label(radial_bars, fmt="%.1f×", fontsize=7.2, padding=2)
+    ax.bar_label(tangent_bars, fmt="%.1f×", fontsize=7.2, padding=2)
+    ax.set_xticks(positions, ["原地旋转", "平移", "平移＋旋转"])
+    ax.set_ylabel("P95 ÷ P50（倍）")
+    ax.set_ylim(0, 29)
+    ax.set_title("B  少数帧会比典型帧差很多")
+    ax.legend(fontsize=7.2)
 
     ax = axes[1, 0]
-    for name, label in SCENARIOS.items():
-        values = arrays[name]["normal_radial"]
-        times = arrays[name]["times_s"]
-        acf = contiguous_acf(values, times, 20)
-        ax.plot(np.arange(1, 21), acf, marker="o", markersize=3.0, label=label)
+    radial_lag1 = np.asarray(
+        [distributions[name]["components"]["normal_radial"]["lag1_autocorrelation"] for name in SCENARIOS]
+    )
+    tangent_lag1 = np.asarray(
+        [distributions[name]["components"]["tangential"]["lag1_autocorrelation"] for name in SCENARIOS]
+    )
+    radial_bars = ax.bar(
+        positions - width / 2,
+        radial_lag1,
+        width,
+        color=COLORS["radial"],
+        label="沿视线（深度）",
+    )
+    tangent_bars = ax.bar(
+        positions + width / 2,
+        tangent_lag1,
+        width,
+        color=COLORS["tangent"],
+        label="水平切向",
+    )
     ax.axhline(0.0, color="#555555", linewidth=0.9)
-    ax.set_xlabel("Matched-event lag")
-    ax.set_ylabel("Autocorrelation")
-    ax.set_title("C  LOS residual is temporally correlated")
+    ax.bar_label(radial_bars, fmt="%.2f", fontsize=7.2, padding=2)
+    ax.bar_label(tangent_bars, fmt="%.2f", fontsize=7.2, padding=2)
+    ax.set_xticks(positions, ["原地旋转", "平移", "平移＋旋转"])
+    ax.set_ylabel("相邻两次误差的相关系数")
+    ax.set_ylim(0, 0.7)
+    ax.set_title("C  上一帧的误差会延续到下一帧")
     ax.legend(fontsize=7.2)
 
     ax = axes[1, 1]
-    for name, label in SCENARIOS.items():
-        x, y = ecdf(arrays[name]["intervals_ms"])
-        ax.plot(x, y, label=label)
-    ax.axvline(25.0, color="#555555", linestyle="--", linewidth=1.1, label="25 ms scoring gap")
-    ax.set_xscale("log")
-    ax.set_xlim(3.0, 80.0)
-    ax.set_xlabel("Interval between matched PnP events (ms)")
-    ax.set_ylabel("ECDF")
-    ax.set_title("D  Updates are timestamped, not fixed-rate")
+    p50 = np.asarray([distributions[name]["matched_interval_ms"]["p50"] for name in SCENARIOS])
+    p95 = np.asarray([distributions[name]["matched_interval_ms"]["p95"] for name in SCENARIOS])
+    maximum = np.asarray([distributions[name]["matched_interval_ms"]["max"] for name in SCENARIOS])
+    ax.vlines(positions, p50, p95, color=COLORS["ekf"], linewidth=2.4)
+    ax.scatter(positions, p50, color=COLORS["ekf"], marker="o", s=35, label="P50：典型间隔")
+    ax.scatter(positions, p95, facecolors="none", edgecolors=COLORS["ekf"], marker="o", s=44, label="P95：较长间隔")
+    ax.scatter(positions, maximum, color=COLORS["pf"], marker="x", s=44, label="最长间隔")
+    for index, value in enumerate(maximum):
+        ax.annotate(f"{value:.1f}", (positions[index], value), xytext=(0, 5), textcoords="offset points", ha="center", fontsize=7.2)
+    ax.set_xticks(positions, ["原地旋转", "平移", "平移＋旋转"])
+    ax.set_ylabel("相邻成功 PnP 的间隔（毫秒）")
+    ax.set_ylim(0, 60)
+    ax.set_title("D  成功观测不是等间隔到达")
     ax.legend(fontsize=7.2)
 
-    fig.suptitle("Observed PnP residuals versus a fixed independent-Gaussian assumption", fontsize=12.5, fontweight="bold")
+    fig.suptitle("三组 20 秒记录：PnP 观测误差有哪些特征", fontsize=12.5, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     save_figure(fig, output / "observation_assumption_check")
 
@@ -822,7 +906,7 @@ def plot_filter_family(metrics: dict, output: Path, particle_count: int) -> None
     horizon_ms = np.asarray([100, 200, 300, 500])
     x_offsets = {"ekf": -4, "ukf": 4, "pf": 0}
     markers = {"ekf": "o", "ukf": "s", "pf": "^"}
-    labels = {"ekf": "EKF", "ukf": "UKF", "pf": f"PF ({particle_count} particles)"}
+    labels = {"ekf": "EKF", "ukf": "UKF", "pf": f"粒子滤波（{particle_count} 个粒子）"}
     for ax, (scenario, title) in zip(axes, SCENARIOS.items()):
         for method in METHODS:
             values = [metrics[scenario][method][str(value)]["error_3d_m"]["p95"] * 100.0 for value in horizon_ms]
@@ -837,7 +921,7 @@ def plot_filter_family(metrics: dict, output: Path, particle_count: int) -> None
                 zorder=3 if method == "ukf" else 2,
             )
         ax.set_title(title)
-        ax.set_xlabel("Prediction horizon (ms)")
+        ax.set_xlabel("预测时长（毫秒）")
         ax.set_xticks(horizon_ms)
     maximum_difference_mm = max(
         abs(
@@ -851,15 +935,15 @@ def plot_filter_family(metrics: dict, output: Path, particle_count: int) -> None
     axes[0].text(
         0.03,
         0.94,
-        f"max |UKF - EKF| = {maximum_difference_mm:.1f} mm",
+        f"EKF 与 UKF 最大差值：{maximum_difference_mm:.1f} 毫米",
         transform=axes[0].transAxes,
         va="top",
         fontsize=8.0,
         color="#444444",
     )
-    axes[0].set_ylabel("3D future-position error p95 (cm)")
+    axes[0].set_ylabel("未来装甲板三维位置误差 P95（厘米）")
     axes[-1].legend(loc="upper left")
-    fig.suptitle("Same 11D model and observations: EKF, UKF and PF offline replay", fontsize=12.2, fontweight="bold")
+    fig.suptitle("同一套 11 维模型和观测：EKF、UKF 与粒子滤波离线回放", fontsize=12.2, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     save_figure(fig, output / "filter_family_replay")
 
@@ -868,29 +952,29 @@ def plot_structure_aware(registry: dict, output: Path) -> None:
     values = registry["sealed_test_cross_depth_p95_mm"]["constant_twist"]
     horizons = np.asarray([50, 100, 200])
     selected = (
-        ("same_slot_world_cv", "Same-slot CV", "#7A7A7A"),
-        ("v1_isotropic_single_window", "Isotropic local fit", "#CC79A7"),
-        ("los_memory31", "LOS-Huber + omega memory", "#0072B2"),
-        ("direct_joint_omega_phase", "Joint rigid trajectory", "#009E73"),
+        ("same_slot_world_cv", "同一装甲板恒速外推", "#7A7A7A"),
+        ("v1_isotropic_single_window", "短窗口、各方向同权", "#CC79A7"),
+        ("los_memory31", "按视线方向分权＋跨窗口角速度", "#0072B2"),
+        ("direct_joint_omega_phase", "四块装甲板联合轨迹", "#009E73"),
     )
     fig, axes = plt.subplots(1, 2, figsize=(9.8, 3.8))
     for key, label, color in selected:
         axes[0].plot(horizons, values[key], marker="o", color=color, label=label)
-    axes[0].set_xlabel("Prediction horizon (ms)")
-    axes[0].set_ylabel("Cross-depth error p95 (mm)")
-    axes[0].set_title("A  Full method range")
+    axes[0].set_xlabel("预测时长（毫秒）")
+    axes[0].set_ylabel("横向位置误差 P95（毫米）")
+    axes[0].set_title("A  全部候选方法")
     axes[0].set_xticks(horizons)
     axes[0].legend(fontsize=7.5)
     for key, label, color in selected[-2:]:
         axes[1].plot(horizons, values[key], marker="o", color=color, label=label)
-    axes[1].axhline(55.0, color="#D55E00", linestyle="--", linewidth=1.2, label="55 mm diagnostic line")
+    axes[1].axhline(55.0, color="#D55E00", linestyle="--", linewidth=1.2, label="55 毫米历史诊断线")
     axes[1].set_ylim(0, 70)
-    axes[1].set_xlabel("Prediction horizon (ms)")
-    axes[1].set_ylabel("Cross-depth error p95 (mm)")
-    axes[1].set_title("B  Distribution-aware models")
+    axes[1].set_xlabel("预测时长（毫秒）")
+    axes[1].set_ylabel("横向位置误差 P95（毫米）")
+    axes[1].set_title("B  两种结构化方法的细节")
     axes[1].set_xticks(horizons)
     axes[1].legend(fontsize=7.5)
-    fig.suptitle("Autoaim B: matching the residual geometry and motion structure", fontsize=12.2, fontweight="bold")
+    fig.suptitle("历史组合运动实验：逐步加入误差方向和刚体结构", fontsize=12.2, fontweight="bold")
     fig.tight_layout(rect=(0, 0, 1, 0.92))
     save_figure(fig, output / "structure_aware_methods")
 
@@ -917,17 +1001,23 @@ def validate_results(distributions: dict, filter_metrics: dict) -> None:
                 )
 
 
-def write_report(output: Path, distributions: dict, filter_metrics: dict, particles: int) -> None:
+def write_report(
+    output: Path,
+    distributions: dict,
+    filter_metrics: dict,
+    historical_screening: dict,
+    particles: int,
+) -> None:
     lines = [
-        "# Fixed-input filter research report",
+        "# 固定输入滤波器研究报告",
         "",
-        "## Data quality and provenance",
+        "## 当前 1.4.0 回放数据",
         "",
-        f"- Scenarios: {len(SCENARIOS)}; particle count: {particles}.",
-        "- Numeric truth is excluded from all filter inputs. Saved physical slot is used only for oracle association.",
-        "- Future truth is read only for post-hoc scoring at 100/200/300/500 ms.",
+        f"- 三种工况，每种约 20 秒；粒子滤波使用 {particles} 个粒子。",
+        "- 数值真值不进入滤波器；保存的物理装甲板槽位只选择观测分支。",
+        "- 未来真值只在 100/200/300/500 ms 预测完成后用于评分。",
         "",
-        "| scenario | exposures | matched PnP | matched fraction | LOS abs p50/p95 | tangent abs p50/p95 | LOS lag-1 |",
+        "| 工况 | 曝光数 | 匹配 PnP | 匹配率 | 沿视线绝对误差 P50/P95 | 水平切向绝对误差 P50/P95 | 沿视线相邻相关系数 |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for name, label in SCENARIOS.items():
@@ -943,27 +1033,58 @@ def write_report(output: Path, distributions: dict, filter_metrics: dict, partic
     lines.extend(
         [
             "",
-            "## Filter-family replay",
+            "## EKF、UKF 与粒子滤波回放",
             "",
-            "The following values are 3D future-position p95 in centimeters.",
+            "下表均为未来装甲板三维位置误差 P95，单位厘米。",
             "",
-            "| scenario | horizon | EKF | UKF | PF |",
+            "| 工况 | 预测时长 | EKF | UKF | 粒子滤波 |",
             "| --- | ---: | ---: | ---: | ---: |",
         ]
     )
     for name, label in SCENARIOS.items():
         for horizon in (100, 200, 300, 500):
-            values = [filter_metrics[name][method][str(horizon)]["error_3d_m"]["p95"] * 100 for method in METHODS]
-            lines.append(f"| {label} | {horizon} ms | {values[0]:.2f} | {values[1]:.2f} | {values[2]:.2f} |")
+            values = [
+                filter_metrics[name][method][str(horizon)]["error_3d_m"]["p95"] * 100
+                for method in METHODS
+            ]
+            lines.append(
+                f"| {label} | {horizon} ms | {values[0]:.2f} | {values[1]:.2f} | {values[2]:.2f} |"
+            )
     lines.extend(
         [
             "",
-            "## Missingness and limitations",
+            "## 历史方法筛选数据",
             "",
-            "- The replay preserves every exposure timestamp and every missing PnP event in the locked JSONL.",
-            "- Oracle physical-slot association isolates the continuous estimator; it is not an online association result.",
-            f"- PF is a finite {particles}-particle bootstrap implementation with a causal 20-update EKF warm start and the same 11D model and Q/R. The result does not rank all possible particle filters.",
-            "- The structure-aware figure comes from the separately sealed combined-04 contract and must not be numerically subtracted from this 1.4.0 replay.",
+            f"- 原始采集共有 {historical_screening['collection_runs']} 轮，其中 {historical_screening['usable_observation_histories']} 轮形成可评分历史。",
+            "- 该实验预测相机射线 u/v，所以指标是条件等权角误差 P95（度），预测时长为 50/100/200 ms。",
+            "- 它用于筛选后续候选方法，不与上面的 1.4.0 三维位置误差作数值比较。",
+            "",
+            "| 历史候选 | 输入 | 50 ms | 100 ms | 200 ms |",
+            "| --- | --- | ---: | ---: | ---: |",
+        ]
+    )
+    history_labels = {
+        "history_linear_correction": "恒速外推＋历史窗口线性校正",
+        "periodic_ekf": "周期状态 EKF",
+        "periodic_ukf": "周期状态 UKF",
+    }
+    input_labels = {"common_uv": "u/v", "uv_yaw": "u/v＋yaw"}
+    for name in ("history_linear_correction", "periodic_ekf", "periodic_ukf"):
+        item = historical_screening["methods"][name]
+        values = item["condition_equal_angular_error_p95_deg"]
+        lines.append(
+            f"| {history_labels[name]} | {input_labels[item['input_tier']]} | "
+            f"{values['50']:.3f}° | {values['100']:.3f}° | {values['200']:.3f}° |"
+        )
+    lines.extend(
+        [
+            "",
+            "## 结果使用范围",
+            "",
+            "- 当前回放保留每个曝光时间戳和每次 PnP 缺失。",
+            "- 当前回放的物理槽位关联隔离了连续估计问题；在线关联仍需单独评价。",
+            f"- 粒子滤波是 {particles} 粒子的 bootstrap 实现，先用 20 次 EKF 更新收窄 11 维先验。",
+            "- 第三张图来自单独封存的 combined-04 历史实验，指标是 tracker 横向位置误差 P95。",
             "",
         ]
     )
@@ -977,6 +1098,8 @@ def main() -> None:
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     raw_root = args.raw_root.resolve()
+    method_ranking = args.method_ranking.resolve()
+    pnp_evidence_registry = args.pnp_evidence_registry.resolve()
     rows_by_scenario = {
         name: load_jsonl(raw_root / "raw" / f"{name}.jsonl") for name in SCENARIOS
     }
@@ -999,10 +1122,14 @@ def main() -> None:
 
     registry = json.loads(args.combined_registry.read_text(encoding="utf-8"))
     plot_structure_aware(registry, output)
+    historical_screening = load_historical_method_screening(
+        method_ranking,
+        pnp_evidence_registry,
+    )
 
     source_files = {name: raw_root / "raw" / f"{name}.jsonl" for name in SCENARIOS}
     provenance = {
-        "schema": "aim-stack.filter-direction-analysis/v1",
+        "schema": "aim-stack.filter-direction-analysis/v2",
         "raw_root": str(raw_root),
         "oracle_association_upper_bound": True,
         "truth_filter_input_policy": "numeric truth excluded; physical slot selects measurement branch only",
@@ -1020,6 +1147,13 @@ def main() -> None:
             "sha256": sha256(args.combined_registry.resolve()),
             "note": "separate sealed experiment contract; used only for the structure-aware figure",
         },
+        "historical_method_screening": {
+            "method_ranking_path": str(method_ranking),
+            "method_ranking_sha256": sha256(method_ranking),
+            "pnp_evidence_registry_path": str(pnp_evidence_registry),
+            "pnp_evidence_registry_sha256": sha256(pnp_evidence_registry),
+            "note": "separate 2026-08-09 angular-domain candidate screening",
+        },
         "script": {"path": str(Path(__file__).resolve()), "sha256": sha256(Path(__file__).resolve())},
     }
     (output / "observation_distribution_summary.json").write_text(
@@ -1028,14 +1162,19 @@ def main() -> None:
     (output / "filter_family_summary.json").write_text(
         json.dumps(filter_metrics, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
+    (output / "historical_method_screening_summary.json").write_text(
+        json.dumps(historical_screening, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     (output / "provenance.json").write_text(
         json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
-    write_report(output, distributions, filter_metrics, args.particles)
+    write_report(output, distributions, filter_metrics, historical_screening, args.particles)
     artifact_names = [
         "RESEARCH_REPORT.md",
         "observation_distribution_summary.json",
         "filter_family_summary.json",
+        "historical_method_screening_summary.json",
         "provenance.json",
         *[
             f"{stem}.{suffix}"
