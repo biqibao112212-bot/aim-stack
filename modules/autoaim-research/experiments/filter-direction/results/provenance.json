@@ -1,0 +1,40 @@
+{
+  "schema": "aim-stack.filter-direction-analysis/v1",
+  "raw_root": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-tensorrt-r2",
+  "oracle_association_upper_bound": true,
+  "truth_filter_input_policy": "numeric truth excluded; physical slot selects measurement branch only",
+  "future_truth_policy": "post-hoc scoring only",
+  "filters": "same Tongji 11D state, transition, Q/R, initialization, observations and timestamps",
+  "particles": 2048,
+  "pf_warm_start_updates": 20,
+  "horizons_ms": [
+    100,
+    200,
+    300,
+    500
+  ],
+  "warmup_s": 2.0,
+  "sources": {
+    "spin_8": {
+      "path": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-tensorrt-r2/raw/spin_8.jsonl",
+      "sha256": "41eb313753027c94140a8590209b8e13a6de87c872bbdfbc464b7a77adf6c289"
+    },
+    "translate_1p5": {
+      "path": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-tensorrt-r2/raw/translate_1p5.jsonl",
+      "sha256": "af79e616d2b1f179789f7f01753f6be7606f72956ee6fdc7c8b53c3f08de2fcd"
+    },
+    "translate_1_spin_6": {
+      "path": "/home/potato/Projects/仿真/runtime/autoaim-research/20260825-ekf11-tensorrt-r2/raw/translate_1_spin_6.jsonl",
+      "sha256": "08b4ba8c9f2aff80f4d258eb8c197c8929df06a7b5ed1daa399c90c3098b9022"
+    }
+  },
+  "combined_registry": {
+    "path": "/home/potato/Projects/仿真/repos/aim-stack/modules/autoaim/docs/combined_motion_final_registry.json",
+    "sha256": "196f70d861f87c1e95a9424ea97e8fa684f52a7e8dc62969bdcb1a5d0272b6e5",
+    "note": "separate sealed experiment contract; used only for the structure-aware figure"
+  },
+  "script": {
+    "path": "/home/potato/Projects/仿真/repos/aim-stack/modules/autoaim-research/experiments/filter-direction/analyze_filter_direction.py",
+    "sha256": "c3ae879f5b339c40544d1a78e8f8f9de7e993cbb1c84d66397258c4b9d180b53"
+  }
+}
